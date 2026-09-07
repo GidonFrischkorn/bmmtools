@@ -23,6 +23,9 @@
   the link scale becomes `[0, max]`, and an `inverse`-link interval that
   spans zero has no natural-scale image, so its bounds and `covered` are
   `NA` and a warning names the term.
+* A recovery object survives the `dplyr` verbs that keep its contract
+  columns and becomes a plain tibble under one that drops them, so a
+  reduced object prints as a tibble instead of failing inside a metric.
 * `plot_recovery()` plots estimates against generating values, one panel
   per parameter, with interval bars and an identity line.
 * `inverse_link()` transforms a vector from the link scale to the natural

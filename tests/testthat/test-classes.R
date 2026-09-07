@@ -110,12 +110,40 @@ test_that("dplyr verbs keep the object usable", {
 })
 
 test_that("dropping a contract column drops the class, not the data", {
-  # Standard tibble-subclass behaviour. Documented rather than fought:
-  # what is left is still a tibble a user can work with.
+  # What is left is still a tibble a user can work with. The negative
+  # assertion is the point: `tbl_df` stays true whether or not the
+  # recovery class was dropped, so asserting only that would pass while
+  # the object was still mislabelled.
   x <- recovery_example()
   reduced <- dplyr::select(x, "term", "estimate")
+
+  expect_false(inherits(reduced, "bmmtools_recovery"))
   expect_s3_class(reduced, "tbl_df")
   expect_equal(ncol(reduced), 2L)
+  # and it prints as a tibble instead of dying inside a metric
+  expect_output(print(reduced), "term")
+})
+
+test_that("subsetting rows or all contract columns keeps the class", {
+  x <- recovery_example()
+
+  expect_s3_class(x[1:3, ], "bmmtools_recovery")
+  expect_s3_class(x[recovery_contract_columns()], "bmmtools_recovery")
+  expect_s3_class(dplyr::mutate(x, extra = 1), "bmmtools_recovery")
+  # dropping one contract column is enough to demote
+  expect_false(inherits(x[setdiff(names(x), "covered")], "bmmtools_recovery"))
+})
+
+test_that("a hand-broken object is named, not crashed into", {
+  # Reachable only by attaching the class to something that does not
+  # satisfy the contract; the methods say which column is missing rather
+  # than failing three frames deeper inside a metric.
+  x <- recovery_example()
+  broken <- tibble::as_tibble(x)[c("term", "estimate")]
+  class(broken) <- c("bmmtools_recovery", class(broken))
+
+  expect_error(summary(broken), "true_value")
+  expect_error(format(broken), "true_value")
 })
 
 # summary ----------------------------------------------------------------
@@ -154,4 +182,37 @@ test_that("summary of a mixed-level object keeps the levels apart", {
   expect_setequal(s$level, c("population", "subject"))
   expect_equal(nrow(s), 3L)
   expect_equal(s$n_replications[s$level == "subject"], 1L)
+})
+
+# combining correlations -------------------------------------------------
+
+test_that("fisher_z_combine reduces to the weighted average it documents", {
+  # equal subject counts: the plain average of the transformed values
+  out <- fisher_z_combine(r = c(0.5, 0.8), n = c(20, 20))
+  expect_equal(out$r, tanh(mean(atanh(c(0.5, 0.8)))))
+
+  # unequal counts: the larger replication pulls harder, by n - 3
+  uneven <- fisher_z_combine(r = c(0.5, 0.8), n = c(5, 100))
+  expect_gt(uneven$r, out$r)
+  expect_equal(
+    uneven$r,
+    tanh(sum(c(2, 97) * atanh(c(0.5, 0.8))) / 99)
+  )
+})
+
+test_that("opposite perfect correlations give NA, not NaN", {
+  # Two replications recovered perfectly in opposite directions put z at
+  # +Inf and -Inf; their average is undefined. NaN would print as a
+  # different missing value from every other guard in the package, so
+  # both the weighted and the unweighted branch return NA_real_.
+  weighted <- fisher_z_combine(r = c(1, -1), n = c(20, 20))
+  expect_identical(weighted$r, NA_real_)
+  expect_identical(weighted$r_low, NA_real_)
+
+  # n <= 3 everywhere floors every weight to zero, taking the other branch
+  unweighted <- fisher_z_combine(r = c(1, -1), n = c(3, 3))
+  expect_identical(unweighted$r, NA_real_)
+
+  # a perfect correlation on its own is still 1, not NA
+  expect_equal(fisher_z_combine(r = c(1, 1), n = c(20, 20))$r, 1)
 })

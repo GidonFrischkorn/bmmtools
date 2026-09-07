@@ -81,6 +81,7 @@ plot_recovery <- function(x,
        not {.obj_type_friendly {x}}."
     )
   }
+  check_recovery_contract(x)
   check_plot_column(x, facet_by, "facet_by")
   check_plot_column(x, color_by, "color_by")
 

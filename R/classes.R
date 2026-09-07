@@ -114,12 +114,24 @@ new_bmmtools_recovery_summary <- function(x) {
 
 # dplyr ------------------------------------------------------------------
 
+#' Demote to a plain tibble when a contract column has gone
+#'
+#' The one place that decides whether a result is still a recovery
+#' object. A print, summary or plot method that assumed a missing column
+#' would fail later and further from the cause.
+#'
+#' @noRd
+demote_if_incomplete <- function(x) {
+  if (!all(recovery_contract_columns() %in% names(x))) {
+    return(tibble::as_tibble(x))
+  }
+  x
+}
+
 #' Keep the class only while the contract holds
 #'
 #' `dplyr::filter()` and friends return a recovery object; a `select()`
-#' that drops a contract column returns a plain tibble, because a print
-#' or plot method that assumed the missing column would fail later and
-#' further from the cause.
+#' that drops a contract column returns a plain tibble.
 #'
 #' @param data,template See [dplyr::dplyr_reconstruct()].
 #' @return `data`, as a recovery object when it still satisfies the
@@ -133,7 +145,69 @@ dplyr_reconstruct.bmmtools_recovery <- function(data, template) {
   NextMethod()
 }
 
+#' Subset a recovery object
+#'
+#' `dplyr_reconstruct()` is not enough on its own. dplyr calls that
+#' generic only when the result's class differs from the input's, and
+#' `dplyr::select()` on a **tibble subclass** subsets through `[`, which
+#' keeps the class; the generic is then never reached and a
+#' column-dropping verb returns something still labelled a recovery
+#' object with its contract broken. Measured on dplyr 1.2.1: without this
+#' method `dplyr::select(x, "term", "estimate")` stays a
+#' `bmmtools_recovery` and the next `print()` fails inside a metric with
+#' a length mismatch. Demoting here is what makes the documented
+#' behaviour --- a verb that drops a contract column drops the class ---
+#' actually true.
+#'
+#' @param x A `bmmtools_recovery` object.
+#' @param ... Passed to the tibble method.
+#' @return A recovery object while the contract holds, a plain tibble
+#'   once it does not.
+#' @export
+`[.bmmtools_recovery` <- function(x, ...) {
+  demote_if_incomplete(NextMethod())
+}
+
+#' Refuse to work on an object whose contract has been broken by hand
+#'
+#' Reached only when the class was attached to something that does not
+#' satisfy the contract, since `[` and `dplyr_reconstruct()` demote. A
+#' named error beats the length mismatch a metric would raise three
+#' frames deeper.
+#'
+#' @noRd
+check_recovery_contract <- function(x, call = rlang::caller_env()) {
+  missing <- setdiff(recovery_contract_columns(), names(x))
+  if (length(missing) > 0L) {
+    cli::cli_abort(
+      c(
+        "This {.cls bmmtools_recovery} is missing the column{?s} \\
+         {.val {missing}}.",
+        i = "It was built by hand or altered in place; {.fn recover} and \\
+             the {.pkg dplyr} verbs keep the contract or drop the class."
+      ),
+      call = call
+    )
+  }
+  invisible(x)
+}
+
 # summary ----------------------------------------------------------------
+
+#' Back-transform a Fisher z that may be undefined
+#'
+#' A perfect correlation puts z at infinity, and `tanh()` maps that back
+#' to 1 or -1, which is right. Two of them with opposite signs average to
+#' `NaN` instead: there is no combined correlation to report, and the
+#' answer is `NA_real_` --- what the metric guard returns everywhere else
+#' --- rather than `NaN`, which is a different missing value and prints
+#' differently.
+#'
+#' @noRd
+tanh_or_na <- function(z) {
+  out <- tanh(z)
+  if (length(out) == 1L && is.nan(out)) NA_real_ else out
+}
 
 #' Combine correlations across replications on Fisher's z scale
 #'
@@ -158,12 +232,12 @@ fisher_z_combine <- function(r, n, ci_level = 0.95) {
   z <- atanh(r)
   w <- pmax(n - 3, 0)
   if (sum(w) == 0) {
-    out$r <- tanh(mean(z))
+    out$r <- tanh_or_na(mean(z))
     return(out)
   }
 
   z_bar <- sum(w * z) / sum(w)
-  out$r <- tanh(z_bar)
+  out$r <- tanh_or_na(z_bar)
   # a perfect correlation puts z at infinity: the point estimate is 1 and
   # there is no interval, the same answer metric_r() gives
   if (!is.finite(z_bar)) {
@@ -294,6 +368,7 @@ summarise_subject <- function(rows) {
 #'
 #' @export
 summary.bmmtools_recovery <- function(object, ...) {
+  check_recovery_contract(object)
   if (nrow(object) == 0L) {
     return(new_bmmtools_recovery_summary(
       empty_recovery_summary()
@@ -359,6 +434,7 @@ summary.bmmtools_recovery_summary <- function(object, ...) {
 #'
 #' @export
 format.bmmtools_recovery <- function(x, ...) {
+  check_recovery_contract(x)
   scale <- attr(x, "scale")
   if (is.null(scale)) scale <- unique(x$scale)
 

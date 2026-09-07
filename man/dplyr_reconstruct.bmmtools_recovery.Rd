@@ -15,7 +15,5 @@ contract and as a plain tibble otherwise.
 }
 \description{
 \code{dplyr::filter()} and friends return a recovery object; a \code{select()}
-that drops a contract column returns a plain tibble, because a print
-or plot method that assumed the missing column would fail later and
-further from the cause.
+that drops a contract column returns a plain tibble.
 }
