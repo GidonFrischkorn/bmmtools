@@ -1,0 +1,15 @@
+.Rproj.user
+.Rhistory
+.RData
+.httr-oauth
+.DS_Store
+.quarto
+local/
+bmmtools_*.tar.gz
+bmmtools.Rcheck/
+docs/
+inst/doc/
+/doc/
+/Meta/
+.Renviron
+Rplots.pdf

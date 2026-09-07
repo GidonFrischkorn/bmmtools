@@ -1,0 +1,66 @@
+
+<!-- README.md is generated from README.Rmd. Please edit that file -->
+
+# bmmtools
+
+<!-- badges: start -->
+<!-- badges: end -->
+
+bmmtools holds the validation half of the model-development workflow of
+the [bmm](https://github.com/venpopov/bmm) package.
+`bmm::use_model_template()` scaffolds a new cognitive measurement model;
+bmmtools checks it. Every check is the same loop, simulate, fit, score,
+and only the scorer changes:
+
+| Scorer | truth comes from | scored against | answers |
+|----|----|----|----|
+| `recover()` | a fixed grid of generating values | posterior vs. truth: correlation with CI, RMSE, bias, CrI coverage | can this model be estimated from data of this size |
+| `prior_check()` | the prior | the observable scale: floor and ceiling rates, quantile profile, link equivalence | are these priors sane on the scale a reader understands |
+| `sbc()` | the prior | posterior rank of the truth (a thin adapter over the SBC package) | is the implementation correct |
+| `cross_check()` | a fixed grid, or real data | a closed-form estimator, another implementation, or published values | does the new model agree with what is already known |
+
+`recover_subjects()` scores person-level posterior parameters, which no
+other package does. Scoring dispatches on `brmsfit`, so a plain brms fit
+can be scored too; the model-aware generate layer needs bmm.
+
+The package is under construction. The design record is
+[ARCHITECTURE.md](ARCHITECTURE.md).
+
+## What bmmtools is not
+
+- Not a simulation-based calibration package. `sbc()` builds a generator
+  from a bmm model specification and hands it to
+  [SBC](https://hyunjimoon.github.io/SBC/), which owns the ranks, the
+  ECDF diagnostics and the plots.
+- Not a prior *sensitivity* package.
+  [priorsense](https://CRAN.R-project.org/package=priorsense) answers
+  how much the posterior moves when the prior is power-scaled.
+  `prior_check()` answers a different question: what the prior implies
+  on the observable scale before any data are seen.
+- Not a plotting layer. [bayesplot](https://mc-stan.org/bayesplot/) owns
+  posterior plots. bmmtools adds the two plot families bayesplot has no
+  concept of: the recovery scatter (truth against posterior estimate
+  with credible intervals, one panel per parameter) and the
+  prior-predictive panels on the observable scale.
+- Not [gp3bayes](https://CRAN.R-project.org/package=gp3bayes), which
+  also offers parameter recovery and SBC vignettes but is written for
+  pupillometry and eye-tracking data. bmmtools is written for the
+  measurement models bmm fits: mixture, signal detection, evidence
+  accumulation, multinomial processing tree and memory measurement
+  models.
+- Not a reporting package. Every scorer returns a tidy tibble whose
+  columns follow the
+  [apabayes](https://github.com/GidonFrischkorn/apabayes) contract, so a
+  recovery table drops into a manuscript through `apabayes` with no glue
+  code. Neither package imports the other.
+- No model fitting of its own (that is `bmm()`), and no Bayesian power
+  or design analysis.
+
+## Installation
+
+bmmtools is not on CRAN yet.
+
+``` r
+# install.packages("pak")
+pak::pak("GidonFrischkorn/bmmtools")
+```

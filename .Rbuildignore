@@ -1,0 +1,17 @@
+^bmmtools\.Rproj$
+^\.Rproj\.user$
+^LICENSE\.md$
+^README\.Rmd$
+^local$
+^ARCHITECTURE\.md$
+^\.github$
+^_pkgdown\.yml$
+^docs$
+^pkgdown$
+^cran-comments\.md$
+^CRAN-SUBMISSION$
+^\.DS_Store$
+^\.claude$
+^CLAUDE\.md$
+^dev$
+^Rplots\.pdf$
