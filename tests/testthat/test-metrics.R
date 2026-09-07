@@ -64,10 +64,24 @@ test_that("metric_ci_width is the mean interval width", {
   expect_equal(metric_ci_width(c(0, 1, 2), c(2, 2, 8)), 3)
 })
 
+test_that("coverage and width are NA when no complete row is left", {
+  # Every row incomplete: NA, never 0 and never NaN from mean(logical(0)).
+  # These two are the only metrics that survive a zero-variance truth, so
+  # the all-missing case is the one place they can go wrong quietly.
+  expect_identical(
+    metric_coverage(c(NA_real_, 2), c(0, NA_real_), c(1, 3)),
+    NA_real_
+  )
+  expect_identical(
+    metric_ci_width(c(NA_real_, 1), c(2, NA_real_)),
+    NA_real_
+  )
+})
+
 # correlation ------------------------------------------------------------
 
 test_that("metric_r matches stats::cor.test on point and interval", {
-  set.seed(1)
+  withr::local_seed(1)
   truth <- stats::rnorm(30)
   estimate <- truth * 0.8 + stats::rnorm(30, sd = 0.5)
 
@@ -81,7 +95,7 @@ test_that("metric_r matches stats::cor.test on point and interval", {
 })
 
 test_that("metric_r matches cor.test across several n and ci_level", {
-  set.seed(2)
+  withr::local_seed(2)
   for (n in c(5L, 12L, 60L)) {
     for (level in c(0.95, 0.89)) {
       truth <- stats::rnorm(n)
@@ -104,7 +118,7 @@ test_that("metric_r returns 1 for perfect recovery and -1 for reversal", {
 })
 
 test_that("metric_rank_r matches stats::cor with method spearman", {
-  set.seed(3)
+  withr::local_seed(3)
   truth <- stats::rnorm(25)
   estimate <- exp(truth) + stats::rnorm(25, sd = 0.1)
   expect_equal(
@@ -148,7 +162,7 @@ test_that("ccc decomposes as r times Lin's bias-correction factor", {
   # u = location_bias. This identity holds only for Lin's definitions of
   # u and v, so it is what fixes them: no reference implementation is
   # installed, and a hand-typed constant would only restate the code.
-  set.seed(11)
+  withr::local_seed(11)
   for (i in 1:5) {
     truth <- stats::rnorm(20)
     estimate <- truth * stats::runif(1, 0.5, 2) +

@@ -16,9 +16,9 @@ URL: https://github.com/GidonFrischkorn/bmmtools
 BugReports: https://github.com/GidonFrischkorn/bmmtools/issues
 Depends:
     R (>= 4.1)
-Imports: 
+Imports:
     cli,
-    dplyr,
+    dplyr (>= 1.1.0),
     posterior,
     rlang,
     tibble
