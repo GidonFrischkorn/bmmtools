@@ -64,8 +64,12 @@ parameter as perfectly recovered that was never estimated.}
 A \code{bmmtools_recovery} object: a tibble subclass with the
 columns \code{term}, \code{estimate}, \code{ci_low}, \code{ci_high}, \code{ci_method},
 \code{ci_level}, \code{rhat}, \code{ess_bulk}, \code{ess_tail}, \code{true_value}, \code{bias},
-\code{covered}, \code{scale}, \code{level}, \code{id} and \code{replication}. Call
-\code{\link[=summary]{summary()}} on it for the per-parameter metrics.
+\code{covered}, \code{scale}, \code{level}, \code{id}, \code{converged} and \code{replication}.
+\code{converged} is the verdict of \code{\link[=check_convergence]{check_convergence()}} with its
+default thresholds when \code{fits} are fit objects; to gate with other
+thresholds, call \code{\link[=extract_estimates]{extract_estimates()}} with \verb{converged =} first and
+pass the tibble. Call \code{\link[=summary]{summary()}} on it for the per-parameter
+metrics.
 }
 \description{
 \code{recover()} answers the question a model developer has to answer

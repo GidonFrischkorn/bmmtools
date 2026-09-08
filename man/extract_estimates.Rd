@@ -17,6 +17,7 @@ extract_estimates(fit, ...)
   ci_level = 0.95,
   ci_method = "eti",
   drop_constants = TRUE,
+  converged = NULL,
   ...
 )
 }
@@ -45,11 +46,19 @@ that adding others later is not a breaking change.}
 constants. A constant is identified by zero posterior variance, not
 by a missing rhat, so that a chain that broke is never silently
 dropped as though it had been fixed on purpose.}
+
+\item{converged}{Whether the fit passed the convergence gate. \code{NULL},
+the default, computes it as \code{check_convergence(fit)$pass} with the
+default thresholds; a logical scalar is used as given, so a verdict
+from \code{\link[=check_convergence]{check_convergence()}} with other thresholds can be passed in;
+\code{NA} marks it unknown.}
 }
 \value{
 A tibble with the columns \code{term}, \code{estimate}, \code{ci_low},
 \code{ci_high}, \code{ci_method}, \code{ci_level}, \code{rhat}, \code{ess_bulk}, \code{ess_tail},
-\code{level} and \code{id}, in that order. \code{id} is \code{NA} for population rows.
+\code{level}, \code{id} and \code{converged}, in that order. \code{id} is \code{NA} for
+population rows; \code{converged} is the same value on every row of a
+fit.
 }
 \description{
 The bridge between a fitted model and everything bmmtools scores. It

@@ -26,8 +26,19 @@ estimates_contract <- function() {
     ess_bulk = "double",
     ess_tail = "double",
     level = "character",
-    id = "character"
+    id = "character",
+    converged = "logical"
   )
+}
+
+#' The columns an estimates tibble must bring
+#'
+#' `converged` is filled by [extract_estimates()] and optional on input,
+#' so a hand-built tibble with the other eleven columns still scores.
+#'
+#' @noRd
+estimates_required_columns <- function() {
+  setdiff(names(estimates_contract()), "converged")
 }
 
 #' An empty estimates tibble
@@ -168,8 +179,22 @@ as_estimates <- function(x, level, ci_level, ci_method) {
     ess_bulk = x$ess_bulk,
     ess_tail = x$ess_tail,
     level = level,
-    id = as.character(x$id)
+    id = as.character(x$id),
+    converged = NA
   )
+}
+
+#' Validate the `converged` argument: one logical, `NA` allowed
+#' @noRd
+check_converged <- function(converged, call = rlang::caller_env()) {
+  if (!is.logical(converged) || length(converged) != 1L) {
+    cli::cli_abort(
+      "{.arg converged} must be {.code TRUE}, {.code FALSE} or {.code NA}, \\
+       not {.obj_type_friendly {converged}}.",
+      call = call
+    )
+  }
+  converged
 }
 
 #' Drop the parameters a model fixed to constants
@@ -210,7 +235,8 @@ check_unique_terms <- function(x, keys, call = rlang::caller_env()) {
 
 #' Population-level rows
 #' @noRd
-population_estimates <- function(draws, ci_level, ci_method, drop_constants) {
+population_estimates <- function(draws, ci_level, ci_method, drop_constants,
+                                 call = rlang::caller_env()) {
   variables <- grep("^b_", posterior::variables(draws), value = TRUE)
   if (length(variables) == 0L) {
     return(empty_estimates())
@@ -222,7 +248,7 @@ population_estimates <- function(draws, ci_level, ci_method, drop_constants) {
   out$term <- strip_design_suffix(out$variable)
   out$id <- NA_character_
   out <- drop_constant_rows(out, drop_constants)
-  check_unique_terms(out, "term")
+  check_unique_terms(out, "term", call = call)
 
   as_estimates(out, "population", ci_level, ci_method)
 }
@@ -309,12 +335,13 @@ sum_group_draws <- function(draws, coefficients, call = rlang::caller_env()) {
 #' Subject-level rows
 #' @noRd
 subject_estimates <- function(draws, groups, group, ci_level, ci_method,
-                              drop_constants) {
-  group <- resolve_group(group, groups)
+                              drop_constants, call = rlang::caller_env()) {
+  group <- resolve_group(group, groups, call = call)
   coefficients <- group_coefficients(posterior::variables(draws), group)
   if (is.null(coefficients)) {
     cli::cli_abort(
-      "The fit has no group-level coefficients for {.val {group}}."
+      "The fit has no group-level coefficients for {.val {group}}.",
+      call = call
     )
   }
 
@@ -322,7 +349,7 @@ subject_estimates <- function(draws, groups, group, ci_level, ci_method,
   out$term <- coefficients$term[match(out$variable, coefficients$variable)]
   out$id <- coefficients$id[match(out$variable, coefficients$variable)]
   out <- drop_constant_rows(out, drop_constants)
-  check_unique_terms(out, c("term", "id"))
+  check_unique_terms(out, c("term", "id"), call = call)
 
   as_estimates(out, "subject", ci_level, ci_method)
 }
@@ -341,42 +368,56 @@ estimates_from_draws <- function(draws,
                                  group = NULL,
                                  ci_level = 0.95,
                                  ci_method = "eti",
-                                 drop_constants = TRUE) {
+                                 drop_constants = TRUE,
+                                 converged = NA,
+                                 call = rlang::caller_env()) {
+  converged <- check_converged(converged, call = call)
   level <- rlang::arg_match(
     level, c("population", "subject"),
-    multiple = TRUE
+    multiple = TRUE,
+    error_call = call
   )
   if (!is.numeric(ci_level) || length(ci_level) != 1L || is.na(ci_level)) {
     cli::cli_abort(
       "{.arg ci_level} must be a single number, \\
-       not {.obj_type_friendly {ci_level}}."
+       not {.obj_type_friendly {ci_level}}.",
+      call = call
     )
   }
   if (ci_level <= 0 || ci_level >= 1) {
-    cli::cli_abort("{.arg ci_level} must be between 0 and 1, not {ci_level}.")
+    cli::cli_abort(
+      "{.arg ci_level} must be between 0 and 1, not {ci_level}.",
+      call = call
+    )
   }
   if (!identical(ci_method, "eti")) {
-    cli::cli_abort(c(
-      "{.arg ci_method} must be {.val eti} in this version of bmmtools.",
-      i = "The column is carried so that the apabayes contract stays \\
-           satisfied when other interval types arrive."
-    ))
+    cli::cli_abort(
+      c(
+        "{.arg ci_method} must be {.val eti} in this version of bmmtools.",
+        i = "The column is carried so that the apabayes contract stays \\
+             satisfied when other interval types arrive."
+      ),
+      call = call
+    )
   }
   if (!rlang::is_bool(drop_constants)) {
     cli::cli_abort(
-      "{.arg drop_constants} must be {.code TRUE} or {.code FALSE}."
+      "{.arg drop_constants} must be {.code TRUE} or {.code FALSE}.",
+      call = call
     )
   }
 
   pieces <- list()
   if ("population" %in% level) {
     pieces$population <- population_estimates(
-      draws, ci_level, ci_method, drop_constants
+      draws, ci_level, ci_method, drop_constants,
+      call = call
     )
   }
   if ("subject" %in% level) {
     pieces$subject <- subject_estimates(
-      draws, groups, group, ci_level, ci_method, drop_constants
+      draws, groups, group, ci_level, ci_method, drop_constants,
+      call = call
     )
   }
   out <- dplyr::bind_rows(pieces)
@@ -390,6 +431,7 @@ estimates_from_draws <- function(draws,
     ))
     return(empty_estimates())
   }
+  out$converged <- rep(converged, nrow(out))
   out
 }
 
@@ -423,12 +465,19 @@ estimates_from_draws <- function(draws,
 #'   constants. A constant is identified by zero posterior variance, not
 #'   by a missing rhat, so that a chain that broke is never silently
 #'   dropped as though it had been fixed on purpose.
+#' @param converged Whether the fit passed the convergence gate. `NULL`,
+#'   the default, computes it as `check_convergence(fit)$pass` with the
+#'   default thresholds; a logical scalar is used as given, so a verdict
+#'   from [check_convergence()] with other thresholds can be passed in;
+#'   `NA` marks it unknown.
 #' @param ... Not used. Present so the generic can gain arguments later;
 #'   anything passed is an error.
 #'
 #' @return A tibble with the columns `term`, `estimate`, `ci_low`,
 #'   `ci_high`, `ci_method`, `ci_level`, `rhat`, `ess_bulk`, `ess_tail`,
-#'   `level` and `id`, in that order. `id` is `NA` for population rows.
+#'   `level`, `id` and `converged`, in that order. `id` is `NA` for
+#'   population rows; `converged` is the same value on every row of a
+#'   fit.
 #'
 #' @details
 #' Subject-level estimates are the **per-draw sum** of the population
@@ -469,18 +518,31 @@ extract_estimates.brmsfit <- function(fit,
                                       ci_level = 0.95,
                                       ci_method = "eti",
                                       drop_constants = TRUE,
+                                      converged = NULL,
                                       ...) {
   rlang::check_installed("brms", "to extract estimates from a fit.")
   rlang::check_dots_empty()
   if (missing(level)) level <- "population"
+  draws <- posterior::as_draws_array(fit)
+  if (is.null(converged)) {
+    converged <- convergence_from_fit(
+      fit, draws,
+      thresholds = check_thresholds(),
+      treedepth_max = fit_treedepth_max(fit)
+    )$pass
+  }
 
   estimates_from_draws(
-    draws = posterior::as_draws_array(fit),
+    draws = draws,
     groups = fit_groups(fit),
     level = level,
     group = group,
     ci_level = ci_level,
     ci_method = ci_method,
-    drop_constants = drop_constants
+    drop_constants = drop_constants,
+    converged = converged,
+    # so a bad argument is reported against extract_estimates(), not
+    # against the internal helper that happened to inspect it
+    call = rlang::current_env()
   )
 }

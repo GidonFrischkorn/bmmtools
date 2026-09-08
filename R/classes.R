@@ -29,7 +29,8 @@ recovery_contract <- function() {
     covered = "logical",
     scale = "character",
     level = "character",
-    id = "character"
+    id = "character",
+    converged = "logical"
   )
 }
 
@@ -250,6 +251,19 @@ fisher_z_combine <- function(r, n, ci_level = 0.95) {
   out
 }
 
+#' Replications whose fit passed the convergence gate
+#'
+#' `NA` when no row carries a verdict, never `0`: an unknown is not a
+#' failure.
+#'
+#' @noRd
+count_converged <- function(rows) {
+  if (all(is.na(rows$converged))) {
+    return(NA_integer_)
+  }
+  length(unique(rows$replication[rows$converged %in% TRUE]))
+}
+
 #' Mean of the values that are not missing
 #' @noRd
 mean_or_na <- function(x) {
@@ -362,9 +376,11 @@ summarise_subject <- function(rows) {
 #'   `ccc`, `ccc_scale_bias` and `ccc_location_bias`.
 #'
 #' @details
-#' `n_converged` is `NA` in this version. The convergence gate arrives
-#' with the run layer; reporting `n_converged` as equal to `n` before the
-#' gate exists would assert something that was never measured.
+#' `n_converged` is the number of replications whose fit passed
+#' [check_convergence()], read from the `converged` column that
+#' [extract_estimates()] fills. It is `NA` when no fit carried a
+#' verdict, as with a hand-built estimates tibble: reporting it as equal
+#' to `n` there would assert something that was never measured.
 #'
 #' @export
 summary.bmmtools_recovery <- function(object, ...) {
@@ -390,7 +406,7 @@ summary.bmmtools_recovery <- function(object, ...) {
         scale = rows$scale[[1L]]
       ),
       body,
-      list(n_converged = NA_integer_)
+      list(n_converged = count_converged(rows))
     ))
   })
 

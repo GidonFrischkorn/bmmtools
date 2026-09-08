@@ -1,5 +1,25 @@
 # bmmtools 0.0.0.9000
 
+* `check_convergence()` is the convergence gate: worst-case rhat and
+  effective sample sizes, divergent transitions and tree-depth hits in
+  one row, with a `pass` verdict under thresholds that are arguments
+  (rhat at most 1.05, bulk ESS at least 400, at most ten divergences).
+  Parameters with missing diagnostics are dropped rather than failed
+  on, tree-depth hits are reported but not gated, and a fit with
+  nothing assessable gets `NA`, not a pass.
+* `extract_estimates()` carries the verdict as a `converged` column, and
+  `summary()` of a recovery object reports `n_converged`, the number of
+  replications whose fit passed. A hand-built estimates tibble still
+  scores, with `NA` where no verdict exists.
+* `fit_cached()` fits a model once and reuses the saved fit while
+  nothing that determines it has changed. Its key covers the formula
+  (deparsed, so the environment does not matter), data, model, prior,
+  seed, chains, iterations, warmup, thinning, `control`, `init` (by its
+  text when it is a function), backend, the installed bmm and brms
+  versions and the Stan toolchain of the backend in use, which is more
+  than brms's own `file` cache compares. A sidecar `.key` file records
+  each component's hash, so a refit says which component changed; the
+  fit and the key are written atomically.
 * `recover()` and `recover_subjects()` score fits against known
   generating values and return a `bmmtools_recovery` object: one row per
   fit and parameter, with the estimate, its interval, the generating

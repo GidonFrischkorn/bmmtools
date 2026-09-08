@@ -328,3 +328,61 @@ test_that("the estimates tibble satisfies the apabayes parameters contract", {
   out <- extract_estimates(mixture2p_fit())
   expect_no_error(apabayes::apabayes_tidy(out, type = "parameters"))
 })
+
+# the converged column (spec 2, section 2) -------------------------------
+
+test_that("extract_estimates carries the convergence gate as a column", {
+  skip_if_not_installed("brms")
+  fit <- mixture2p_fit()
+
+  out <- extract_estimates(fit, level = c("population", "subject"))
+
+  expect_type(out$converged, "logical")
+  expect_length(unique(out$converged), 1L)
+  expect_identical(out$converged[[1L]], check_convergence(fit)$pass)
+})
+
+test_that("converged can be supplied instead of computed", {
+  skip_if_not_installed("brms")
+  fit <- mixture2p_fit()
+
+  expect_true(all(!extract_estimates(fit, converged = FALSE)$converged))
+  expect_true(all(is.na(extract_estimates(fit, converged = NA)$converged)))
+  expect_error(extract_estimates(fit, converged = "yes"), "converged")
+})
+
+test_that("estimates_from_draws fills converged without a fit", {
+  draws <- fake_draws(list(b_a_Intercept = stats::rnorm(80)))
+  out <- estimates_from_draws(draws, groups = character(0), converged = TRUE)
+  expect_true(all(out$converged))
+  default <- estimates_from_draws(draws, groups = character(0))
+  expect_true(all(is.na(default$converged)))
+})
+
+# error attribution ------------------------------------------------------
+
+test_that("a bad argument is blamed on extract_estimates, not a helper", {
+  # The validation runs inside estimates_from_draws(), several frames
+  # down. Without a threaded call the error points at that helper, which
+  # a user never called and cannot find in their script.
+  skip_if_not_installed("brms")
+  fit <- mixture2p_fit()
+
+  bad_level <- tryCatch(
+    extract_estimates(fit, ci_level = 0),
+    error = function(e) e
+  )
+  expect_match(
+    paste(deparse(conditionCall(bad_level)), collapse = " "),
+    "^extract_estimates\\("
+  )
+
+  bad_group <- tryCatch(
+    extract_estimates(fit, level = "subject", group = "nope"),
+    error = function(e) e
+  )
+  expect_match(
+    paste(deparse(conditionCall(bad_group)), collapse = " "),
+    "^extract_estimates\\("
+  )
+})

@@ -39,7 +39,9 @@ Subject-level objects are summarised \strong{within replication and then
 combined} on Fisher's z scale. Pooling subjects across replications
 would mix between-subject with between-replication variance.
 
-\code{n_converged} is \code{NA} in this version. The convergence gate arrives
-with the run layer; reporting \code{n_converged} as equal to \code{n} before the
-gate exists would assert something that was never measured.
+\code{n_converged} is the number of replications whose fit passed
+\code{\link[=check_convergence]{check_convergence()}}, read from the \code{converged} column that
+\code{\link[=extract_estimates]{extract_estimates()}} fills. It is \code{NA} when no fit carried a
+verdict, as with a hand-built estimates tibble: reporting it as equal
+to \code{n} there would assert something that was never measured.
 }

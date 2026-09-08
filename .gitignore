@@ -13,3 +13,4 @@ inst/doc/
 /Meta/
 .Renviron
 Rplots.pdf
+tests/testthat/_problems/

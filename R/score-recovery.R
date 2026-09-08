@@ -43,7 +43,7 @@ as_estimates_input <- function(fits, level, group, ci_level, drop_constants,
   }
 
   if (is.data.frame(fits)) {
-    missing <- setdiff(names(estimates_contract()), names(fits))
+    missing <- setdiff(estimates_required_columns(), names(fits))
     if (length(missing) > 0L) {
       cli::cli_abort(
         c(
@@ -55,6 +55,8 @@ as_estimates_input <- function(fits, level, group, ci_level, drop_constants,
     }
     out <- tibble::as_tibble(fits)
     if (!"replication" %in% names(out)) out$replication <- 1L
+    # a hand-built tibble carries no verdict; an unknown is not a failure
+    if (!"converged" %in% names(out)) out$converged <- NA
     return(out)
   }
 
@@ -351,8 +353,12 @@ score_recovery <- function(fits, truth, level, group, scale, links,
 #' @return A `bmmtools_recovery` object: a tibble subclass with the
 #'   columns `term`, `estimate`, `ci_low`, `ci_high`, `ci_method`,
 #'   `ci_level`, `rhat`, `ess_bulk`, `ess_tail`, `true_value`, `bias`,
-#'   `covered`, `scale`, `level`, `id` and `replication`. Call
-#'   [summary()] on it for the per-parameter metrics.
+#'   `covered`, `scale`, `level`, `id`, `converged` and `replication`.
+#'   `converged` is the verdict of [check_convergence()] with its
+#'   default thresholds when `fits` are fit objects; to gate with other
+#'   thresholds, call [extract_estimates()] with `converged =` first and
+#'   pass the tibble. Call [summary()] on it for the per-parameter
+#'   metrics.
 #'
 #' @details
 #' A term in `truth` that no fit estimated produces a warning listing

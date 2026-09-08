@@ -354,13 +354,47 @@ test_that("summary metrics equal the metric functions on the same columns", {
   expect_equal(out$ccc_location_bias, ccc$location_bias)
 })
 
-test_that("n_converged is NA in this milestone rather than equal to n", {
-  # The convergence gate arrives in Milestone 2; reporting n_converged as
-  # n before it exists would assert something that was never measured.
+test_that("n_converged is NA when no fit carried a convergence flag", {
+  # A hand-built estimates tibble has no `converged` column; reporting
+  # n_converged as n would assert something that was never measured.
   estimates <- fake_estimates("a", estimate = 1)
   truth <- fake_truth("a", true_value = 1)
+  out <- recover(estimates, truth, scale = "link")
+  expect_true("converged" %in% names(out))
+  expect_identical(out$converged, NA)
+  expect_true(is.na(summary(out)$n_converged))
+})
+
+test_that("n_converged counts the replications whose fit passed the gate", {
+  estimates <- dplyr::bind_rows(lapply(1:3, function(rep) {
+    out <- fake_estimates(c("a", "b"),
+      estimate = c(1, 2) + rep / 10,
+      replication = rep
+    )
+    out$converged <- c(TRUE, TRUE, FALSE)[[rep]]
+    out
+  }))
+  truth <- fake_truth(c("a", "b"), true_value = c(1, 2))
+
   out <- summary(recover(estimates, truth, scale = "link"))
-  expect_true(is.na(out$n_converged))
+  expect_identical(out$n_converged, c(2L, 2L))
+  expect_identical(out$n_replications, c(3L, 3L))
+
+  # the subject level counts replications the same way
+  subjects <- dplyr::bind_rows(lapply(1:3, function(rep) {
+    out <- fake_estimates(rep("a", 5),
+      estimate = seq_len(5) + rep / 10,
+      level = "subject", id = as.character(1:5), replication = rep
+    )
+    out$converged <- c(TRUE, FALSE, FALSE)[[rep]]
+    out
+  }))
+  truth_subjects <- fake_truth(rep("a", 5),
+    true_value = seq_len(5),
+    id = as.character(1:5)
+  )
+  out <- summary(recover_subjects(subjects, truth_subjects, scale = "link"))
+  expect_identical(out$n_converged, 1L)
 })
 
 test_that("a single fit gives NA correlations and numeric bias", {
