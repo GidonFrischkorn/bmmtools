@@ -30,13 +30,27 @@ recovery_contract <- function() {
     scale = "character",
     level = "character",
     id = "character",
-    converged = "logical"
+    converged = "logical",
+    condition = "character"
   )
 }
 
 #' @noRd
 recovery_contract_columns <- function() {
   c(names(recovery_contract()), "replication")
+}
+
+#' Contract columns a caller may leave out
+#'
+#' `converged` is unknown for a hand-built estimates tibble and
+#' `condition` exists only for a grid; both are filled with `NA` rather
+#' than demanded.
+#'
+#' @noRd
+fill_optional_columns <- function(x) {
+  if (!"converged" %in% names(x)) x$converged <- rep(NA, nrow(x))
+  if (!"condition" %in% names(x)) x$condition <- rep(NA_character_, nrow(x))
+  x
 }
 
 #' The columns `summary()` of a recovery object returns
@@ -75,6 +89,7 @@ new_bmmtools_recovery <- function(x,
     )
   }
 
+  x <- fill_optional_columns(x)
   missing <- setdiff(recovery_contract_columns(), names(x))
   if (length(missing) > 0L) {
     cli::cli_abort(
@@ -109,7 +124,9 @@ new_bmmtools_recovery <- function(x,
 
 #' @noRd
 new_bmmtools_recovery_summary <- function(x) {
-  x <- tibble::as_tibble(x)[recovery_summary_columns()]
+  columns <- recovery_summary_columns()
+  if ("condition" %in% names(x)) columns <- c("condition", columns)
+  x <- tibble::as_tibble(x)[columns]
   structure(x, class = c("bmmtools_recovery_summary", class(x)))
 }
 
@@ -391,7 +408,11 @@ summary.bmmtools_recovery <- function(object, ...) {
     ))
   }
 
+  # a grid carries its row label in `condition`; a plain recovery does
+  # not, and the summary then has no such column
+  by_condition <- !all(is.na(object$condition))
   keys <- paste(object$level, object$term, sep = "\r")
+  if (by_condition) keys <- paste(object$condition, keys, sep = "\r")
   pieces <- lapply(split(seq_len(nrow(object)), keys), function(i) {
     rows <- object[i, ]
     body <- if (identical(rows$level[[1L]], "subject")) {
@@ -400,6 +421,7 @@ summary.bmmtools_recovery <- function(object, ...) {
       summarise_population(rows)
     }
     tibble::as_tibble(c(
+      if (by_condition) list(condition = rows$condition[[1L]]),
       list(
         term = rows$term[[1L]],
         level = rows$level[[1L]],

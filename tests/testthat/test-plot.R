@@ -116,8 +116,8 @@ test_that("the axis labels name the scale the object was scored on", {
 test_that("an unknown facet or colour column is an error naming it", {
   skip_if_not_installed("ggplot2")
   x <- plot_example()
-  expect_error(plot_recovery(x, facet_by = "condition"), "condition")
-  expect_error(plot_recovery(x, color_by = "condition"), "condition")
+  expect_error(plot_recovery(x, facet_by = "nonexistent"), "nonexistent")
+  expect_error(plot_recovery(x, color_by = "nonexistent"), "nonexistent")
 })
 
 test_that("plot_recovery rejects anything that is not a recovery object", {

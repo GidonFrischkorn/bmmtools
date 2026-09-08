@@ -21,7 +21,8 @@ Imports:
     dplyr (>= 1.1.0),
     posterior,
     rlang,
-    tibble
+    tibble,
+    withr
 Suggests: 
     bayesplot,
     bmm,
@@ -32,8 +33,7 @@ Suggests:
     rmarkdown,
     SBC,
     SimDesign,
-    testthat (>= 3.0.0),
-    withr
+    testthat (>= 3.0.0)
 Additional_repositories: https://stan-dev.r-universe.dev
 Config/testthat/edition: 3
 Encoding: UTF-8

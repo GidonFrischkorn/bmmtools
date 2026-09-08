@@ -289,6 +289,7 @@ score_recovery <- function(fits, truth, level, group, scale, links,
   keys <- if (identical(level, "subject")) c("term", "id") else "term"
   check_truth(truth, keys, call = error_call)
   if ("replication" %in% names(truth)) keys <- c(keys, "replication")
+  if ("condition" %in% names(truth)) keys <- c(keys, "condition")
 
   resolved <- resolve_links(fits, links, scale, call = error_call)
   joined <- join_truth(estimates, truth, keys, call = error_call)

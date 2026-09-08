@@ -1,5 +1,22 @@
 # bmmtools 0.0.0.9000
 
+* `simulate_recovery()` turns a bmm model and population values on the
+  link scale into a data set and the truth that produced it: subject
+  values are drawn on the link scale, converted with `inverse_link()`,
+  and handed to the model's own `r<model>()` generator through a small
+  adapter (shipped for `sdt_yn`, `sdt_mafc`, three-parameter `ezdm`,
+  `ddm`, `mixture2p` and `sdm`) or to a generator you supply. Subject
+  values can be passed in instead of drawn, so replications can share
+  the same simulated people. `recovery_formula()` gives every free
+  parameter a random intercept.
+* `recovery_grid()` runs a design grid over subjects and trials with
+  replications: one durable file per cell, a resume that reads those
+  files, a smoke mode in its own directory, a preflight fit that catches
+  a compile or init error before any cell, cells ordered so the first
+  completed block spans the design, one seed per cell derived from the
+  master seed, and scoring at both levels into one recovery object
+  whose `condition` column names the grid row. `summary()` groups by
+  condition when it is present.
 * `check_convergence()` is the convergence gate: worst-case rhat and
   effective sample sizes, divergent transitions and tree-depth hits in
   one row, with a `pass` verdict under thresholds that are arguments
