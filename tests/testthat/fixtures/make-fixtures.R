@@ -25,7 +25,7 @@ n_subjects <- 8L
 n_trials <- 30L
 
 # Generating values on the natural scale, then the link scale, because
-# the truth tibble contract (ARCHITECTURE.md decision 3) records truth on
+# the truth tibble contract (local/ARCHITECTURE.md decision 3) records truth on
 # the link scale under bmm's parameter names.
 kappa_pop <- 8
 thetat_pop <- 0.75

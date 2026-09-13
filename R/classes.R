@@ -2,7 +2,7 @@
 #
 # `bmmtools_recovery` is a tibble subclass: one row per fit x parameter,
 # carrying the apabayes `parameters` columns first and bmmtools's
-# additions after (ARCHITECTURE.md decision 14). Subclassing a tibble
+# additions after (local/ARCHITECTURE.md decision 14). Subclassing a tibble
 # means dplyr verbs keep working; a verb that drops a contract column
 # drops the class, which is what dplyr_reconstruct() below implements.
 
@@ -134,13 +134,15 @@ new_bmmtools_recovery_summary <- function(x) {
 
 #' Demote to a plain tibble when a contract column has gone
 #'
-#' The one place that decides whether a result is still a recovery
-#' object. A print, summary or plot method that assumed a missing column
-#' would fail later and further from the cause.
+#' The one place that decides whether a result still satisfies its
+#' contract. A print, summary or plot method that assumed a missing
+#' column would fail later and further from the cause.
 #'
+#' @param x The object a verb returned.
+#' @param columns The contract it has to satisfy to keep its class.
 #' @noRd
-demote_if_incomplete <- function(x) {
-  if (!all(recovery_contract_columns() %in% names(x))) {
+demote_if_incomplete <- function(x, columns) {
+  if (!all(columns %in% names(x))) {
     return(tibble::as_tibble(x))
   }
   x
@@ -183,7 +185,7 @@ dplyr_reconstruct.bmmtools_recovery <- function(data, template) {
 #'   once it does not.
 #' @export
 `[.bmmtools_recovery` <- function(x, ...) {
-  demote_if_incomplete(NextMethod())
+  demote_if_incomplete(NextMethod(), recovery_contract_columns())
 }
 
 #' Refuse to work on an object whose contract has been broken by hand
@@ -367,9 +369,8 @@ summarise_subject <- function(rows) {
 
 #' Summarise a recovery object into per-parameter metrics
 #'
-#' One row per parameter and level, with the metrics of
-#' `ARCHITECTURE.md` decision 18: bias, RMSE, coverage, mean interval
-#' width, the Pearson correlation with a Fisher-z interval, the Spearman
+#' One row per parameter and level, with these recovery metrics: bias,
+#' RMSE, coverage, mean interval width, the Pearson correlation with a Fisher-z interval, the Spearman
 #' correlation and Lin's concordance with its two components.
 #'
 #' Correlation metrics are `NA`, never `0`, when fewer than three
@@ -519,6 +520,192 @@ print.bmmtools_recovery <- function(x, ...) {
 #' @rdname format.bmmtools_recovery
 #' @export
 print.bmmtools_recovery_summary <- function(x, ...) {
+  print(tibble::as_tibble(x), n = Inf, width = Inf)
+  invisible(x)
+}
+
+# the prior check --------------------------------------------------------
+
+#' The prior-check contract
+#' @noRd
+prior_check_contract <- function() {
+  c(
+    prior = "character",
+    response = "character",
+    statistic = "character",
+    value = "double"
+  )
+}
+
+#' Construct a prior-check object
+#'
+#' The summary rows are the object; the draws that produced them travel
+#' as an attribute, because a table of statistics cannot be plotted as a
+#' distribution and the distribution is the picture the check exists for.
+#'
+#' @noRd
+new_bmmtools_prior_check <- function(x, ..., error_call = rlang::caller_env()) {
+  contract <- prior_check_contract()
+  missing <- setdiff(names(contract), names(x))
+  if (length(missing) > 0L) {
+    cli::cli_abort(
+      c(
+        "A prior check is missing the column{?s} {.val {missing}}.",
+        i = "The contract is {.val {names(contract)}}."
+      ),
+      call = error_call
+    )
+  }
+  x$value <- as.double(x$value)
+  for (column in c("prior", "response", "statistic")) {
+    x[[column]] <- as.character(x[[column]])
+  }
+  x <- tibble::as_tibble(x)[names(contract)]
+  structure(x, class = c("bmmtools_prior_check", class(x)), ...)
+}
+
+#' @noRd
+check_prior_check_contract <- function(x, call = rlang::caller_env()) {
+  missing <- setdiff(names(prior_check_contract()), names(x))
+  if (length(missing) > 0L) {
+    cli::cli_abort(
+      "This {.cls bmmtools_prior_check} is missing the column{?s} \\
+       {.val {missing}}.",
+      call = call
+    )
+  }
+  invisible(x)
+}
+
+#' @noRd
+#' @importFrom dplyr dplyr_reconstruct
+#' @exportS3Method dplyr::dplyr_reconstruct
+dplyr_reconstruct.bmmtools_prior_check <- function(data, template) {
+  if (!all(names(prior_check_contract()) %in% names(data))) {
+    return(tibble::as_tibble(data))
+  }
+  NextMethod()
+}
+
+#' Subset a prior-check object
+#'
+#' As for [`[.bmmtools_recovery`]: `dplyr::select()` on a tibble subclass
+#' subsets through `[` and never reaches `dplyr_reconstruct()`, so
+#' without this method a verb that drops a contract column would return a
+#' broken object still wearing the class.
+#'
+#' @param x A `bmmtools_prior_check` object.
+#' @param ... Passed to the tibble method.
+#' @return A prior-check object while the contract holds, a plain tibble
+#'   once it does not.
+#' @export
+`[.bmmtools_prior_check` <- function(x, ...) {
+  demote_if_incomplete(NextMethod(), names(prior_check_contract()))
+}
+
+#' Compare prior sets on the observable scale
+#'
+#' One row per response and statistic, one column per prior set. With
+#' exactly two sets a `difference` column is appended, the second minus
+#' the first. Read it as an equivalence table: two priors are equivalent
+#' on the observable scale where the differences are negligible. With three or
+#' more sets there is no unambiguous contrast, so none is added.
+#'
+#' @param object A `bmmtools_prior_check` from [prior_check()].
+#' @param ... Not used.
+#'
+#' @return A `bmmtools_prior_check_summary` tibble.
+#'
+#' @export
+summary.bmmtools_prior_check <- function(object, ...) {
+  check_prior_check_contract(object)
+  sets <- attr(object, "sets") %||% unique(object$prior)
+  key <- paste(object$response, object$statistic, sep = "\r")
+  keys <- unique(key)
+  first <- match(keys, key)
+
+  out <- tibble::tibble(
+    response = object$response[first],
+    statistic = object$statistic[first]
+  )
+  for (set in sets) {
+    in_set <- ifelse(object$prior == set, key, NA_character_)
+    out[[set]] <- object$value[match(keys, in_set)]
+  }
+  if (length(sets) == 2L) {
+    out$difference <- out[[sets[[2L]]]] - out[[sets[[1L]]]]
+  }
+
+  structure(out, class = c("bmmtools_prior_check_summary", class(out)))
+}
+
+#' @rdname summary.bmmtools_prior_check
+#' @export
+summary.bmmtools_prior_check_summary <- function(object, ...) {
+  object
+}
+
+#' Format and print a prior check
+#'
+#' The header names the model and the prior sets compared, because a
+#' table of floor rates without them cannot be read. Where a rate is `NA`
+#' the reason is printed as a sentence rather than left as a blank cell.
+#'
+#' @param x A `bmmtools_prior_check` object.
+#' @param ... Not used.
+#'
+#' @return `format()` returns a character vector; `print()` returns `x`
+#'   invisibly.
+#'
+#' @export
+format.bmmtools_prior_check <- function(x, ...) {
+  check_prior_check_contract(x)
+  if (nrow(x) == 0L) {
+    return(c("<bmmtools_prior_check>", "Nothing was summarised."))
+  }
+  model <- attr(x, "model")
+  sets <- attr(x, "sets") %||% unique(x$prior)
+  n_draws <- attr(x, "n_draws")
+
+  header <- c(
+    "<bmmtools_prior_check>",
+    paste0(
+      "Model: ", model$name %||% class(model)[[2L]] %||% "unknown",
+      "; ", length(sets), " prior set", if (length(sets) != 1L) "s", ": ",
+      paste(sets, collapse = ", "), "."
+    ),
+    paste0(
+      "Prior-predictive draws per set: ",
+      if (is.null(n_draws)) "unknown" else n_draws, "."
+    ),
+    ""
+  )
+
+  rates <- x$value[x$statistic %in% c("floor_rate", "ceiling_rate")]
+  note <- character(0)
+  if (length(rates) > 0L && anyNA(rates)) {
+    note <- c(
+      "",
+      paste0(
+        "The floor and ceiling rates are NA: no response range is known ",
+        "for this model. Give `range`, or a `summary` of your own."
+      )
+    )
+  }
+
+  c(header, utils::capture.output(print(summary(x))), note)
+}
+
+#' @rdname format.bmmtools_prior_check
+#' @export
+print.bmmtools_prior_check <- function(x, ...) {
+  cat(format(x, ...), sep = "\n")
+  invisible(x)
+}
+
+#' @rdname format.bmmtools_prior_check
+#' @export
+print.bmmtools_prior_check_summary <- function(x, ...) {
   print(tibble::as_tibble(x), n = Inf, width = Inf)
   invisible(x)
 }

@@ -1,5 +1,5 @@
 # Tests for inverse_link(), written against
-# dev/spec-milestone-1-score-layer.md section 1.
+# local/dev/spec-milestone-1-score-layer.md section 1.
 #
 # The closed forms below are written out independently of the
 # implementation on purpose: a test that calls the function it is testing

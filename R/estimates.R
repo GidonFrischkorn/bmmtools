@@ -1,5 +1,5 @@
 # The estimates tibble: the single contract between the run layer and the
-# score layer (ARCHITECTURE.md decision 1, spec section 2).
+# score layer (local/ARCHITECTURE.md decision 1, spec section 2).
 #
 # extract_estimates() is the only score-layer function that touches a fit
 # object. Everything downstream of it --- recover(), the metrics, the
@@ -10,7 +10,7 @@
 #'
 #' Column names and their `typeof()`, in contract order. The first nine
 #' are the apabayes `parameters` columns; `level` and `id` are the
-#' bmmtools additions (ARCHITECTURE.md decision 14).
+#' bmmtools additions (local/ARCHITECTURE.md decision 14).
 #'
 #' @return A named character vector: column name to storage type.
 #' @noRd

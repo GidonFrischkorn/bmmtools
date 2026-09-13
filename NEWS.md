@@ -1,5 +1,20 @@
 # bmmtools 0.0.0.9000
 
+* `prior_check()` shows what your priors say the data should look like.
+  The draws come from `bmm(sample_prior = "only")` through
+  `fit_cached()`, so the prior being checked is exactly the prior bmm
+  fits with, and the result is on the observable scale: the share of
+  prior-predictive draws at the floor and the ceiling of the response and
+  the 50th, 90th and 95th percentiles, or any `summary(yrep, data)` you
+  write. The floor and the ceiling are derived from the model where they
+  are known (`0` and the trial count for the signal-detection models,
+  plus or minus pi for the circular ones) and are `NA` where they are
+  not, rather than invented. Pass a named list of priors to fit each one
+  and compare them: `summary()` then gives one column per prior set and,
+  with exactly two, their difference.
+* `plot_prior_check()` draws the prior-predictive distribution, one thin
+  line per draw with the observed response over it, as a histogram for a
+  discrete response, or the summary statistics themselves.
 * `simulate_recovery()` turns a bmm model and population values on the
   link scale into a data set and the truth that produced it: subject
   values are drawn on the link scale, converted with `inverse_link()`,
@@ -67,4 +82,4 @@
   per parameter, with interval bars and an identity line.
 * `inverse_link()` transforms a vector from the link scale to the natural
   scale for the twelve links bmm uses.
-* Package skeleton and design record (`ARCHITECTURE.md`), Milestone 0.
+* Package skeleton, Milestone 0.

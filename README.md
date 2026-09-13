@@ -1,7 +1,7 @@
 
 <!-- README.md is generated from README.Rmd. Please edit that file -->
 
-# bmmtools
+# bmmtools <img src="man/figures/logo.png" align="right" height="139" alt="" />
 
 <!-- badges: start -->
 <!-- badges: end -->
@@ -23,8 +23,7 @@ and only the scorer changes:
 other package does. Scoring dispatches on `brmsfit`, so a plain brms fit
 can be scored too; the model-aware generate layer needs bmm.
 
-The package is under construction. The design record is
-[ARCHITECTURE.md](ARCHITECTURE.md).
+The package is under construction.
 
 ## What bmmtools is not
 

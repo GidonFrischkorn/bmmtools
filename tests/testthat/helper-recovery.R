@@ -1,6 +1,6 @@
 # Hand-built estimates and truth tibbles for the recovery tests.
 #
-# recover() takes an estimates tibble as well as a fit (ARCHITECTURE.md
+# recover() takes an estimates tibble as well as a fit (local/ARCHITECTURE.md
 # decision 1), so the whole scoring path can be exercised without brms
 # and without a saved fit. These helpers build the two inputs.
 

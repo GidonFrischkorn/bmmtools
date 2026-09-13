@@ -1,5 +1,5 @@
 # Tests for recovery_grid(), written against
-# dev/spec-milestone-3-generate-layer.md section 4. The mock fitter and
+# local/dev/spec-milestone-3-generate-layer.md section 4. The mock fitter and
 # the registered extract_estimates() method for it (helper-generate.R)
 # run the pipeline end to end; bmm is needed for the generate step, a
 # sampler never is.

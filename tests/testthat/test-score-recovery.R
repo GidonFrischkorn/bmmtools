@@ -1,5 +1,5 @@
 # Tests for recover() and recover_subjects(), written against
-# dev/spec-milestone-1-score-layer.md sections 4 and 5.
+# local/dev/spec-milestone-1-score-layer.md sections 4 and 5.
 #
 # Almost everything here runs on hand-built estimates and truth tibbles.
 # That is the point of decision 1: the score layer is a contract between

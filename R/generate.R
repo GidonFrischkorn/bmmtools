@@ -1,4 +1,4 @@
-# The generate layer (spec 3, sections 1 and 2; ARCHITECTURE.md
+# The generate layer (spec 3, sections 1 and 2; local/ARCHITECTURE.md
 # decisions 3, 5, 13, 17).
 #
 # A bmm model plus population values on the link scale become data and

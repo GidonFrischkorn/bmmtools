@@ -1,5 +1,5 @@
 # Tests for extract_estimates(), written against
-# dev/spec-milestone-1-score-layer.md section 2.
+# local/dev/spec-milestone-1-score-layer.md section 2.
 #
 # Two kinds of test live here. Those that need the *structure* of a real
 # bmm fit read the saved fixture and skip when brms is absent; those that

@@ -1,5 +1,5 @@
 # Tests for check_convergence(), written against
-# dev/spec-milestone-2-run-layer.md section 1.
+# local/dev/spec-milestone-2-run-layer.md section 1.
 #
 # The gate's logic runs on two tables --- the summarise_draws() output
 # and the nuts_params() output --- so it is tested on hand-built tables

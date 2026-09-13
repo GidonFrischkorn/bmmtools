@@ -1,5 +1,5 @@
 # Tests for simulate_recovery(), recovery_formula() and the adapter
-# table, written against dev/spec-milestone-3-generate-layer.md sections
+# table, written against local/dev/spec-milestone-3-generate-layer.md sections
 # 1 to 3. They need bmm for the model objects and the r*() generators;
 # nothing here compiles Stan. Generated data are validated against bmm's
 # own data checks through brms's mock backend.

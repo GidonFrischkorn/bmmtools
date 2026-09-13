@@ -1,4 +1,4 @@
-# The generator adapters (spec 3, section 3; ARCHITECTURE.md decision 5).
+# The generator adapters (spec 3, section 3; local/ARCHITECTURE.md decision 5).
 #
 # bmm's r<model>() functions do not take the model's parameter names on
 # the model's link scale (measured 2026-09-07 and 2026-09-08), so each

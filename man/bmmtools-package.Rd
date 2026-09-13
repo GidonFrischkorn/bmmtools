@@ -6,6 +6,8 @@
 \alias{bmmtools-package}
 \title{bmmtools: Validate Cognitive Measurement Models Fitted with 'bmm'}
 \description{
+\if{html}{\figure{logo.png}{options: style='float: right' alt='logo' width='120'}}
+
 Parameter recovery, prior predictive checks on the observable scale, simulation-based calibration and reference cross-checks for cognitive measurement models fitted with the 'bmm' package. The validation half of the 'bmm' model-development workflow: bmm::use_model_template() scaffolds a model, 'bmmtools' checks that it can be estimated, that its priors are sane, that its implementation is correct and that it agrees with what is already known.
 }
 \seealso{

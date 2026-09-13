@@ -1,4 +1,4 @@
-# Recovery metrics (ARCHITECTURE.md decision 18).
+# Recovery metrics (local/ARCHITECTURE.md decision 18).
 #
 # Every function here takes plain numeric vectors and returns a scalar
 # (or a small named list). None of them touches a fit object, which is

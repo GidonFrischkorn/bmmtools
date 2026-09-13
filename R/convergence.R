@@ -1,4 +1,4 @@
-# The convergence gate (spec 2, section 1; ARCHITECTURE.md decision 18).
+# The convergence gate (spec 2, section 1; local/ARCHITECTURE.md decision 18).
 #
 # Thresholds are arguments with the seeds' defaults. The numbers come
 # from posterior::summarise_draws() and brms::nuts_params(), the only two

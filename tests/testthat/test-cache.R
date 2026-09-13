@@ -1,5 +1,5 @@
 # Tests for fit_cached(), written against
-# dev/spec-milestone-2-run-layer.md section 3.
+# local/dev/spec-milestone-2-run-layer.md section 3.
 #
 # Every test injects the mock fitter from helper-cache.R, so nothing here
 # needs bmm, brms or a compiler, and every file lands in a temporary

@@ -4,13 +4,26 @@
 .httr-oauth
 .DS_Store
 .quarto
+.Renviron
+.env
+Rplots.pdf
+
+# Private development material: design record, milestone specs,
+# evaluations, handoffs, session prompts. Maintainers only.
 local/
+/dev/
+/ARCHITECTURE.md
+
+# Coding-agent instructions and settings
+.claude/
+CLAUDE.md
+AGENTS.md
+
+# Build and check artefacts
 bmmtools_*.tar.gz
-bmmtools.Rcheck/
+*.Rcheck/
 docs/
 inst/doc/
 /doc/
 /Meta/
-.Renviron
-Rplots.pdf
 tests/testthat/_problems/

@@ -1,5 +1,5 @@
 # Tests for plot_recovery(), written against
-# dev/spec-milestone-1-score-layer.md section 7.
+# local/dev/spec-milestone-1-score-layer.md section 7.
 #
 # These assert structure, not pixels: which layers a plot has, how many
 # rows reach them and what the axes are labelled. A pixel comparison

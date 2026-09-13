@@ -125,3 +125,161 @@ plot_recovery <- function(x,
     ) +
     ggplot2::theme_bw()
 }
+
+# the prior check --------------------------------------------------------
+
+#' The prior-predictive draws of every set, one row per draw and column
+#'
+#' @return A data frame `prior`, `response`, `draw`, `value`.
+#' @noRd
+prior_draws_long <- function(x, draws) {
+  model <- attr(x, "model")
+  sets <- attr(x, "sets") %||% unique(x$prior)
+  pieces <- lapply(sets, function(set) {
+    shaped <- yrep_list(attr(x, "draws")[[set]], model)
+    per_response <- lapply(names(shaped), function(name) {
+      yrep <- shaped[[name]]
+      keep <- seq_len(min(draws, nrow(yrep)))
+      tibble::tibble(
+        prior = set,
+        response = name,
+        draw = paste0(set, "-", rep(keep, each = ncol(yrep))),
+        value = as.double(t(yrep[keep, , drop = FALSE]))
+      )
+    })
+    dplyr::bind_rows(per_response)
+  })
+  dplyr::bind_rows(pieces)
+}
+
+#' The observed response, when the model names a column that `data` has
+#'
+#' A prior check run over a design skeleton has no observed data to
+#' compare against, and a placeholder response column would draw a line
+#' that means nothing, so the overlay is dropped rather than faked.
+#'
+#' @noRd
+prior_observed <- function(x) {
+  data <- attr(x, "data")
+  model <- attr(x, "model")
+  columns <- unlist(model$resp_vars, use.names = FALSE)
+  columns <- intersect(columns, names(data))
+  if (length(columns) == 0L) {
+    return(NULL)
+  }
+  pieces <- lapply(columns, function(name) {
+    tibble::tibble(
+      response = name, value = as.double(data[[name]])
+    )
+  })
+  out <- dplyr::bind_rows(pieces)
+  out[is.finite(out$value), , drop = FALSE]
+}
+
+#' Plot what the priors say the data should look like
+#'
+#' The picture a prior check is read through. `"density"` draws each
+#' prior-predictive draw as its own thin line, so the spread *between*
+#' draws stays visible where a single pooled density would hide it;
+#' `"histogram"` is for a discrete response, where a density is
+#' misleading; `"statistic"` plots the summary table instead of the
+#' distribution.
+#'
+#' @param x A `bmmtools_prior_check` object from [prior_check()].
+#' @param type `"density"`, `"histogram"` or `"statistic"`.
+#' @param observed Overlay the observed response from the data the check
+#'   was run over. Dropped without comment when the model's response
+#'   column is not in that data, since a prior check over a design
+#'   skeleton has nothing observed to show. Ignored by `"statistic"`.
+#' @param draws Prior-predictive draws to show per set, capped at what
+#'   the object holds.
+#' @param facet_by A column of `x` to make panels from, or `NULL`.
+#'   `"response"` by default, so a model with several observables does
+#'   not share an axis.
+#' @param ... Not used.
+#'
+#' @return A `ggplot` object.
+#'
+#' @examples
+#' \dontrun{
+#' checked <- prior_check(model, formula, data)
+#' plot_prior_check(checked)
+#' plot_prior_check(checked, type = "statistic")
+#' }
+#'
+#' @export
+plot_prior_check <- function(x,
+                             type = c("density", "histogram", "statistic"),
+                             observed = TRUE,
+                             draws = 50,
+                             facet_by = "response",
+                             ...) {
+  rlang::check_dots_empty()
+  rlang::check_installed("ggplot2", "to plot a prior check.")
+
+  if (!inherits(x, "bmmtools_prior_check")) {
+    cli::cli_abort(
+      "{.arg x} must be a {.cls bmmtools_prior_check} object, \\
+       not {.obj_type_friendly {x}}."
+    )
+  }
+  check_prior_check_contract(x)
+  type <- rlang::arg_match(type)
+  check_plot_column(x, facet_by, "facet_by")
+  draws <- check_count(draws, "draws")
+
+  p <- if (identical(type, "statistic")) {
+    ggplot2::ggplot(
+      tibble::as_tibble(x),
+      ggplot2::aes(
+        x = .data$value, y = .data$statistic, colour = .data$prior
+      )
+    ) +
+      ggplot2::geom_point(size = 2) +
+      ggplot2::labs(x = "Value", y = NULL, colour = "Prior")
+  } else {
+    plot_prior_distribution(x, type, observed, draws)
+  }
+
+  if (!is.null(facet_by)) {
+    p <- p + ggplot2::facet_wrap(facet_by, scales = "free")
+  }
+  p + ggplot2::theme_bw()
+}
+
+#' The distribution half of [plot_prior_check()]
+#' @noRd
+plot_prior_distribution <- function(x, type, observed, draws) {
+  long <- prior_draws_long(x, draws)
+  p <- ggplot2::ggplot(
+    long, ggplot2::aes(x = .data$value, colour = .data$prior)
+  )
+
+  p <- if (identical(type, "histogram")) {
+    p + ggplot2::geom_histogram(
+      ggplot2::aes(y = ggplot2::after_stat(.data$density)),
+      bins = 30, fill = NA, position = "identity"
+    )
+  } else {
+    p + ggplot2::geom_density(
+      ggplot2::aes(group = .data$draw), alpha = 0.3, linewidth = 0.2
+    )
+  }
+
+  # the observed data go on top, so the prior-predictive layer stays
+  # first and a colour scale reads off it
+  if (isTRUE(observed)) {
+    seen <- prior_observed(x)
+    if (!is.null(seen) && nrow(seen) > 0L) {
+      p <- p + ggplot2::geom_density(
+        data = seen,
+        mapping = ggplot2::aes(x = .data$value),
+        inherit.aes = FALSE, linewidth = 1
+      )
+    }
+  }
+
+  p + ggplot2::labs(
+    x = "Prior-predicted observable", y = "Density", colour = "Prior"
+  )
+}

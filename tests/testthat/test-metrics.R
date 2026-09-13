@@ -1,5 +1,5 @@
 # Tests for the metric family, written against
-# dev/spec-milestone-1-score-layer.md section 3.
+# local/dev/spec-milestone-1-score-layer.md section 3.
 #
 # Every expected value here is either hand-computed (with the arithmetic
 # shown in a comment) or produced by an oracle in the test itself

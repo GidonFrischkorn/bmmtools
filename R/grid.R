@@ -1,4 +1,4 @@
-# The grid runner (spec 3, section 4; ARCHITECTURE.md decisions 8, 17,
+# The grid runner (spec 3, section 4; local/ARCHITECTURE.md decisions 8, 17,
 # 19).
 #
 # One durable file per cell, written as soon as the cell finishes; a

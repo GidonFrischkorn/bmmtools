@@ -22,9 +22,8 @@ A \code{bmmtools_recovery_summary} tibble with the columns \code{term},
 \code{ccc}, \code{ccc_scale_bias} and \code{ccc_location_bias}.
 }
 \description{
-One row per parameter and level, with the metrics of
-\code{ARCHITECTURE.md} decision 18: bias, RMSE, coverage, mean interval
-width, the Pearson correlation with a Fisher-z interval, the Spearman
+One row per parameter and level, with these recovery metrics: bias,
+RMSE, coverage, mean interval width, the Pearson correlation with a Fisher-z interval, the Spearman
 correlation and Lin's concordance with its two components.
 }
 \details{

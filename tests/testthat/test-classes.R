@@ -1,5 +1,5 @@
 # Tests for the recovery classes and their methods, written against
-# dev/spec-milestone-1-score-layer.md section 6.
+# local/dev/spec-milestone-1-score-layer.md section 6.
 
 # Truth varies across replications, so the correlation metrics are
 # estimable once there are three or more of them --- which is what makes

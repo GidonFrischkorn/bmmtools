@@ -4,7 +4,7 @@
 # Both entry points work on the estimates tibble, so a fit is one
 # accepted input among several rather than a requirement. That is what
 # makes the score layer testable and installable with no fitting package
-# present (ARCHITECTURE.md decisions 1 and 6).
+# present (local/ARCHITECTURE.md decisions 1 and 6).
 
 #' Turn whatever was passed as `fits` into an estimates tibble
 #'
@@ -96,7 +96,7 @@ check_truth <- function(truth, keys, call = rlang::caller_env()) {
 #' needs no argument. A bare `brmsfit` or a bare estimates tibble carries
 #' none, and rather than guess an identity link and report numbers on an
 #' unstated scale, scoring falls back to the link scale and says so
-#' (ARCHITECTURE.md decision 2).
+#' (local/ARCHITECTURE.md decision 2).
 #'
 #' @noRd
 resolve_links <- function(fits, links, scale, call = rlang::caller_env()) {
