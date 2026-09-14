@@ -52,40 +52,150 @@ check_grid <- function(grid, call = rlang::caller_env()) {
   invisible(grid)
 }
 
-#' Population values and SDs for one grid row
-#'
-#' A grid column named after a parameter overrides `pars` for that row;
-#' a column `sd_<parameter>` overrides `sds`.
-#'
+#' Apply a row's parameter and `sd_` columns
 #' @noRd
-row_values <- function(row, pars, sds) {
+override_pars <- function(pars, row) {
   for (p in intersect(names(row), names(pars))) {
     pars[[p]] <- row[[p]]
   }
-  sd_cols <- grep("^sd_", names(row), value = TRUE)
-  for (col in sd_cols) {
-    p <- sub("^sd_", "", col)
+  pars
+}
+
+#' @noRd
+override_sds <- function(sds, row) {
+  for (col in grep("^sd_", names(row), value = TRUE)) {
     if (is.null(sds)) sds <- numeric()
-    sds[p] <- row[[col]]
+    sds[sub("^sd_", "", col)] <- row[[col]]
   }
-  list(pars = pars, sds = sds)
+  sds
+}
+
+#' The two terms of a `cor_<a>__<b>` column
+#' @noRd
+cor_column_terms <- function(col) {
+  strsplit(sub("^cor_", "", col), "__", fixed = TRUE)[[1L]]
+}
+
+#' Apply a row's `cor_<a>__<b>` columns to a correlation matrix
+#'
+#' Starting from the identity over the named terms when `cors` is `NULL`;
+#' terms `cors` lacks are added as uncorrelated dimensions first.
+#'
+#' @noRd
+override_cors <- function(cors, row) {
+  cols <- grep("^cor_", names(row), value = TRUE)
+  if (length(cols) == 0L) {
+    return(cors)
+  }
+  terms <- unique(unlist(lapply(cols, cor_column_terms)))
+  have <- rownames(cors)
+  dims <- c(have, setdiff(terms, have))
+  out <- diag(length(dims))
+  dimnames(out) <- list(dims, dims)
+  if (!is.null(cors)) out[have, have] <- cors
+  for (col in cols) {
+    ab <- cor_column_terms(col)
+    out[ab[[1L]], ab[[2L]]] <- row[[col]]
+    out[ab[[2L]], ab[[1L]]] <- row[[col]]
+  }
+  out
+}
+
+#' Check the `cor_` columns of a grid against the model and covariates
+#' @noRd
+check_cor_columns <- function(grid, model, covariates,
+                              call = rlang::caller_env()) {
+  info <- model_parameters(model)
+  known <- c(info$free, info$fixed, names(covariates))
+  for (col in grep("^cor_", names(grid), value = TRUE)) {
+    ab <- cor_column_terms(col)
+    if (length(ab) != 2L || !all(ab %in% known) || ab[[1L]] == ab[[2L]]) {
+      cli::cli_abort(
+        c(
+          "Grid column {.val {col}} does not name two known terms as \\
+           {.code cor_<a>__<b>}.",
+          i = "Known: {.val {known}}."
+        ),
+        call = call
+      )
+    }
+  }
+  invisible(grid)
+}
+
+#' Population values, SDs and correlations for one grid row
+#'
+#' A grid column named after a parameter overrides `pars` for that row;
+#' a column `sd_<parameter>` overrides `sds`; a column `cor_<a>__<b>` sets
+#' one correlation. A `function(row)` default becomes a zero-argument
+#' function applying the same overrides, so that [simulate_recovery()]
+#' evaluates it under the cell seed.
+#'
+#' @noRd
+row_values <- function(row, pars, sds, cors = NULL) {
+  wrap <- function(value, override) {
+    if (is.function(value)) {
+      force(value)
+      return(function() override(value(row), row))
+    }
+    override(value, row)
+  }
+  list(
+    pars = wrap(pars, override_pars),
+    sds = wrap(sds, override_sds),
+    cors = wrap(cors, override_cors)
+  )
+}
+
+#' Fill in the truth tables a simulation written before 5.1 lacks
+#'
+#' Such a file has no SD, correlation or covariate tables; its draws were
+#' uncorrelated and it had no covariates, so they are rebuilt from `sds`.
+#'
+#' @noRd
+upgrade_simulation <- function(sim) {
+  if (!is.null(sim$truth$sd)) {
+    return(sim)
+  }
+  varying <- names(sim$sds)[sim$sds > 0]
+  cors <- diag(length(varying))
+  dimnames(cors) <- list(varying, varying)
+  sim$truth$sd <- sd_table(sim$sds)
+  sim$truth$cor <- cor_table(cors)
+  sim$truth$covariates <- tibble::tibble(
+    id = character(), term = character(), true_value = double()
+  )
+  sim["cors"] <- list(if (length(varying) < 2L) NULL else cors)
+  sim["covariates"] <- list(NULL)
+  sim
 }
 
 #' Simulate one cell, or read it back
+#'
+#' With `subjects = "fixed"`, later replications take replication 1's
+#' realised values as numbers, so a function-valued truth is not
+#' evaluated again.
+#'
 #' @noRd
 cell_simulation <- function(paths, model, values, row, seed, subjects,
-                            first_rep, generator) {
+                            first_rep, generator, covariates) {
   if (file.exists(paths$sim)) {
-    return(readRDS(paths$sim))
+    return(upgrade_simulation(readRDS(paths$sim)))
   }
   subject_pars <- NULL
   if (identical(subjects, "fixed") && !is.null(first_rep)) {
-    subject_pars <- first_rep$truth$subjects
+    subject_pars <- dplyr::bind_rows(
+      first_rep$truth$subjects, first_rep$truth$covariates
+    )
+    values <- list(
+      pars = first_rep$pars, sds = first_rep$sds, cors = first_rep$cors
+    )
   }
   sim <- simulate_recovery(
     model, values$pars,
     n_subjects = row$n_subjects, n_trials = row$n_trials,
-    sds = values$sds, subject_pars = subject_pars,
+    sds = values$sds, cors = values$cors, covariates = covariates,
+    subject_pars = subject_pars,
     generator = generator,
     seed = if (is.na(seed)) NULL else seed
   )
@@ -225,8 +335,15 @@ score_cells <- function(runs, sims, cells, links, scale = "natural") {
 #' @param grid A data frame with the columns `n_subjects` and `n_trials`.
 #'   A column named after a parameter gives that cell's population value
 #'   on the link scale, overriding `pars`; a column `sd_<parameter>`
-#'   overrides `sds`. A SimDesign design is a data frame and works as is.
-#' @param pars,sds Defaults for every cell, as in [simulate_recovery()].
+#'   overrides `sds`; a column `cor_<a>__<b>` sets the correlation of two
+#'   parameters or covariates (the names in either order). A SimDesign
+#'   design is a data frame and works as is.
+#' @param pars,sds,cors Defaults for every cell, as in
+#'   [simulate_recovery()]. Each may also be a `function(row)` of the
+#'   one-row grid data frame, evaluated under the cell's seed, which draws
+#'   new hyperparameters for every data set; the grid columns above are
+#'   applied to its result.
+#' @param covariates As in [simulate_recovery()], the same for every cell.
 #' @param dir Directory for the per-cell files; created if missing.
 #' @param reps Replications per cell.
 #' @param formula A `bmmformula`; `NULL` means [recovery_formula()] of the
@@ -238,7 +355,10 @@ score_cells <- function(runs, sims, cells, links, scale = "natural") {
 #'   `NULL` leaves everything unseeded and records `NA`.
 #' @param subjects `"redraw"` draws new subject values in every
 #'   replication; `"fixed"` draws them once per row and reuses them, so
-#'   replications become a simulated retest of the same people.
+#'   replications become a simulated retest of the same people. The
+#'   realised population values, SDs, correlations and covariate values of
+#'   replication 1 are reused too.
+#' @param re_cor Passed to [recovery_formula()] when `formula` is `NULL`.
 #' @param scale The scale recovery is scored on, as in [recover()];
 #'   natural by default.
 #' @param smoke `TRUE` runs the first two rows with two replications
@@ -288,17 +408,21 @@ recovery_grid <- function(model,
                           dir,
                           reps = 1,
                           sds = NULL,
+                          cors = NULL,
+                          covariates = NULL,
                           formula = NULL,
                           prior = NULL,
                           generator = NULL,
                           seed = NULL,
                           subjects = c("redraw", "fixed"),
+                          re_cor = c("none", "all"),
                           scale = c("natural", "link"),
                           smoke = FALSE,
                           preflight = TRUE,
                           ...,
                           .fitter = NULL) {
   subjects <- rlang::arg_match(subjects)
+  re_cor <- rlang::arg_match(re_cor)
   scale <- rlang::arg_match(scale)
   check_grid(grid)
   reps <- check_count(reps, "reps")
@@ -328,7 +452,11 @@ recovery_grid <- function(model,
     }
     models[[i]]
   }
-  formula_for <- function(i) formula %||% recovery_formula(model_for(i))
+  formula_for <- function(i) {
+    formula %||% recovery_formula(model_for(i), re_cor = re_cor)
+  }
+
+  check_cor_columns(grid, model_for(1L), covariates)
 
   cells <- grid_cells(nrow(grid), reps)
   cells$seed <- cell_seed(seed, cells$row, cells$rep)
@@ -338,11 +466,11 @@ recovery_grid <- function(model,
 
   simulate_cell <- function(i) {
     row <- grid[cells$row[[i]], , drop = FALSE]
-    values <- row_values(row, pars, sds)
+    values <- row_values(row, pars, sds, cors)
     sim <- cell_simulation(
       cell_paths(dir, cells$row[[i]], cells$rep[[i]]),
       model_for(cells$row[[i]]), values, row, cells$seed[[i]], subjects,
-      first_rep[[cells$row[[i]]]], generator
+      first_rep[[cells$row[[i]]]], generator, covariates
     )
     if (cells$rep[[i]] == 1L) first_rep[[cells$row[[i]]]] <<- sim
     sim

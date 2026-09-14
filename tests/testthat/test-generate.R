@@ -280,7 +280,248 @@ test_that("print gives one line with the model and the subject count", {
   expect_output(print(sim), "kappa")
 })
 
+# correlated truths (spec 5, section 5.1) ------------------------------
+
+m2p_cors <- function(r) {
+  m <- matrix(c(1, r, r, 1), 2, 2)
+  dimnames(m) <- rep(list(c("kappa", "thetat")), 2)
+  m
+}
+
+test_that("NULL and identity cors reproduce the Milestone 3 draws", {
+  skip_if_not_installed("bmm")
+  model <- bmm::mixture2p(resp_error = "y")
+  sds <- c(kappa = 0.3, thetat = 0.5)
+  run <- function(cors) {
+    simulate_recovery(
+      model, m2p_pars,
+      n_subjects = 6, n_trials = 10, sds = sds, cors = cors, seed = 9
+    )
+  }
+  none <- run(NULL)
+  identity <- run(m2p_cors(0))
+  expect_identical(identity$data, none$data)
+  expect_identical(identity$truth$subjects, none$truth$subjects)
+
+  oracle <- withr::with_seed(9, vapply(names(m2p_pars), function(p) {
+    m2p_pars[[p]] + stats::rnorm(6, 0, sds[[p]])
+  }, numeric(6)))
+  expect_identical(
+    none$truth$subjects$true_value,
+    as.double(oracle)
+  )
+})
+
+test_that("a covariate adds a data column and leaves the parameters alone", {
+  skip_if_not_installed("bmm")
+  model <- bmm::mixture2p(resp_error = "y")
+  sds <- c(kappa = 0.3, thetat = 0.5)
+  base <- simulate_recovery(
+    model, m2p_pars,
+    n_subjects = 5, n_trials = 4, sds = sds, cors = m2p_cors(0.5), seed = 2
+  )
+  cors <- diag(3)
+  dimnames(cors) <- rep(list(c("kappa", "thetat", "G")), 2)
+  cors["kappa", "thetat"] <- cors["thetat", "kappa"] <- 0.5
+  cors["G", "kappa"] <- cors["kappa", "G"] <- 0.4
+  with_g <- simulate_recovery(
+    model, m2p_pars,
+    n_subjects = 5, n_trials = 4, sds = sds, cors = cors,
+    covariates = list(G = c(mean = 100, sd = 15)), seed = 2
+  )
+
+  expect_identical(with_g$truth$subjects, base$truth$subjects)
+  expect_identical(with_g$data$y, base$data$y)
+  expect_named(with_g$data, c("id", "G", "y"))
+  expect_type(with_g$data$G, "double")
+  # subject-constant, and the same values as the covariate truth
+  per_id <- tapply(with_g$data$G, with_g$data$id, function(g) length(unique(g)))
+  expect_true(all(per_id == 1L))
+  expect_named(with_g$truth$covariates, c("id", "term", "true_value"))
+  expect_equal(nrow(with_g$truth$covariates), 5L)
+  expect_equal(
+    with_g$truth$covariates$true_value,
+    as.double(tapply(with_g$data$G, with_g$data$id, unique))
+  )
+  expect_equal(with_g$covariates, list(G = c(mean = 100, sd = 15)))
+})
+
+test_that("the truth gains sd, cor and covariate tables", {
+  skip_if_not_installed("bmm")
+  model <- bmm::sdt_yn(response = "hits", stimulus = "stim", n_trials = "n")
+  sim <- simulate_recovery(
+    model, c(d = 1, criterion = 0.3),
+    n_subjects = 4, n_trials = 10,
+    sds = c(d = 0.4, criterion = 0.2),
+    covariates = list(G = c(mean = 0, sd = 1)),
+    seed = 1
+  )
+  expect_equal(sim$truth$sd, tibble::tibble(
+    term = c("d", "criterion"), true_value = c(0.4, 0.2)
+  ))
+  expect_named(sim$truth$cor, c("term", "var1", "var2", "true_value"))
+  # all three pairs, names sorted within the pair in the C locale (upper
+  # case first), zeros included
+  expect_setequal(
+    sim$truth$cor$term, c("criterion__d", "G__d", "G__criterion")
+  )
+  pairs <- mapply(
+    function(a, b) identical(c(a, b), sort(c(a, b), method = "radix")),
+    sim$truth$cor$var1, sim$truth$cor$var2
+  )
+  expect_true(all(pairs))
+  expect_true(all(sim$truth$cor$true_value == 0))
+  expect_equal(dim(sim$cors), c(3L, 3L))
+
+  one_varying <- simulate_recovery(
+    model, c(d = 1, criterion = 0.3),
+    n_subjects = 4, n_trials = 10, sds = c(d = 0.4), seed = 1
+  )
+  expect_equal(one_varying$truth$sd$term, "d")
+  expect_equal(nrow(one_varying$truth$cor), 0L)
+  expect_named(one_varying$truth$cor, c("term", "var1", "var2", "true_value"))
+  expect_null(one_varying$cors)
+  expect_equal(nrow(one_varying$truth$covariates), 0L)
+  expect_null(one_varying$covariates)
+})
+
+test_that("large samples reach the requested correlation", {
+  skip_if_not_installed("bmm")
+  sim <- simulate_recovery(
+    bmm::mixture2p(resp_error = "y"), m2p_pars,
+    n_subjects = 4000, n_trials = 1,
+    sds = c(kappa = 0.3, thetat = 0.5), cors = m2p_cors(0.5),
+    covariates = list(G = c(mean = 0, sd = 1)),
+    generator = function(pars, n_trials, model) data.frame(y = 0),
+    seed = 11
+  )
+  wide <- subjects_wide(sim$truth$subjects)
+  expect_lt(abs(stats::cor(wide$kappa, wide$thetat) - 0.5), 0.05)
+  expect_equal(
+    sim$truth$cor$true_value[sim$truth$cor$term == "kappa__thetat"], 0.5
+  )
+})
+
+test_that("function-valued truths are evaluated under the seed and stored", {
+  skip_if_not_installed("bmm")
+  model <- bmm::mixture2p(resp_error = "y")
+  run <- function(seed) {
+    simulate_recovery(
+      model,
+      pars = function() c(kappa = stats::rnorm(1, 2, 0.1), thetat = 1),
+      sds = function() c(kappa = stats::runif(1, 0.2, 0.4), thetat = 0.5),
+      cors = function() m2p_cors(stats::runif(1, 0.2, 0.8)),
+      n_subjects = 5, n_trials = 3, seed = seed
+    )
+  }
+  a <- run(21)
+  b <- run(21)
+  c <- run(22)
+  expect_identical(a$truth, b$truth)
+  expect_false(identical(a$pars, c$pars))
+  expect_false(identical(a$cors, c$cors))
+  expect_type(a$pars, "double")
+  expect_true(is.matrix(a$cors))
+  expect_equal(
+    a$truth$cor$true_value, a$cors["kappa", "thetat"]
+  )
+})
+
+test_that("subject_pars skip the draw, and must carry the covariates", {
+  skip_if_not_installed("bmm")
+  model <- bmm::mixture2p(resp_error = "y")
+  covariates <- list(G = c(mean = 0, sd = 1))
+  first <- simulate_recovery(
+    model, m2p_pars,
+    n_subjects = 3, n_trials = 4, sds = c(kappa = 0.3),
+    covariates = covariates, seed = 5
+  )
+  given <- dplyr::bind_rows(first$truth$subjects, first$truth$covariates)
+  again <- simulate_recovery(
+    model, m2p_pars,
+    n_subjects = 3, n_trials = 4, sds = c(kappa = 0.3),
+    covariates = covariates, subject_pars = given, seed = 5
+  )
+  expect_identical(again$truth$covariates, first$truth$covariates)
+  expect_identical(again$truth$subjects, first$truth$subjects)
+  expect_identical(again$data$G, first$data$G)
+
+  expect_error(
+    simulate_recovery(
+      model, m2p_pars,
+      n_subjects = 3, n_trials = 4, sds = c(kappa = 0.3),
+      covariates = covariates, subject_pars = first$truth$subjects
+    ),
+    "G"
+  )
+})
+
+test_that("bad covariates and cors are refused with the offending name", {
+  skip_if_not_installed("bmm")
+  model <- bmm::mixture2p(resp_error = "y")
+  sim <- function(...) {
+    simulate_recovery(
+      model, m2p_pars,
+      n_subjects = 3, n_trials = 2, sds = c(kappa = 0.3, thetat = 0.2), ...
+    )
+  }
+  expect_error(sim(covariates = c(G = 1)), "covariates")
+  expect_error(sim(covariates = list(G = c(mean = 0))), "sd")
+  expect_error(sim(covariates = list(G = c(mean = 0, sd = 0))), "G")
+  expect_error(sim(covariates = list(y = c(mean = 0, sd = 1))), "y")
+  expect_error(sim(covariates = list(kappa = c(mean = 0, sd = 1))), "kappa")
+  expect_error(sim(covariates = list(id = c(mean = 0, sd = 1))), "id")
+  expect_error(sim(covariates = list(g_1 = c(mean = 0, sd = 1))), "g_1")
+  expect_error(sim(cors = m2p_cors(2)), "cors")
+  expect_error(sim(cors = function() "x"), "function")
+  expect_error(sim(pars = function() "x"), "function")
+  expect_error(sim(cors = function(row) diag(2)), "no arguments")
+  collide <- function(pars, n_trials, model) data.frame(y = 0, G = 1)
+  expect_error(
+    sim(covariates = list(G = c(mean = 0, sd = 1)), generator = collide),
+    "G"
+  )
+})
+
+test_that("print names covariates and nonzero correlations", {
+  skip_if_not_installed("bmm")
+  sim <- simulate_recovery(
+    bmm::mixture2p(resp_error = "y"), m2p_pars,
+    n_subjects = 3, n_trials = 2, sds = c(kappa = 0.3, thetat = 0.2),
+    cors = m2p_cors(0.5), covariates = list(G = c(mean = 0, sd = 1))
+  )
+  expect_output(print(sim), "covariates: G")
+  expect_output(print(sim), "kappa__thetat = 0.5")
+})
+
 # recovery_formula ------------------------------------------------------
+
+test_that("re_cor = 'all' correlates every random intercept", {
+  skip_if_not_installed("bmm")
+  skip_if_not_installed("brms")
+  model <- bmm::mixture2p(resp_error = "y")
+  f <- recovery_formula(model, re_cor = "all")
+  expect_equal(deparse(f$kappa), "kappa ~ 1 + (1 | p | id)")
+  expect_equal(deparse(f$thetat), "thetat ~ 1 + (1 | p | id)")
+  expect_identical(
+    deparse(recovery_formula(model, re_cor = "none")$kappa),
+    "kappa ~ 1 + (1 | id)"
+  )
+  sim <- simulate_recovery(
+    model, m2p_pars,
+    n_subjects = 4, n_trials = 20, sds = c(kappa = 0.3, thetat = 0.2),
+    cors = m2p_cors(0.5), covariates = list(G = c(mean = 0, sd = 1)), seed = 1
+  )
+  fit <- mock_bmm(f, sim$data, model)
+  expect_true(all(fit$ranef$cor))
+
+  mafc <- bmm::sdt_mafc(response = "k", n_trials = "n", m = 4)
+  expect_message(
+    single <- recovery_formula(mafc, re_cor = "all"),
+    "one"
+  )
+  expect_equal(deparse(single$d), "d ~ 1 + (1 | id)")
+})
 
 test_that("recovery_formula gives every free parameter a random intercept", {
   skip_if_not_installed("bmm")

@@ -21,6 +21,7 @@ S3method(summary,bmmtools_prior_check_summary)
 S3method(summary,bmmtools_recovery)
 S3method(summary,bmmtools_recovery_summary)
 export(check_convergence)
+export(cors_from_factors)
 export(extract_estimates)
 export(fit_cached)
 export(inverse_link)
@@ -36,5 +37,6 @@ export(simulate_recovery)
 importFrom(dplyr,dplyr_reconstruct)
 importFrom(rlang,
   "%||%",
+  ":=",
   .data
 )

@@ -4,12 +4,17 @@
 \alias{recovery_formula}
 \title{The default recovery formula: every free parameter gets a random intercept}
 \usage{
-recovery_formula(model, group = "id")
+recovery_formula(model, group = "id", re_cor = c("none", "all"))
 }
 \arguments{
 \item{model}{A \code{bmmodel}.}
 
 \item{group}{The grouping variable, \code{"id"} by default.}
+
+\item{re_cor}{Whether the random intercepts are correlated. \code{"none"}
+gives \code{(1 | id)}, independent random effects; \code{"all"} gives
+\code{(1 | p | id)}, one correlation matrix across every parameter, which
+is what the \code{model} estimator of correlation recovery reads.}
 }
 \value{
 A \code{bmmformula}.
@@ -24,6 +29,7 @@ from it.
 \examples{
 \dontrun{
 recovery_formula(bmm::mixture2p(resp_error = "y"))
+recovery_formula(bmm::mixture2p(resp_error = "y"), re_cor = "all")
 }
 
 }

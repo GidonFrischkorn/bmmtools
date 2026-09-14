@@ -28,6 +28,7 @@ reference:
   desc: Data sets and the truth that produced them.
   contents:
   - simulate_recovery
+  - cors_from_factors
   - recovery_formula
 
 - title: Fit and run a study

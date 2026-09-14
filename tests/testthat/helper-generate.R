@@ -70,6 +70,14 @@ registerS3method(
   envir = asNamespace("bmmtools")
 )
 
+#' A long subject truth (`id`, `term`, `true_value`) as one column per term
+#' @noRd
+subjects_wide <- function(subjects) {
+  terms <- unique(subjects$term)
+  out <- lapply(terms, function(t) subjects$true_value[subjects$term == t])
+  stats::setNames(as.data.frame(out), terms)
+}
+
 #' A two-row grid over subjects and trials
 #' @noRd
 small_grid <- function() {

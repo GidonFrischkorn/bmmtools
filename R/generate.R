@@ -132,9 +132,15 @@ check_sds <- function(sds, pars, model, call = rlang::caller_env()) {
 
 #' Validate subject values supplied instead of drawn
 #'
-#' @return A matrix, subjects by parameters, on the link scale.
+#' Covariates, when there are any, must be supplied too: drawing them
+#' afresh beside given subject values would break the correlation between
+#' the two.
+#'
+#' @return A matrix, subjects by parameters then covariates, on the link
+#'   scale.
 #' @noRd
 check_subject_pars <- function(subject_pars, pars, sds, n_subjects,
+                               covariates = NULL,
                                call = rlang::caller_env()) {
   needed <- c("id", "term", "true_value")
   bad <- !is.data.frame(subject_pars) ||
@@ -147,7 +153,7 @@ check_subject_pars <- function(subject_pars, pars, sds, n_subjects,
     )
   }
   ids <- as.character(seq_len(n_subjects))
-  varying <- names(sds)[sds > 0]
+  varying <- c(names(sds)[sds > 0], names(covariates))
   bad_id <- setdiff(unique(as.character(subject_pars$id)), ids)
   # a term outside `varying` would drive the data and be absent from the
   # subject truth, so it is refused rather than silently dropped
@@ -166,9 +172,9 @@ check_subject_pars <- function(subject_pars, pars, sds, n_subjects,
     )
   }
   values <- matrix(
-    pars,
-    nrow = n_subjects, ncol = length(pars), byrow = TRUE,
-    dimnames = list(ids, names(pars))
+    c(pars, rep(NA_real_, length(covariates))),
+    nrow = n_subjects, ncol = length(pars) + length(covariates), byrow = TRUE,
+    dimnames = list(ids, c(names(pars), names(covariates)))
   )
   for (term in unique(subject_pars$term)) {
     rows <- subject_pars[subject_pars$term == term, , drop = FALSE]
@@ -184,28 +190,17 @@ check_subject_pars <- function(subject_pars, pars, sds, n_subjects,
   }
   missing <- setdiff(varying, unique(subject_pars$term))
   if (length(missing) > 0L) {
+    # nolint next: object_usage_linter. Used by cli's glue interpolation.
+    what <- if (all(missing %in% names(covariates))) {
+      "covariate"
+    } else {
+      "varying term"
+    }
     cli::cli_abort(
-      "{.arg subject_pars} must give the varying parameter{?s} \\
-       {.val {missing}}.",
+      "{.arg subject_pars} must give the {what}{?s} {.val {missing}}.",
       call = call
     )
   }
-  values
-}
-
-#' Draw subject values on the link scale
-#'
-#' @return A matrix, subjects by parameters.
-#' @noRd
-draw_subject_pars <- function(pars, sds, n_subjects) {
-  values <- vapply(names(pars), function(p) {
-    pars[[p]] + stats::rnorm(n_subjects, 0, sds[[p]])
-  }, numeric(n_subjects))
-  values <- matrix(
-    values,
-    nrow = n_subjects,
-    dimnames = list(as.character(seq_len(n_subjects)), names(pars))
-  )
   values
 }
 
@@ -230,11 +225,20 @@ natural_pars <- function(link_values, model) {
 #' through the mock backend in the tests, cover the rest.
 #'
 #' @noRd
-check_generated <- function(data, model, call = rlang::caller_env()) {
+check_generated <- function(data, model, covariate_names = NULL,
+                            call = rlang::caller_env()) {
   if (!is.data.frame(data)) {
     cli::cli_abort(
       "The generator must return a data frame, \\
        not {.obj_type_friendly {data}}.",
+      call = call
+    )
+  }
+  clash <- intersect(covariate_names, names(data))
+  if (length(clash) > 0L) {
+    cli::cli_abort(
+      "The generator returned column{?s} {.val {clash}}, which {?is/are} \\
+       also {?a/} covariate name{?s}.",
       call = call
     )
   }
@@ -263,8 +267,9 @@ with_seed_if <- function(seed, expr) {
 
 #' The truth tables of a simulation, on the link scale
 #' @noRd
-truth_tables <- function(pars, sds, values) {
+truth_tables <- function(pars, sds, values, cors = NULL, covariates = NULL) {
   varying <- names(sds)[sds > 0]
+  cov_names <- names(covariates)
   population <- tibble::tibble(
     term = names(pars),
     true_value = as.double(unname(pars))
@@ -274,12 +279,25 @@ truth_tables <- function(pars, sds, values) {
     term = rep(varying, each = nrow(values)),
     true_value = as.double(values[, varying, drop = TRUE])
   )
-  if (length(varying) == 0L) {
-    subjects <- tibble::tibble(
-      id = character(), term = character(), true_value = double()
+  empty <- tibble::tibble(
+    id = character(), term = character(), true_value = double()
+  )
+  if (length(varying) == 0L) subjects <- empty
+  covariate_rows <- empty
+  if (length(cov_names) > 0L) {
+    covariate_rows <- tibble::tibble(
+      id = rep(rownames(values), times = length(cov_names)),
+      term = rep(cov_names, each = nrow(values)),
+      true_value = as.double(values[, cov_names, drop = TRUE])
     )
   }
-  list(population = population, subjects = subjects)
+  list(
+    population = population,
+    subjects = subjects,
+    sd = sd_table(sds),
+    cor = cor_table(cors),
+    covariates = covariate_rows
+  )
 }
 
 #' Simulate data from a bmm model with known parameters
@@ -297,15 +315,27 @@ truth_tables <- function(pars, sds, values) {
 #' @param pars Named numeric: population values **on the link scale
 #'   under bmm's parameter names**, one per estimated parameter. A
 #'   fixed parameter may be given too, in which case the generator uses
-#'   that value.
+#'   that value. May also be a function with no arguments returning such
+#'   a vector, evaluated under `seed`, for random hyperparameters.
 #' @param n_subjects,n_trials Subjects, and trials per subject and per
 #'   row of the generator's layout (for `sdt_yn`, per stimulus class).
 #' @param sds Named numeric: between-subject standard deviations on the
 #'   link scale. A parameter not named does not vary. `NULL` means no
-#'   parameter varies.
+#'   parameter varies. May be a function, as `pars`.
+#' @param cors A correlation matrix between subject values on the link
+#'   scale, with the parameter and covariate names as dimnames; terms it
+#'   does not name are uncorrelated. `NULL` means none are correlated. May
+#'   be a function, as `pars`. [cors_from_factors()] builds one from
+#'   factor loadings.
+#' @param covariates Observed, error-free person variables drawn jointly
+#'   with the parameters: a named list of `c(mean = , sd = )`. Each
+#'   becomes a subject-constant data column after `id`. A name must be
+#'   syntactic, contain no `_`, and differ from the model's parameters and
+#'   columns.
 #' @param subject_pars A data frame `id`, `term`, `true_value` (link
 #'   scale) of subject values to use instead of drawing them, so that
-#'   replications can share the same simulated people.
+#'   replications can share the same simulated people. With `covariates`
+#'   it must give their values too.
 #' @param generator A function `(pars, n_trials, model)` returning one
 #'   subject's rows as a data frame with the model's column names;
 #'   `pars` is a named list on the natural scale, fixed parameters
@@ -314,18 +344,31 @@ truth_tables <- function(pars, sds, values) {
 #'   and the generator; `NULL` leaves the random number generator alone.
 #'
 #' @return A list of class `bmmtools_simulation` with `data` (a tibble,
-#'   `id` first), `truth` (a list of two tibbles, `population` with
-#'   `term` and `true_value`, `subjects` with `id`, `term` and
-#'   `true_value`, both on the link scale), the validated `pars` and
-#'   `sds`, `n_subjects`, `n_trials`, `seed` (`NA` when none), `model`
-#'   and `generator`.
+#'   `id` first, then any covariates), `truth` (a list of tibbles on the
+#'   link scale: `population` with `term` and `true_value`; `subjects`
+#'   with `id`, `term` and `true_value`; `sd` with `term` and
+#'   `true_value`; `cor` with `term`, `var1`, `var2` and `true_value`;
+#'   `covariates` with `id`, `term` and `true_value`), the realised
+#'   `pars`, `sds`, `cors` (the full matrix over varying parameters then
+#'   covariates, `NULL` with fewer than two) and `covariates`,
+#'   `n_subjects`, `n_trials`, `seed` (`NA` when none), `model` and
+#'   `generator`.
 #'
 #' @details
 #' Adapters exist for `sdt_yn`, `sdt_mafc`, `ezdm` (three parameters),
 #' `ddm`, `mixture2p` and `sdm`. Every other model takes a `generator`.
-#' The truth for the subjects lists only the parameters that vary,
-#' because a parameter that does not vary has nothing person-level to
-#' recover.
+#' The truth for the subjects and for the SDs lists only the parameters
+#' that vary, because a parameter that does not vary has nothing
+#' person-level to recover.
+#'
+#' **Correlated draws.** Subject values and covariates are one
+#' multivariate normal draw, `Z %*% chol(cors)`, over the varying
+#' parameters in `pars` order and then the covariates, scaled by the SDs
+#' afterwards. Without correlations this gives exactly the values an
+#' uncorrelated draw gave in earlier versions, so seeded simulations
+#' stay reproducible; adding a covariate never changes the parameter
+#' values. A correlation pair is named `<a>__<b>`, the two names sorted
+#' in the C locale.
 #'
 #' @examples
 #' \dontrun{
@@ -346,14 +389,14 @@ simulate_recovery <- function(model,
                               n_subjects,
                               n_trials,
                               sds = NULL,
+                              cors = NULL,
+                              covariates = NULL,
                               subject_pars = NULL,
                               generator = NULL,
                               seed = NULL) {
   check_model(model)
-  pars <- check_pars(pars, model)
   n_subjects <- check_count(n_subjects, "n_subjects")
   n_trials <- check_count(n_trials, "n_trials")
-  sds <- check_sds(sds, pars, model)
   if (!is.null(seed) && (!is.numeric(seed) || length(seed) != 1L)) {
     cli::cli_abort("{.arg seed} must be a single number or {.code NULL}.")
   }
@@ -378,19 +421,31 @@ simulate_recovery <- function(model,
     )
   }
 
-  supplied <- NULL
-  if (!is.null(subject_pars)) {
-    supplied <- check_subject_pars(subject_pars, pars, sds, n_subjects)
-  }
+  covariates <- check_covariates(covariates, model)
+  cov_names <- names(covariates)
 
+  # functions first, under the seed and in a fixed order, so that random
+  # hyperparameters continue the stream the subject draws then take
   out <- with_seed_if(seed, {
-    values <- supplied
-    if (is.null(values)) values <- draw_subject_pars(pars, sds, n_subjects)
+    pars <- check_pars(resolve_truth_arg(pars, "pars"), model)
+    sds <- check_sds(resolve_truth_arg(sds, "sds"), pars, model)
+    cors <- check_cors(
+      resolve_truth_arg(cors, "cors", want = "matrix"), pars, sds, covariates
+    )
+    parts <- NULL
+    values <- if (is.null(subject_pars)) {
+      parts <- draw_parameter_values(pars, sds, cors, n_subjects)
+      parts$values
+    } else {
+      check_subject_pars(subject_pars, pars, sds, n_subjects, covariates)
+    }
     pieces <- lapply(seq_len(n_subjects), function(i) {
       # keep the names when the matrix has a single column
-      link_values <- stats::setNames(values[i, ], colnames(values))
+      link_values <- stats::setNames(
+        values[i, names(pars)], names(pars)
+      )
       rows <- generator(natural_pars(link_values, model), n_trials, model)
-      check_generated(rows, model)
+      check_generated(rows, model, cov_names)
       rows <- tibble::as_tibble(rows)
       tibble::add_column(
         rows,
@@ -398,15 +453,35 @@ simulate_recovery <- function(model,
         .before = 1L
       )
     })
-    list(data = dplyr::bind_rows(pieces), values = values)
+    data <- dplyr::bind_rows(pieces)
+    # covariates are drawn after the generator, so their random numbers
+    # never shift the ones that produced the responses
+    if (!is.null(parts)) {
+      values <- draw_covariate_values(parts, cors, covariates)
+    }
+    for (g in rev(cov_names)) {
+      data <- tibble::add_column(
+        data,
+        !!g := unname(values[as.integer(data$id), g]),
+        .after = "id"
+      )
+    }
+    list(
+      data = data, values = values,
+      pars = pars, sds = sds, cors = cors
+    )
   })
 
   structure(
     list(
       data = out$data,
-      truth = truth_tables(pars, sds, out$values),
-      pars = pars,
-      sds = sds,
+      truth = truth_tables(
+        out$pars, out$sds, out$values, out$cors, covariates
+      ),
+      pars = out$pars,
+      sds = out$sds,
+      cors = if (nrow(out$cors) < 2L) NULL else out$cors,
+      covariates = covariates,
       n_subjects = n_subjects,
       n_trials = n_trials,
       seed = if (is.null(seed)) NA_real_ else as.double(seed),
@@ -420,11 +495,28 @@ simulate_recovery <- function(model,
 #' @export
 print.bmmtools_simulation <- function(x, ...) {
   varying <- names(x$sds)[x$sds > 0]
+  extra <- character()
+  if (length(x$covariates) > 0L) {
+    extra <- c(extra, paste0(
+      "; covariates: ", paste(names(x$covariates), collapse = ", ")
+    ))
+  }
+  nonzero <- x$truth$cor[x$truth$cor$true_value != 0, , drop = FALSE]
+  if (!is.null(nonzero) && nrow(nonzero) > 0L) {
+    extra <- c(extra, paste0(
+      "; nonzero correlations: ",
+      paste0(
+        nonzero$term, " = ", signif(nonzero$true_value, 3),
+        collapse = ", "
+      )
+    ))
+  }
   cat(
     "<bmmtools_simulation> ", x$model$name %||% class(x$model)[[2L]], ": ",
     x$n_subjects, " subjects, ", x$n_trials, " trials, ",
     nrow(x$data), " rows; varying: ",
     if (length(varying) == 0L) "none" else paste(varying, collapse = ", "),
+    extra,
     "\n",
     sep = ""
   )
@@ -441,21 +533,38 @@ print.bmmtools_simulation <- function(x, ...) {
 #'
 #' @param model A `bmmodel`.
 #' @param group The grouping variable, `"id"` by default.
+#' @param re_cor Whether the random intercepts are correlated. `"none"`
+#'   gives `(1 | id)`, independent random effects; `"all"` gives
+#'   `(1 | p | id)`, one correlation matrix across every parameter, which
+#'   is what the `model` estimator of correlation recovery reads.
 #'
 #' @return A `bmmformula`.
 #'
 #' @examples
 #' \dontrun{
 #' recovery_formula(bmm::mixture2p(resp_error = "y"))
+#' recovery_formula(bmm::mixture2p(resp_error = "y"), re_cor = "all")
 #' }
 #'
 #' @export
-recovery_formula <- function(model, group = "id") {
+recovery_formula <- function(model, group = "id", re_cor = c("none", "all")) {
   check_model(model)
+  re_cor <- rlang::arg_match(re_cor)
   rlang::check_installed("bmm", "to build a bmm formula.")
   free <- model_parameters(model)$free
+  if (identical(re_cor, "all") && length(free) < 2L) {
+    cli::cli_inform(
+      "The model estimates only one parameter, so there is nothing to \\
+       correlate; using {.code re_cor = \"none\"}."
+    )
+    re_cor <- "none"
+  }
+  bar <- if (identical(re_cor, "all")) " | p | " else " | "
   formulas <- lapply(free, function(p) {
-    stats::as.formula(paste0(p, " ~ 1 + (1 | ", group, ")"), env = globalenv())
+    stats::as.formula(
+      paste0(p, " ~ 1 + (1", bar, group, ")"),
+      env = globalenv()
+    )
   })
   do.call(bmm::bmf, formulas)
 }

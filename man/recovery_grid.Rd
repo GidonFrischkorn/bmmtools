@@ -11,11 +11,14 @@ recovery_grid(
   dir,
   reps = 1,
   sds = NULL,
+  cors = NULL,
+  covariates = NULL,
   formula = NULL,
   prior = NULL,
   generator = NULL,
   seed = NULL,
   subjects = c("redraw", "fixed"),
+  re_cor = c("none", "all"),
   scale = c("natural", "link"),
   smoke = FALSE,
   preflight = TRUE,
@@ -31,13 +34,21 @@ the design.}
 \item{grid}{A data frame with the columns \code{n_subjects} and \code{n_trials}.
 A column named after a parameter gives that cell's population value
 on the link scale, overriding \code{pars}; a column \verb{sd_<parameter>}
-overrides \code{sds}. A SimDesign design is a data frame and works as is.}
+overrides \code{sds}; a column \verb{cor_<a>__<b>} sets the correlation of two
+parameters or covariates (the names in either order). A SimDesign
+design is a data frame and works as is.}
 
-\item{pars, sds}{Defaults for every cell, as in \code{\link[=simulate_recovery]{simulate_recovery()}}.}
+\item{pars, sds, cors}{Defaults for every cell, as in
+\code{\link[=simulate_recovery]{simulate_recovery()}}. Each may also be a \verb{function(row)} of the
+one-row grid data frame, evaluated under the cell's seed, which draws
+new hyperparameters for every data set; the grid columns above are
+applied to its result.}
 
 \item{dir}{Directory for the per-cell files; created if missing.}
 
 \item{reps}{Replications per cell.}
+
+\item{covariates}{As in \code{\link[=simulate_recovery]{simulate_recovery()}}, the same for every cell.}
 
 \item{formula}{A \code{bmmformula}; \code{NULL} means \code{\link[=recovery_formula]{recovery_formula()}} of the
 cell's model.}
@@ -52,7 +63,11 @@ cell's row and replication, so a cell is reproducible on its own.
 
 \item{subjects}{\code{"redraw"} draws new subject values in every
 replication; \code{"fixed"} draws them once per row and reuses them, so
-replications become a simulated retest of the same people.}
+replications become a simulated retest of the same people. The
+realised population values, SDs, correlations and covariate values of
+replication 1 are reused too.}
+
+\item{re_cor}{Passed to \code{\link[=recovery_formula]{recovery_formula()}} when \code{formula} is \code{NULL}.}
 
 \item{scale}{The scale recovery is scored on, as in \code{\link[=recover]{recover()}};
 natural by default.}

@@ -10,6 +10,8 @@ simulate_recovery(
   n_subjects,
   n_trials,
   sds = NULL,
+  cors = NULL,
+  covariates = NULL,
   subject_pars = NULL,
   generator = NULL,
   seed = NULL
@@ -22,18 +24,32 @@ use, so the generated columns match.}
 \item{pars}{Named numeric: population values \strong{on the link scale
 under bmm's parameter names}, one per estimated parameter. A
 fixed parameter may be given too, in which case the generator uses
-that value.}
+that value. May also be a function with no arguments returning such
+a vector, evaluated under \code{seed}, for random hyperparameters.}
 
 \item{n_subjects, n_trials}{Subjects, and trials per subject and per
 row of the generator's layout (for \code{sdt_yn}, per stimulus class).}
 
 \item{sds}{Named numeric: between-subject standard deviations on the
 link scale. A parameter not named does not vary. \code{NULL} means no
-parameter varies.}
+parameter varies. May be a function, as \code{pars}.}
+
+\item{cors}{A correlation matrix between subject values on the link
+scale, with the parameter and covariate names as dimnames; terms it
+does not name are uncorrelated. \code{NULL} means none are correlated. May
+be a function, as \code{pars}. \code{\link[=cors_from_factors]{cors_from_factors()}} builds one from
+factor loadings.}
+
+\item{covariates}{Observed, error-free person variables drawn jointly
+with the parameters: a named list of \code{c(mean = , sd = )}. Each
+becomes a subject-constant data column after \code{id}. A name must be
+syntactic, contain no \verb{_}, and differ from the model's parameters and
+columns.}
 
 \item{subject_pars}{A data frame \code{id}, \code{term}, \code{true_value} (link
 scale) of subject values to use instead of drawing them, so that
-replications can share the same simulated people.}
+replications can share the same simulated people. With \code{covariates}
+it must give their values too.}
 
 \item{generator}{A function \verb{(pars, n_trials, model)} returning one
 subject's rows as a data frame with the model's column names;
@@ -45,11 +61,15 @@ and the generator; \code{NULL} leaves the random number generator alone.}
 }
 \value{
 A list of class \code{bmmtools_simulation} with \code{data} (a tibble,
-\code{id} first), \code{truth} (a list of two tibbles, \code{population} with
-\code{term} and \code{true_value}, \code{subjects} with \code{id}, \code{term} and
-\code{true_value}, both on the link scale), the validated \code{pars} and
-\code{sds}, \code{n_subjects}, \code{n_trials}, \code{seed} (\code{NA} when none), \code{model}
-and \code{generator}.
+\code{id} first, then any covariates), \code{truth} (a list of tibbles on the
+link scale: \code{population} with \code{term} and \code{true_value}; \code{subjects}
+with \code{id}, \code{term} and \code{true_value}; \code{sd} with \code{term} and
+\code{true_value}; \code{cor} with \code{term}, \code{var1}, \code{var2} and \code{true_value};
+\code{covariates} with \code{id}, \code{term} and \code{true_value}), the realised
+\code{pars}, \code{sds}, \code{cors} (the full matrix over varying parameters then
+covariates, \code{NULL} with fewer than two) and \code{covariates},
+\code{n_subjects}, \code{n_trials}, \code{seed} (\code{NA} when none), \code{model} and
+\code{generator}.
 }
 \description{
 The generate half of the engine: a model plus population values on
@@ -63,9 +83,18 @@ population values, converted to the natural scale through
 \details{
 Adapters exist for \code{sdt_yn}, \code{sdt_mafc}, \code{ezdm} (three parameters),
 \code{ddm}, \code{mixture2p} and \code{sdm}. Every other model takes a \code{generator}.
-The truth for the subjects lists only the parameters that vary,
-because a parameter that does not vary has nothing person-level to
-recover.
+The truth for the subjects and for the SDs lists only the parameters
+that vary, because a parameter that does not vary has nothing
+person-level to recover.
+
+\strong{Correlated draws.} Subject values and covariates are one
+multivariate normal draw, \code{Z \%*\% chol(cors)}, over the varying
+parameters in \code{pars} order and then the covariates, scaled by the SDs
+afterwards. Without correlations this gives exactly the values an
+uncorrelated draw gave in earlier versions, so seeded simulations
+stay reproducible; adding a covariate never changes the parameter
+values. A correlation pair is named \verb{<a>__<b>}, the two names sorted
+in the C locale.
 }
 \examples{
 \dontrun{
