@@ -8,6 +8,7 @@
 recover(
   fits,
   truth,
+  level = "population",
   scale = c("natural", "link"),
   links = NULL,
   ci_level = 0.95,
@@ -36,7 +37,13 @@ pipeline runs with no fitting package installed.}
 under bmm's own parameter names. \code{recover()} needs \code{term} and
 \code{true_value}; \code{recover_subjects()} also needs \code{id}. A \code{replication}
 column is used as a join key when present, and when it is absent the
-same generating values are scored against every replication.}
+same generating values are scored against every replication. When
+\code{recover()} scores several levels, a named list with a data frame for
+each, such as the \code{truth} of a \code{bmmtools_simulation}.}
+
+\item{level}{The levels \code{recover()} scores: \code{"population"} (the
+default), \code{"sd"} (the between-subject standard deviations), or
+\code{c("population", "sd")} for both.}
 
 \item{scale}{\code{"natural"} scores on the scale a reader interprets,
 \code{"link"} on the scale the model was estimated on. The choice
@@ -46,8 +53,10 @@ the correlations are not.}
 \item{links}{A named character vector mapping a term to one of the
 link names \code{\link[=inverse_link]{inverse_link()}} understands. \code{NULL} reads the link table
 from a \code{bmmfit}; with no table available, scoring falls back to the
-link scale and says so. A term with no entry is treated as
-\code{"identity"}.}
+link scale and says so. A term with no entry takes the link of the
+longest entry it starts with followed by \verb{_} (\code{kappa_task1} takes
+the link of \code{kappa}), and is treated as \code{"identity"} when there is
+none.}
 
 \item{ci_level}{The interval mass, passed to \code{\link[=extract_estimates]{extract_estimates()}}
 when \code{fits} is a fit.}
@@ -83,6 +92,11 @@ whether the interval covered.
 \code{recover_subjects()} is the person-level variant. It asks whether the
 model orders \emph{people} correctly, which is the question a reliability
 analysis needs and which population-level recovery cannot answer.
+
+Standard deviations are always scored on the link scale, the scale
+the model estimates them on. Under \code{scale = "natural"} a message says
+so, their \code{scale} column reads \code{"link"}, and the other rows and the
+object's \code{scale} attribute stay on the natural scale.
 
 A term in \code{truth} that no fit estimated produces a warning listing
 what was available, and is dropped. A term a fit estimated that

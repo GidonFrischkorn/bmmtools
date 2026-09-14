@@ -93,3 +93,31 @@ inverse_link <- function(x, link) {
     cloglog = -expm1(-exp(x))
   )
 }
+
+#' The link of a term, looked up by name and then by prefix
+#'
+#' Decision 27 names a task cell `<par>_<coef>` and a component parameter
+#' `<comp>_<par>`, so a link table keyed by parameter does not list those
+#' terms. The exact name wins; otherwise the longest name in `links` that
+#' is followed by `_` in the term, so that `kappa2_task1` takes the link
+#' of `kappa2` and not of `kappa`. A term with neither, such as a
+#' covariate, is `"identity"`.
+#'
+#' @param term A character vector of terms.
+#' @param links A named character vector or list mapping a parameter to a
+#'   link name, or `NULL`.
+#' @return A character vector of link names, one per term.
+#' @noRd
+link_of <- function(term, links) {
+  nms <- names(links)
+  vapply(term, function(t) {
+    if (t %in% nms) {
+      return(as.character(links[[t]]))
+    }
+    prefixes <- nms[startsWith(t, paste0(nms, "_"))]
+    if (length(prefixes) == 0L) {
+      return("identity")
+    }
+    as.character(links[[prefixes[[which.max(nchar(prefixes))]]]])
+  }, character(1), USE.NAMES = FALSE)
+}

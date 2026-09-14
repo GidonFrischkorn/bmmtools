@@ -218,3 +218,24 @@ test_that("a logical x errors rather than coercing silently", {
   # wrong; coercing to 1/0 would hide it.
   expect_error(inverse_link(c(TRUE, FALSE), "log"), "numeric")
 })
+
+# link_of (spec 5, naming D27) -------------------------------------------
+
+test_that("link_of finds a term's link by name, then by prefix", {
+  links <- c(kappa = "log", kappa2 = "softplus", thetat = "logit")
+
+  expect_equal(link_of("kappa", links), "log")
+  expect_equal(link_of("kappa_task1", links), "log")
+  # the longest prefix wins, so kappa2's cells do not take kappa's link
+  expect_equal(link_of("kappa2_task1", links), "softplus")
+  expect_equal(link_of("G", links), "identity")
+  # a prefix has to end at an underscore
+  expect_equal(link_of("kappax", links), "identity")
+  expect_equal(link_of("kappa", NULL), "identity")
+  # a list link table, as a bmm model carries it, works as well
+  expect_equal(link_of("thetat_task2", as.list(links)), "logit")
+  expect_equal(
+    link_of(c("kappa", "kappa2_x", "G"), links),
+    c("log", "softplus", "identity")
+  )
+})

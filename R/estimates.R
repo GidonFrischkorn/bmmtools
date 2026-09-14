@@ -239,7 +239,7 @@ population_estimates <- function(draws, ci_level, ci_method, drop_constants,
                                  call = rlang::caller_env()) {
   variables <- grep("^b_", posterior::variables(draws), value = TRUE)
   if (length(variables) == 0L) {
-    return(empty_estimates())
+    return(structure(empty_estimates(), n_found = 0L))
   }
 
   out <- summarise_selected(
@@ -247,10 +247,14 @@ population_estimates <- function(draws, ci_level, ci_method, drop_constants,
   )
   out$term <- strip_design_suffix(out$variable)
   out$id <- NA_character_
+  n_found <- nrow(out)
   out <- drop_constant_rows(out, drop_constants)
   check_unique_terms(out, "term", call = call)
 
-  as_estimates(out, "population", ci_level, ci_method)
+  structure(
+    as_estimates(out, "population", ci_level, ci_method),
+    n_found = n_found
+  )
 }
 
 #' Parse the group-level coefficient names of one grouping factor
@@ -348,10 +352,233 @@ subject_estimates <- function(draws, groups, group, ci_level, ci_method,
   out <- summarise_selected(sum_group_draws(draws, coefficients), ci_level)
   out$term <- coefficients$term[match(out$variable, coefficients$variable)]
   out$id <- coefficients$id[match(out$variable, coefficients$variable)]
+  n_found <- nrow(out)
   out <- drop_constant_rows(out, drop_constants)
   check_unique_terms(out, c("term", "id"), call = call)
 
-  as_estimates(out, "subject", ci_level, ci_method)
+  structure(
+    as_estimates(out, "subject", ci_level, ci_method),
+    n_found = n_found
+  )
+}
+
+#' Validate a `ranef` table: `NULL` or a data frame with the columns read
+#'
+#' `resp`, `dpar` and `nlpar` are optional, because brms fills them with
+#' empty strings where they do not apply and a non-brms source need not
+#' carry them at all.
+#'
+#' @noRd
+check_ranef <- function(ranef, call = rlang::caller_env()) {
+  if (is.null(ranef)) {
+    return(NULL)
+  }
+  if (!is.data.frame(ranef)) {
+    cli::cli_abort(
+      "{.arg ranef} must be a data frame, such as {.code fit$ranef}, \\
+       or {.code NULL}, not {.obj_type_friendly {ranef}}.",
+      call = call
+    )
+  }
+  missing <- setdiff(c("id", "group", "coef", "cor"), names(ranef))
+  if (length(missing) > 0L) {
+    cli::cli_abort(
+      "{.arg ranef} is missing the column{?s} {.val {missing}}.",
+      call = call
+    )
+  }
+  ranef
+}
+
+#' A column of a `ranef` table as character, empty strings when absent
+#' @noRd
+ranef_column <- function(ranef, column) {
+  if (!column %in% names(ranef)) {
+    return(rep("", nrow(ranef)))
+  }
+  out <- as.character(ranef[[column]])
+  out[is.na(out)] <- ""
+  out
+}
+
+#' The group-level coefficients of one grouping factor, from `ranef`
+#'
+#' brms names a coefficient inside `sd_` and `cor_` by its prefix ---
+#' `resp`, then `dpar` (unless it is `mu`), then `nlpar`, each followed by
+#' `_` when present --- and the coefficient: `kappa_Intercept` for a bmm
+#' parameter. Building the names from the table rather than parsing them
+#' out of the draws is what keeps a parameter name that itself contains
+#' `_` intact.
+#'
+#' The term is the parameter (`nlpar`, else `dpar`), or the coefficient
+#' when there is neither, as in `group_coefficients()`. `resp` is not part
+#' of the term until Milestone 8 prepends it.
+#'
+#' Columns are read as vectors, never by subsetting the table: brms gives
+#' it a class of its own whose `[` method needs brms loaded.
+#'
+#' @return A tibble with `variable` (the brms name without its `sd_`
+#'   prefix), `term`, `cor` and `block` (the correlation block id).
+#' @noRd
+ranef_coefficients <- function(ranef, group) {
+  rows <- as.character(ranef$group) == group
+  resp <- ranef_column(ranef, "resp")[rows]
+  dpar <- ranef_column(ranef, "dpar")[rows]
+  dpar[dpar == "mu"] <- ""
+  nlpar <- ranef_column(ranef, "nlpar")[rows]
+  coef <- as.character(ranef$coef)[rows]
+
+  prefix <- paste0(
+    ifelse(nzchar(resp), paste0(resp, "_"), ""),
+    ifelse(nzchar(dpar), paste0(dpar, "_"), ""),
+    ifelse(nzchar(nlpar), paste0(nlpar, "_"), "")
+  )
+  par <- ifelse(nzchar(nlpar), nlpar, dpar)
+  tibble::tibble(
+    variable = paste0(prefix, coef),
+    term = ifelse(nzchar(par), par, coef),
+    cor = as.logical(ranef$cor)[rows] %in% TRUE,
+    block = as.character(ranef$id)[rows]
+  )
+}
+
+#' Reduce a coefficient name inside `sd_`/`cor_` to its term
+#'
+#' `kappa_Intercept` becomes `kappa`, `Intercept` stays. Only for draws
+#' without a `ranef` table; `strip_design_suffix()` is not used because
+#' it also removes a `b_` prefix.
+#'
+#' @noRd
+drop_coefficient <- function(x) {
+  ifelse(grepl("_", x, fixed = TRUE), sub("_[^_]+$", "", x), x)
+}
+
+#' The `sd_` variables of one grouping factor and their terms
+#'
+#' With `ranef`, the names are built and looked up; without, every
+#' `sd_<group>__` variable is parsed. brms reserves `__` in variable
+#' names, so the prefix cannot also match another group's.
+#'
+#' @return A tibble with `variable` and `term`.
+#' @noRd
+sd_variables <- function(variables, group, ranef) {
+  prefix <- paste0("sd_", group, "__")
+  if (is.null(ranef)) {
+    found <- variables[startsWith(variables, prefix)]
+    rest <- substring(found, nchar(prefix) + 1L)
+    return(tibble::tibble(variable = found, term = drop_coefficient(rest)))
+  }
+  coefficients <- ranef_coefficients(ranef, group)
+  out <- tibble::tibble(
+    variable = paste0(prefix, coefficients$variable),
+    term = coefficients$term
+  )
+  out[out$variable %in% variables, ]
+}
+
+#' The `cor_` variables of one grouping factor and their pair terms
+#'
+#' With `ranef`, every pair of coefficients that brms correlates (`cor`
+#' is `TRUE` and the two share a block id) is looked up under both orders
+#' of its two names, because brms's order is not guaranteed. A pair
+#' neither order finds is not estimated and gets no row.
+#'
+#' @return A tibble with `variable`, `term`, `var1` and `var2`.
+#' @noRd
+cor_variables <- function(variables, group, ranef) {
+  prefix <- paste0("cor_", group, "__")
+  empty <- tibble::tibble(
+    variable = character(), term = character(),
+    var1 = character(), var2 = character()
+  )
+
+  if (is.null(ranef)) {
+    found <- variables[startsWith(variables, prefix)]
+    parts <- strsplit(substring(found, nchar(prefix) + 1L), "__", fixed = TRUE)
+    pairs <- lapply(seq_along(found)[lengths(parts) == 2L], function(k) {
+      names <- drop_coefficient(parts[[k]])
+      c(variable = found[[k]], pair_term(names[[1L]], names[[2L]]))
+    })
+    return(dplyr::bind_rows(empty, pairs))
+  }
+
+  coefficients <- ranef_coefficients(ranef, group)
+  correlated <- coefficients[coefficients$cor, ]
+  if (nrow(correlated) < 2L) {
+    return(empty)
+  }
+  combos <- utils::combn(nrow(correlated), 2L)
+  pairs <- lapply(seq_len(ncol(combos)), function(k) {
+    a <- correlated[combos[1L, k], ]
+    b <- correlated[combos[2L, k], ]
+    if (!identical(a$block, b$block)) {
+      return(NULL)
+    }
+    candidates <- paste0(
+      prefix,
+      c(
+        paste0(a$variable, "__", b$variable),
+        paste0(b$variable, "__", a$variable)
+      )
+    )
+    hit <- candidates[candidates %in% variables]
+    if (length(hit) == 0L) {
+      return(NULL)
+    }
+    c(variable = hit[[1L]], pair_term(a$term, b$term))
+  })
+  dplyr::bind_rows(empty, pairs)
+}
+
+#' Standard-deviation and correlation rows of one grouping factor
+#'
+#' One body for both levels, since they differ only in which variables
+#' they select. A parameter with several coefficients would give two SDs
+#' under one term; until Milestone 5.4 names them apart that is an error,
+#' checked on the coefficients so that the cor level refuses it too.
+#'
+#' @noRd
+group_level_estimates <- function(draws, groups, group, ranef, level,
+                                  ci_level, ci_method, drop_constants,
+                                  call = rlang::caller_env()) {
+  group <- resolve_group(group, groups, call = call)
+  variables <- posterior::variables(draws)
+
+  if (is.null(ranef)) {
+    check_unique_terms(sd_variables(variables, group, NULL), "term",
+      call = call
+    )
+  } else {
+    check_unique_terms(ranef_coefficients(ranef, group), "term", call = call)
+  }
+
+  selected <- if (identical(level, "sd")) {
+    sd_variables(variables, group, ranef)
+  } else {
+    cor_variables(variables, group, ranef)
+  }
+  if (nrow(selected) == 0L) {
+    if (identical(level, "sd")) {
+      cli::cli_abort(
+        "The fit has no group-level standard deviations for {.val {group}}.",
+        call = call
+      )
+    }
+    return(structure(empty_estimates(), n_found = 0L))
+  }
+
+  out <- summarise_selected(
+    posterior::subset_draws(draws, variable = selected$variable), ci_level
+  )
+  out$term <- selected$term[match(out$variable, selected$variable)]
+  out$id <- NA_character_
+  n_found <- nrow(out)
+  out <- drop_constant_rows(out, drop_constants)
+
+  structure(
+    as_estimates(out, level, ci_level, ci_method),
+    n_found = n_found
+  )
 }
 
 #' Turn a draws object into the estimates tibble
@@ -360,6 +587,10 @@ subject_estimates <- function(draws, groups, group, ci_level, ci_method,
 #' and the fit's grouping factors rather than the fit itself, so that
 #' structures a saved fixture does not contain --- two grouping factors,
 #' a chain with missing draws --- can be tested without running Stan.
+#'
+#' `ranef` is the fit's `ranef` table. The `"sd"` and `"cor"` levels use
+#' it to build brms's variable names; without it they parse the names,
+#' which is enough for hand-built draws.
 #'
 #' @noRd
 estimates_from_draws <- function(draws,
@@ -370,13 +601,15 @@ estimates_from_draws <- function(draws,
                                  ci_method = "eti",
                                  drop_constants = TRUE,
                                  converged = NA,
+                                 ranef = NULL,
                                  call = rlang::caller_env()) {
   converged <- check_converged(converged, call = call)
   level <- rlang::arg_match(
-    level, c("population", "subject"),
+    level, c("population", "subject", "sd", "cor"),
     multiple = TRUE,
     error_call = call
   )
+  ranef <- check_ranef(ranef, call = call)
   if (!is.numeric(ci_level) || length(ci_level) != 1L || is.na(ci_level)) {
     cli::cli_abort(
       "{.arg ci_level} must be a single number, \\
@@ -420,10 +653,22 @@ estimates_from_draws <- function(draws,
       call = call
     )
   }
+  for (grouped in intersect(c("sd", "cor"), level)) {
+    pieces[[grouped]] <- group_level_estimates(
+      draws, groups, group, ranef, grouped,
+      ci_level, ci_method, drop_constants,
+      call = call
+    )
+  }
+  # Counted before constants are dropped. Testing the draws for any
+  # `^(b|sd|cor)_` name instead would report a level that found nothing
+  # to extract (no cor_ draws in an uncorrelated fit) as one whose every
+  # parameter was dropped.
+  n_found <- sum(vapply(pieces, function(p) attr(p, "n_found"), integer(1)))
   out <- dplyr::bind_rows(pieces)
+  attr(out, "n_found") <- NULL
 
-  had_terms <- any(grepl("^b_", posterior::variables(draws)))
-  if (nrow(out) == 0L && had_terms && drop_constants) {
+  if (nrow(out) == 0L && n_found > 0L && drop_constants) {
     cli::cli_warn(c(
       "Every parameter was dropped as a constant.",
       i = "Use {.code drop_constants = FALSE} to see them with their \\
@@ -451,11 +696,12 @@ estimates_from_draws <- function(draws,
 #'
 #' @param fit A `brmsfit`, and so also a `bmmfit`.
 #' @param level Which estimates to return: `"population"`, `"subject"`,
-#'   or both, in which case they are stacked and the `level` column
-#'   separates them.
-#' @param group The grouping factor subject-level estimates come from.
-#'   `NULL` uses the fit's only grouping factor and errors if there is
-#'   more than one.
+#'   `"sd"` (the group-level standard deviations), `"cor"` (the
+#'   group-level correlations), or several, in which case they are
+#'   stacked and the `level` column separates them.
+#' @param group The grouping factor subject-level, SD and correlation
+#'   estimates come from. `NULL` uses the fit's only grouping factor and
+#'   errors if there is more than one.
 #' @param ci_level The interval mass, a single number strictly between 0
 #'   and 1.
 #' @param ci_method The interval type. Only `"eti"`, the equal-tailed
@@ -475,9 +721,8 @@ estimates_from_draws <- function(draws,
 #'
 #' @return A tibble with the columns `term`, `estimate`, `ci_low`,
 #'   `ci_high`, `ci_method`, `ci_level`, `rhat`, `ess_bulk`, `ess_tail`,
-#'   `level`, `id` and `converged`, in that order. `id` is `NA` for
-#'   population rows; `converged` is the same value on every row of a
-#'   fit.
+#'   `level`, `id` and `converged`, in that order. `id` is `NA` except on
+#'   subject rows; `converged` is the same value on every row of a fit.
 #'
 #' @details
 #' Subject-level estimates are the **per-draw sum** of the population
@@ -486,9 +731,13 @@ estimates_from_draws <- function(draws,
 #' truth can be compared against them directly; taking the sum after
 #' summarising instead would give intervals that are too narrow.
 #'
-#' Group-level standard deviations are not returned in this version.
-#' `level = "sd"` is reserved for them, so that adding them later does
-#' not change what the existing levels mean.
+#' Standard deviations and correlations are returned on the link scale,
+#' with `id` set to `NA`. An SD row carries the parameter's name
+#' (`kappa`); a correlation row carries the two names joined by `__` and
+#' sorted in the C locale (`kappa__thetat`), whichever order brms used.
+#' A correlation the model does not estimate has no row. A parameter
+#' with more than one group-level coefficient is an error in this
+#' version.
 #'
 #' @examples
 #' \dontrun{
@@ -513,7 +762,9 @@ extract_estimates.default <- function(fit, ...) {
 #' @rdname extract_estimates
 #' @export
 extract_estimates.brmsfit <- function(fit,
-                                      level = c("population", "subject"),
+                                      level = c(
+                                        "population", "subject", "sd", "cor"
+                                      ),
                                       group = NULL,
                                       ci_level = 0.95,
                                       ci_method = "eti",
@@ -541,6 +792,7 @@ extract_estimates.brmsfit <- function(fit,
     ci_method = ci_method,
     drop_constants = drop_constants,
     converged = converged,
+    ranef = fit$ranef,
     # so a bad argument is reported against extract_estimates(), not
     # against the internal helper that happened to inspect it
     call = rlang::current_env()

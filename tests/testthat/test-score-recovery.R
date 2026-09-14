@@ -737,3 +737,187 @@ test_that("a list of fits becomes one replication each", {
   # correlation guard applies at n = 2
   expect_true(is.na(summary(out)$r[1]))
 })
+
+# the sd level (spec 5, section 5.2) ---------------------------------------
+
+# Population and SD estimates for kappa and thetat, and the truth as a
+# bmmtools_simulation carries it.
+sd_case <- function() {
+  estimates <- dplyr::bind_rows(
+    fake_estimates(c("kappa", "thetat"), estimate = c(2, 1)),
+    fake_estimates(
+      c("kappa", "thetat"),
+      estimate = c(0.3, 0.6), ci_low = c(0.1, 0.4), ci_high = c(0.5, 0.9),
+      level = "sd"
+    )
+  )
+  truth <- list(
+    population = fake_truth(c("kappa", "thetat"), true_value = c(2.1, 1.1)),
+    subjects = tibble::tibble(
+      id = "1", term = "kappa", true_value = 2
+    ),
+    sd = fake_truth(c("kappa", "thetat"), true_value = c(0.35, 0.5)),
+    cor = tibble::tibble(
+      term = "kappa__thetat", var1 = "kappa", var2 = "thetat",
+      true_value = 0
+    )
+  )
+  list(estimates = estimates, truth = truth)
+}
+
+test_that("recover scores sd rows on the link scale with one message", {
+  case <- sd_case()
+  links <- c(kappa = "log", thetat = "logit")
+
+  msgs <- testthat::capture_messages(
+    out <- recover(
+      case$estimates, case$truth,
+      level = c("population", "sd"), scale = "natural", links = links
+    )
+  )
+  expect_length(msgs, 1L)
+  expect_match(msgs, "link scale")
+
+  expect_s3_class(out, "bmmtools_recovery")
+  expect_equal(attr(out, "scale"), "natural")
+  pop <- out[out$level == "population", ]
+  sds <- out[out$level == "sd", ]
+  expect_equal(pop$scale, c("natural", "natural"))
+  expect_equal(pop$estimate, c(exp(2), stats::plogis(1)))
+  expect_equal(sds$scale, c("link", "link"))
+  expect_equal(sds$term, c("kappa", "thetat"))
+  expect_equal(sds$estimate, c(0.3, 0.6))
+  expect_equal(sds$true_value, c(0.35, 0.5))
+  expect_equal(sds$bias, c(0.3, 0.6) - c(0.35, 0.5))
+  expect_equal(sds$covered, c(TRUE, TRUE))
+})
+
+test_that("sd rows on the link scale are silent", {
+  case <- sd_case()
+  expect_silent(
+    out <- recover(
+      case$estimates, case$truth,
+      level = c("population", "sd"), scale = "link"
+    )
+  )
+  expect_setequal(out$level, c("population", "sd"))
+  expect_true(all(out$scale == "link"))
+})
+
+test_that("with no links the fallback message is the only one", {
+  case <- sd_case()
+  msgs <- testthat::capture_messages(
+    out <- recover(case$estimates, case$truth, level = c("population", "sd"))
+  )
+  expect_length(msgs, 1L)
+  expect_match(msgs, "No link information")
+  expect_true(all(out$scale == "link"))
+})
+
+test_that("one level takes a data frame, several a named list", {
+  case <- sd_case()
+
+  sds <- recover(case$estimates, case$truth$sd, level = "sd", scale = "link")
+  expect_true(all(sds$level == "sd"))
+  expect_equal(nrow(sds), 2L)
+
+  expect_error(
+    recover(case$estimates, case$truth, level = "sd", scale = "link"),
+    "data frame"
+  )
+  expect_error(
+    recover(
+      case$estimates, case$truth$sd,
+      level = c("population", "sd"), scale = "link"
+    ),
+    "named list"
+  )
+  expect_error(
+    recover(
+      case$estimates, case$truth["population"],
+      level = c("population", "sd"), scale = "link"
+    ),
+    "sd"
+  )
+})
+
+test_that("the default level is population and ignores sd rows", {
+  case <- sd_case()
+  out <- recover(case$estimates, case$truth$population, scale = "link")
+  expect_true(all(out$level == "population"))
+  expect_equal(nrow(out), 2L)
+})
+
+test_that("recover refuses levels it does not score", {
+  case <- sd_case()
+  expect_error(
+    recover(case$estimates, case$truth$subjects, level = "subject")
+  )
+  expect_error(recover(case$estimates, case$truth, level = "cor"))
+})
+
+test_that("a level with no estimates is an error naming it", {
+  estimates <- fake_estimates("kappa", estimate = 1)
+  expect_error(
+    recover(
+      estimates, fake_truth("kappa", 1),
+      level = "sd", scale = "link"
+    ),
+    "sd"
+  )
+})
+
+test_that("summary treats sd rows like population rows", {
+  terms <- c("kappa", "thetat")
+  estimates <- dplyr::bind_rows(lapply(1:4, function(rep) {
+    fake_estimates(
+      terms,
+      estimate = c(0.3, 0.6) + rep / 20, level = "sd", replication = rep
+    )
+  }))
+  truth <- fake_truth(terms, true_value = c(0.3, 0.6))
+  rec <- recover(estimates, truth, level = "sd", scale = "link")
+  out <- summary(rec)
+
+  expect_equal(out$level, c("sd", "sd"))
+  expect_equal(out$n, c(4, 4))
+  expect_equal(out$n_replications, c(4L, 4L))
+  kappa <- rec[rec$term == "kappa", ]
+  expect_equal(
+    out$bias[out$term == "kappa"],
+    metric_bias(kappa$estimate, kappa$true_value)
+  )
+})
+
+test_that("format names the levels and says SD rows are link scale", {
+  case <- sd_case()
+  out <- suppressMessages(recover(
+    case$estimates, case$truth,
+    level = c("population", "sd"), scale = "natural",
+    links = c(kappa = "log", thetat = "logit")
+  ))
+  text <- paste(format(out), collapse = "\n")
+  expect_match(text, "population, sd")
+  expect_match(text, "SD rows are on the link scale")
+
+  population_only <- recover(
+    case$estimates, case$truth$population,
+    scale = "link"
+  )
+  expect_no_match(
+    paste(format(population_only), collapse = "\n"), "SD rows"
+  )
+})
+
+test_that("natural scale looks a term's link up by prefix", {
+  estimates <- fake_estimates(
+    c("kappa_task1", "kappa2_task1"),
+    estimate = c(1, 1)
+  )
+  truth <- fake_truth(c("kappa_task1", "kappa2_task1"), true_value = c(1, 1))
+  out <- recover(
+    estimates, truth,
+    scale = "natural", links = c(kappa = "log", kappa2 = "identity")
+  )
+  expect_equal(out$estimate, c(exp(1), 1))
+})

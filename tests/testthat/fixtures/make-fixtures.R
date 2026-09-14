@@ -98,3 +98,94 @@ if (size_mb > 1) {
 }
 cat("variables:\n")
 print(posterior::variables(posterior::as_draws_array(fit)))
+
+# ---- mixture2p-cor-draws.rds (Milestone 5.2) --------------------------
+#
+# A separate block with its own seed, so that rebuilding it does not touch
+# the random stream of the fixture above and the fixture above does not
+# have to be rebuilt to get it. To run it on its own, start R in the
+# package root, read this file with readLines(), find this marker line
+# with grep(), and eval(parse()) the lines from the marker to the end.
+#
+# It saves the draws, not the fit: the "sd" and "cor" levels read only
+# the draws, `fit$ranef` and the link table, and a draws array is much
+# smaller than a brmsfit.
+
+library(bmm)
+
+set.seed(20260914)
+
+fixture_dir <- "tests/testthat/fixtures"
+stopifnot(dir.exists(fixture_dir))
+
+cor_n_subjects <- 20L
+cor_n_trials <- 50L
+cor_pop <- c(kappa = log(8), thetat = stats::qlogis(0.75))
+cor_sd <- c(kappa = 0.3, thetat = 0.5)
+cor_rho <- 0.5
+
+cor_z <- matrix(stats::rnorm(cor_n_subjects * 2L), nrow = cor_n_subjects)
+cor_x <- cor_z %*% chol(matrix(c(1, cor_rho, cor_rho, 1), 2L))
+cor_kappa <- cor_pop[["kappa"]] + cor_sd[["kappa"]] * cor_x[, 1L]
+cor_thetat <- cor_pop[["thetat"]] + cor_sd[["thetat"]] * cor_x[, 2L]
+
+cor_data <- do.call(rbind, lapply(seq_len(cor_n_subjects), function(i) {
+  data.frame(
+    id = factor(i, levels = seq_len(cor_n_subjects)),
+    y = bmm::rmixture2p(
+      n = cor_n_trials,
+      mu = 0,
+      kappa = exp(cor_kappa[i]),
+      p_mem = stats::plogis(cor_thetat[i])
+    )
+  )
+}))
+
+cor_backend <- if (
+  requireNamespace("cmdstanr", quietly = TRUE) &&
+    !inherits(try(cmdstanr::cmdstan_version(), silent = TRUE), "try-error")
+) {
+  "cmdstanr"
+} else {
+  "rstan"
+}
+
+cor_fit <- bmm::bmm(
+  formula = bmm::bmf(
+    kappa ~ 1 + (1 | p | id),
+    thetat ~ 1 + (1 | p | id)
+  ),
+  data = cor_data,
+  model = bmm::mixture2p(resp_error = "y"),
+  chains = 2,
+  iter = 500,
+  warmup = 250,
+  refresh = 0,
+  backend = cor_backend,
+  cores = 2,
+  seed = 20260914
+)
+
+# Only the population, SD and correlation draws are kept. Keeping the 40
+# subject deviations as well gave 0.162 MB against 0.019 MB (measured
+# 2026-09-14), and the 5.2 tests do not read them.
+cor_draws <- posterior::as_draws_array(cor_fit)
+cor_keep <- grep("^(b|sd|cor)_", posterior::variables(cor_draws), value = TRUE)
+cor_draws <- posterior::subset_draws(cor_draws, variable = cor_keep)
+
+cor_file <- file.path(fixture_dir, "mixture2p-cor-draws.rds")
+saveRDS(
+  list(
+    draws = cor_draws,
+    ranef = cor_fit$ranef,
+    links = cor_fit$bmm$model$links
+  ),
+  cor_file,
+  compress = "xz"
+)
+
+cat(sprintf("backend: %s\n", cor_backend))
+cor_size_mb <- file.size(cor_file) / 1024^2
+cat(sprintf("mixture2p-cor-draws.rds: %.3f MB\n", cor_size_mb))
+cat("variables:\n")
+print(posterior::variables(cor_draws))

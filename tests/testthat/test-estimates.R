@@ -212,11 +212,16 @@ test_that("both levels stack and the level column separates them", {
   )
 })
 
-test_that("group-level SDs are not returned in Milestone 1", {
+test_that("group-level SDs are absent unless requested", {
   skip_if_not_installed("brms")
-  out <- extract_estimates(mixture2p_fit(), level = c("population", "subject"))
+  fit <- mixture2p_fit()
+  out <- extract_estimates(fit, level = c("population", "subject"))
   expect_false(any(grepl("^sd_", out$term)))
   expect_false("sd" %in% out$level)
+
+  sds <- extract_estimates(fit, level = "sd")
+  expect_setequal(sds$term, c("kappa", "thetat"))
+  expect_true(all(sds$level == "sd"))
 })
 
 # grouping factors ------------------------------------------------------
@@ -317,7 +322,7 @@ test_that("ci_method beyond eti is refused rather than ignored", {
 
 test_that("an unknown level is refused", {
   draws <- fake_draws(list(b_kappa_Intercept = seq_len(80) / 10))
-  expect_error(estimates_from_draws(draws, character(0), level = "sd"))
+  expect_error(estimates_from_draws(draws, character(0), level = "bogus"))
 })
 
 # the apabayes contract -------------------------------------------------
@@ -385,4 +390,325 @@ test_that("a bad argument is blamed on extract_estimates, not a helper", {
     paste(deparse(conditionCall(bad_group)), collapse = " "),
     "^extract_estimates\\("
   )
+})
+
+# the sd and cor levels (spec 5, section 5.2) -----------------------------
+
+# Draws with two SDs and one correlation. `cor_name` lets a test put the
+# two coefficient names of the correlation in either order.
+sd_cor_draws <- function(cor_name = "cor_id__kappa_Intercept__thetat_Intercept",
+                         seed = 11) {
+  withr::local_seed(seed)
+  values <- list(
+    b_kappa_Intercept = stats::rnorm(80),
+    b_thetat_Intercept = stats::rnorm(80),
+    sd_id__kappa_Intercept = abs(stats::rnorm(80)),
+    sd_id__thetat_Intercept = abs(stats::rnorm(80)),
+    cor = stats::runif(80, -1, 1)
+  )
+  names(values)[[5L]] <- cor_name
+  fake_draws(values)
+}
+
+test_that("the sd level gives one row per parameter under its bare name", {
+  draws <- sd_cor_draws()
+  out <- estimates_from_draws(draws, "id", level = "sd", ranef = fake_ranef())
+
+  expect_named(out, names(estimates_contract()))
+  for (col in names(estimates_contract())) {
+    expect_type(out[[col]], estimates_contract()[[col]])
+  }
+  expect_equal(out$term, c("kappa", "thetat"))
+  expect_true(all(out$level == "sd"))
+  expect_true(all(is.na(out$id)))
+
+  oracle <- posterior::summarise_draws(
+    posterior::subset_draws(
+      draws,
+      variable = c("sd_id__kappa_Intercept", "sd_id__thetat_Intercept")
+    ),
+    "median",
+    ~ posterior::quantile2(.x, probs = probs_from(0.95)),
+    posterior::default_convergence_measures()
+  )
+  expect_equal(out$estimate, oracle$median)
+  expect_equal(out$ci_low, oracle$q2.5)
+  expect_equal(out$ci_high, oracle$q97.5)
+  expect_equal(out$rhat, oracle$rhat)
+  expect_equal(out$ess_bulk, oracle$ess_bulk)
+  expect_equal(out$ess_tail, oracle$ess_tail)
+})
+
+test_that("a cor row is named a__b and matches summarise_draws", {
+  draws <- sd_cor_draws()
+  out <- estimates_from_draws(draws, "id", level = "cor", ranef = fake_ranef())
+
+  expect_equal(nrow(out), 1L)
+  expect_equal(out$term, "kappa__thetat")
+  expect_equal(out$level, "cor")
+  expect_true(is.na(out$id))
+  oracle <- posterior::summarise_draws(
+    posterior::subset_draws(
+      draws,
+      variable = "cor_id__kappa_Intercept__thetat_Intercept"
+    ),
+    "median",
+    posterior::default_convergence_measures()
+  )
+  expect_equal(out$estimate, oracle$median)
+  expect_equal(out$rhat, oracle$rhat)
+})
+
+test_that("both orders of the names inside cor_ give the same row", {
+  forward <- sd_cor_draws("cor_id__kappa_Intercept__thetat_Intercept")
+  reversed <- sd_cor_draws("cor_id__thetat_Intercept__kappa_Intercept")
+
+  with_ranef <- lapply(list(forward, reversed), function(d) {
+    estimates_from_draws(d, "id", level = "cor", ranef = fake_ranef())
+  })
+  expect_equal(with_ranef[[1L]]$term, "kappa__thetat")
+  expect_identical(with_ranef[[1L]], with_ranef[[2L]])
+
+  # the ranef table lists thetat first: the term is still sorted
+  flipped <- estimates_from_draws(
+    forward, "id",
+    level = "cor", ranef = fake_ranef(c("thetat", "kappa"))
+  )
+  expect_identical(flipped, with_ranef[[1L]])
+
+  # without a ranef table the names are parsed, with the same result
+  parsed <- lapply(list(forward, reversed), function(d) {
+    estimates_from_draws(d, "id", level = "cor")
+  })
+  expect_identical(parsed[[1L]], with_ranef[[1L]])
+  expect_identical(parsed[[2L]], with_ranef[[1L]])
+})
+
+test_that("the pair term sorts in the C locale", {
+  withr::local_seed(3)
+  draws <- fake_draws(list(
+    sd_id__thetat_Intercept = abs(stats::rnorm(80)),
+    sd_id__Kappa_Intercept = abs(stats::rnorm(80)),
+    cor_id__thetat_Intercept__Kappa_Intercept = stats::runif(80, -1, 1)
+  ))
+  ranef <- fake_ranef(c("thetat", "Kappa"))
+  out <- estimates_from_draws(draws, "id", level = "cor", ranef = ranef)
+  expect_equal(out$term, "Kappa__thetat")
+})
+
+test_that("a ranef table without cor = TRUE gives no cor rows", {
+  draws <- sd_cor_draws()
+  expect_no_warning(
+    out <- estimates_from_draws(
+      draws, "id",
+      level = "cor", ranef = fake_ranef(cor = FALSE)
+    )
+  )
+  expect_equal(nrow(out), 0L)
+  expect_named(out, names(estimates_contract()))
+
+  # coefficients in different correlation blocks are not a pair either
+  apart <- estimates_from_draws(
+    draws, "id",
+    level = "cor", ranef = fake_ranef(id = c(1, 2))
+  )
+  expect_equal(nrow(apart), 0L)
+})
+
+test_that("a pair the fit does not estimate is absent, not NA", {
+  withr::local_seed(5)
+  draws <- fake_draws(list(
+    sd_id__a_Intercept = abs(stats::rnorm(80)),
+    sd_id__b_Intercept = abs(stats::rnorm(80)),
+    sd_id__c_Intercept = abs(stats::rnorm(80)),
+    cor_id__a_Intercept__c_Intercept = stats::runif(80, -1, 1)
+  ))
+  out <- estimates_from_draws(
+    draws, "id",
+    level = c("sd", "cor"), ranef = fake_ranef(c("a", "b", "c"))
+  )
+  expect_equal(out$term[out$level == "sd"], c("a", "b", "c"))
+  expect_equal(out$term[out$level == "cor"], "a__c")
+  expect_false(anyNA(out$estimate))
+})
+
+test_that("two grouping factors without group is an error at sd and cor", {
+  withr::local_seed(8)
+  draws <- fake_draws(list(
+    sd_id__kappa_Intercept = abs(stats::rnorm(80)),
+    sd_item__kappa_Intercept = abs(stats::rnorm(80))
+  ))
+  ranef <- rbind(
+    fake_ranef("kappa", group = "id"),
+    fake_ranef("kappa", group = "item")
+  )
+  for (level in c("sd", "cor")) {
+    err <- expect_error(
+      estimates_from_draws(draws, c("id", "item"), level = level, ranef = ranef)
+    )
+    expect_match(conditionMessage(err), "item")
+  }
+
+  out <- estimates_from_draws(
+    draws, c("id", "item"),
+    level = "sd", group = "item", ranef = ranef
+  )
+  expect_equal(out$term, "kappa")
+  item_draws <- as.vector(draws[, , "sd_item__kappa_Intercept"])
+  expect_equal(out$estimate, stats::median(item_draws))
+})
+
+test_that("a fit with no group-level effects errors at the sd level", {
+  draws <- fake_draws(list(b_kappa_Intercept = seq_len(80) / 10))
+  expect_error(
+    estimates_from_draws(draws, character(0), level = "sd"),
+    "no group-level effects"
+  )
+})
+
+test_that("a group with no SD draws is an error", {
+  draws <- fake_draws(list(
+    b_kappa_Intercept = seq_len(80) / 10,
+    `r_id__kappa[1,Intercept]` = seq_len(80) / 10
+  ))
+  expect_error(
+    estimates_from_draws(draws, "id", level = "sd"),
+    "standard deviation"
+  )
+})
+
+test_that("a dpar and a missing resp column are handled", {
+  withr::local_seed(9)
+  draws <- fake_draws(list(
+    sd_id__sigma_Intercept = abs(stats::rnorm(80)),
+    sd_id__Intercept = abs(stats::rnorm(80)),
+    cor_id__Intercept__sigma_Intercept = stats::runif(80, -1, 1)
+  ))
+  ranef <- data.frame(
+    id = 1, group = "id", coef = "Intercept",
+    dpar = c("sigma", ""), cor = TRUE,
+    stringsAsFactors = FALSE
+  )
+  out <- estimates_from_draws(
+    draws, "id",
+    level = c("sd", "cor"), ranef = ranef
+  )
+  # a coefficient with neither nlpar nor dpar keeps its coefficient name,
+  # as group_coefficients() does at the subject level
+  expect_setequal(out$term[out$level == "sd"], c("sigma", "Intercept"))
+  expect_equal(out$term[out$level == "cor"], "Intercept__sigma")
+})
+
+test_that("a resp column is part of the brms name", {
+  withr::local_seed(10)
+  draws <- fake_draws(list(
+    sd_id__y_kappa_Intercept = abs(stats::rnorm(80))
+  ))
+  ranef <- fake_ranef("kappa", resp = "y")
+  out <- estimates_from_draws(draws, "id", level = "sd", ranef = ranef)
+  expect_equal(out$term, "kappa")
+})
+
+test_that("a parameter with several coefficients is an error at sd", {
+  withr::local_seed(12)
+  draws <- fake_draws(list(
+    sd_id__kappa_Intercept = abs(stats::rnorm(80)),
+    sd_id__kappa_setsize2 = abs(stats::rnorm(80)),
+    cor_id__kappa_Intercept__kappa_setsize2 = stats::runif(80, -1, 1)
+  ))
+  ranef <- fake_ranef(
+    c("kappa", "kappa"),
+    coef = c("Intercept", "setsize2")
+  )
+  expect_error(
+    estimates_from_draws(draws, "id", level = "sd", ranef = ranef),
+    "kappa"
+  )
+  expect_error(
+    estimates_from_draws(draws, "id", level = "cor", ranef = ranef),
+    "kappa"
+  )
+  expect_error(estimates_from_draws(draws, "id", level = "sd"), "kappa")
+})
+
+test_that("a malformed ranef table is refused", {
+  draws <- sd_cor_draws()
+  expect_error(
+    estimates_from_draws(draws, "id", level = "sd", ranef = "id"),
+    "ranef"
+  )
+  expect_error(
+    estimates_from_draws(
+      draws, "id",
+      level = "sd", ranef = data.frame(group = "id")
+    ),
+    "coef"
+  )
+})
+
+test_that("every SD dropped as a constant warns", {
+  draws <- fake_draws(list(
+    sd_id__kappa_Intercept = 0.5,
+    sd_id__thetat_Intercept = 0.5
+  ))
+  expect_warning(
+    out <- estimates_from_draws(draws, "id", level = "sd"),
+    "constant"
+  )
+  expect_equal(nrow(out), 0L)
+})
+
+test_that("a level with nothing to extract does not claim constants", {
+  # an uncorrelated fit has population draws but no cor_ draws; that is
+  # not "every parameter was dropped as a constant"
+  withr::local_seed(13)
+  draws <- fake_draws(list(
+    b_kappa_Intercept = stats::rnorm(80),
+    sd_id__kappa_Intercept = abs(stats::rnorm(80))
+  ))
+  expect_no_warning(
+    out <- estimates_from_draws(
+      draws, "id",
+      level = "cor", ranef = fake_ranef("kappa", cor = FALSE)
+    )
+  )
+  expect_equal(nrow(out), 0L)
+
+  # the same holds for a population level with no b_ draws
+  expect_no_warning(
+    none <- estimates_from_draws(draws[, , 2L], "id", level = "population")
+  )
+  expect_equal(nrow(none), 0L)
+})
+
+test_that("extract_estimates reads sd rows and no cor rows off a real fit", {
+  skip_if_not_installed("brms")
+  fit <- mixture2p_fit()
+  expect_no_warning(out <- extract_estimates(fit, level = c("sd", "cor")))
+  expect_equal(out$term, c("kappa", "thetat"))
+  expect_true(all(out$level == "sd"))
+})
+
+test_that("the correlated fixture gives sd and cor rows with finite rhat", {
+  record <- mixture2p_cor_draws()
+  groups <- unique(as.character(record$ranef$group))
+  out <- estimates_from_draws(
+    record$draws, groups,
+    level = c("population", "sd", "cor"), ranef = record$ranef
+  )
+
+  sds <- out[out$level == "sd", ]
+  cors <- out[out$level == "cor", ]
+  expect_setequal(sds$term, c("kappa", "thetat"))
+  expect_equal(cors$term, "kappa__thetat")
+  expect_true(all(is.finite(sds$rhat)))
+  expect_true(all(is.finite(cors$rhat)))
+  expect_true(cors$ci_low >= -1 && cors$ci_high <= 1)
+
+  # parsing the names without the ranef table agrees
+  parsed <- estimates_from_draws(
+    record$draws, groups,
+    level = c("population", "sd", "cor")
+  )
+  expect_identical(parsed, out)
 })

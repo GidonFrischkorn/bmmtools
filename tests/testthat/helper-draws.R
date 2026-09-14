@@ -45,3 +45,39 @@ mixture2p_fit <- function() {
 mixture2p_truth <- function() {
   readRDS(test_path("fixtures", "mixture2p-truth.rds"))
 }
+
+#' The saved draws of a mixture2p fit with correlated random intercepts
+#'
+#' `list(draws, ranef, links)`: the `b_`, `sd_` and `cor_` draws of a fit
+#' with `(1 | p | id)`, its `ranef` table and its link table. Built by the
+#' second block of `fixtures/make-fixtures.R`.
+#'
+#' @noRd
+mixture2p_cor_draws <- function() {
+  readRDS(test_path("fixtures", "mixture2p-cor-draws.rds"))
+}
+
+#' A hand-built `ranef` table in the shape brms gives one
+#'
+#' One row per coefficient. Only the columns the extraction reads are
+#' filled; `resp` and `dpar` are left out unless given, because a
+#' non-brms source need not have them.
+#'
+#' @noRd
+fake_ranef <- function(nlpar = c("kappa", "thetat"),
+                       group = "id",
+                       coef = "Intercept",
+                       cor = TRUE,
+                       id = 1,
+                       ...) {
+  n <- length(nlpar)
+  data.frame(
+    id = rep_len(id, n),
+    group = rep_len(group, n),
+    coef = rep_len(coef, n),
+    nlpar = nlpar,
+    cor = rep_len(cor, n),
+    ...,
+    stringsAsFactors = FALSE
+  )
+}

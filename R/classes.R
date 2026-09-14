@@ -451,9 +451,10 @@ summarise_subject <- function(rows) {
 #' interval and does not follow `ci_level`, which is the mass of the
 #' posterior interval and a different quantity.
 #'
-#' Subject-level objects are summarised **within replication and then
-#' combined**. Pooling subjects across replications would mix
-#' between-subject with between-replication variance. `r` and `rank_r`
+#' Population and SD rows are summarised across replications, one pair
+#' per replication. Subject-level objects are summarised **within
+#' replication and then combined**. Pooling subjects across replications
+#' would mix between-subject with between-replication variance. `r` and `rank_r`
 #' are combined on Fisher's z scale with weights `n - 3`; `ccc` on Lin's
 #' Z scale with weights from his asymptotic variance, and without an
 #' interval if any replication has no variance (three subjects, or a
@@ -575,6 +576,7 @@ format.bmmtools_recovery <- function(x, ...) {
 
   n_fits <- length(unique(x$replication))
   terms <- unique(x$term)
+  levels <- unique(x$level)
   summarised <- summary(x)
 
   header <- c(
@@ -585,6 +587,11 @@ format.bmmtools_recovery <- function(x, ...) {
       length(terms), " parameter", if (length(terms) != 1L) "s",
       ": ", paste(terms, collapse = ", "), "."
     ),
+    paste0(
+      "Level", if (length(levels) != 1L) "s", ": ",
+      paste(levels, collapse = ", "), "."
+    ),
+    if ("sd" %in% levels) "SD rows are on the link scale.",
     ""
   )
 

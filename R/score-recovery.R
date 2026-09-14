@@ -73,12 +73,7 @@ as_estimates_input <- function(fits, level, group, ci_level, drop_constants,
 #' Check that the truth tibble carries what the join needs
 #' @noRd
 check_truth <- function(truth, keys, call = rlang::caller_env()) {
-  if (!is.data.frame(truth)) {
-    cli::cli_abort(
-      "{.arg truth} must be a data frame, not {.obj_type_friendly {truth}}.",
-      call = call
-    )
-  }
+  check_truth_frame(truth, call = call)
   required <- c(keys, "true_value")
   missing <- setdiff(required, names(truth))
   if (length(missing) > 0L) {
@@ -234,8 +229,7 @@ join_truth <- function(estimates, truth, keys, call = rlang::caller_env()) {
 to_natural_scale <- function(x, links, call = rlang::caller_env()) {
   unbounded <- character()
   for (term in unique(x$term)) {
-    link <- "identity"
-    if (!is.null(links) && term %in% names(links)) link <- links[[term]]
+    link <- link_of(term, links)
     rows <- x$term == term
 
     spans_zero <- x$ci_low[rows] < 0 & x$ci_high[rows] > 0
@@ -270,6 +264,84 @@ to_natural_scale <- function(x, links, call = rlang::caller_env()) {
   x
 }
 
+#' Score the estimates of one level against its truth
+#'
+#' `sd` rows are kept on the link scale whatever `resolved$scale` says,
+#' because the SD of a link-scale random effect has no natural-scale
+#' counterpart that one inverse link would give (spec 5, section 5.2).
+#'
+#' @noRd
+score_level <- function(estimates, truth, level, resolved, error_call) {
+  estimates <- estimates[estimates$level == level, , drop = FALSE]
+  keys <- level_keys(level)
+  if ("replication" %in% names(truth)) keys <- c(keys, "replication")
+  if ("condition" %in% names(truth)) keys <- c(keys, "condition")
+
+  joined <- join_truth(estimates, truth, keys, call = error_call)
+
+  scale <- if (identical(level, "sd")) "link" else resolved$scale
+  if (identical(scale, "natural")) {
+    joined <- to_natural_scale(joined, resolved$links)
+  }
+
+  joined$bias <- joined$estimate - joined$true_value
+  joined$covered <- joined$true_value >= joined$ci_low &
+    joined$true_value <= joined$ci_high
+  joined$scale <- rep(scale, nrow(joined))
+  joined
+}
+
+#' The columns a level's truth joins on, besides replication and condition
+#' @noRd
+level_keys <- function(level) {
+  if (identical(level, "subject")) c("term", "id") else "term"
+}
+
+#' Match `truth` to the levels requested
+#'
+#' One level takes a data frame. Several take a named list with an
+#' element per level, which is the shape of a `bmmtools_simulation`'s
+#' `truth`, so it can be passed as it is.
+#'
+#' @return A named list of truth data frames, one per level.
+#' @noRd
+truth_by_level <- function(truth, level, call = rlang::caller_env()) {
+  if (length(level) == 1L) {
+    check_truth_frame(truth, call = call)
+    return(stats::setNames(list(truth), level))
+  }
+  if (!is.list(truth) || is.data.frame(truth) || is.null(names(truth))) {
+    cli::cli_abort(
+      c(
+        "With several levels, {.arg truth} must be a named list with an \\
+         element for each level, not {.obj_type_friendly {truth}}.",
+        i = "The {.field truth} of a {.cls bmmtools_simulation} has that \\
+             shape."
+      ),
+      call = call
+    )
+  }
+  missing <- setdiff(level, names(truth))
+  if (length(missing) > 0L) {
+    cli::cli_abort(
+      "{.arg truth} has no element for the level{?s} {.val {missing}}.",
+      call = call
+    )
+  }
+  truth[level]
+}
+
+#' @noRd
+check_truth_frame <- function(truth, call = rlang::caller_env()) {
+  if (!is.data.frame(truth)) {
+    cli::cli_abort(
+      "{.arg truth} must be a data frame, not {.obj_type_friendly {truth}}.",
+      call = call
+    )
+  }
+  invisible(truth)
+}
+
 #' The shared body of recover() and recover_subjects()
 #' @noRd
 score_recovery <- function(fits, truth, level, group, scale, links,
@@ -278,30 +350,29 @@ score_recovery <- function(fits, truth, level, group, scale, links,
     fits, level, group, ci_level, drop_constants,
     call = error_call
   )
-  estimates <- estimates[estimates$level == level, , drop = FALSE]
-  if (nrow(estimates) == 0L) {
-    cli::cli_abort(
-      "No estimates at level {.val {level}} to score.",
-      call = error_call
-    )
+  truths <- truth_by_level(truth, level, call = error_call)
+  # every input is checked before resolve_links() can print its message
+  for (lv in level) {
+    if (!any(estimates$level == lv)) {
+      cli::cli_abort(
+        "No estimates at level {.val {lv}} to score.",
+        call = error_call
+      )
+    }
+    check_truth(truths[[lv]], level_keys(lv), call = error_call)
   }
-
-  keys <- if (identical(level, "subject")) c("term", "id") else "term"
-  check_truth(truth, keys, call = error_call)
-  if ("replication" %in% names(truth)) keys <- c(keys, "replication")
-  if ("condition" %in% names(truth)) keys <- c(keys, "condition")
-
   resolved <- resolve_links(fits, links, scale, call = error_call)
-  joined <- join_truth(estimates, truth, keys, call = error_call)
 
-  if (identical(resolved$scale, "natural")) {
-    joined <- to_natural_scale(joined, resolved$links)
+  pieces <- lapply(level, function(lv) {
+    score_level(estimates, truths[[lv]], lv, resolved, error_call)
+  })
+  if ("sd" %in% level && identical(resolved$scale, "natural")) {
+    cli::cli_inform(c(
+      "Standard deviations are scored on the link scale.",
+      i = "Their {.field scale} column reads {.val link}."
+    ))
   }
-
-  joined$bias <- joined$estimate - joined$true_value
-  joined$covered <- joined$true_value >= joined$ci_low &
-    joined$true_value <= joined$ci_high
-  joined$scale <- resolved$scale
+  joined <- dplyr::bind_rows(pieces)
 
   new_bmmtools_recovery(
     joined,
@@ -333,7 +404,12 @@ score_recovery <- function(fits, truth, level, group, scale, links,
 #'   under bmm's own parameter names. `recover()` needs `term` and
 #'   `true_value`; `recover_subjects()` also needs `id`. A `replication`
 #'   column is used as a join key when present, and when it is absent the
-#'   same generating values are scored against every replication.
+#'   same generating values are scored against every replication. When
+#'   `recover()` scores several levels, a named list with a data frame for
+#'   each, such as the `truth` of a `bmmtools_simulation`.
+#' @param level The levels `recover()` scores: `"population"` (the
+#'   default), `"sd"` (the between-subject standard deviations), or
+#'   `c("population", "sd")` for both.
 #' @param group The grouping factor subject-level estimates come from.
 #' @param scale `"natural"` scores on the scale a reader interprets,
 #'   `"link"` on the scale the model was estimated on. The choice
@@ -342,8 +418,10 @@ score_recovery <- function(fits, truth, level, group, scale, links,
 #' @param links A named character vector mapping a term to one of the
 #'   link names [inverse_link()] understands. `NULL` reads the link table
 #'   from a `bmmfit`; with no table available, scoring falls back to the
-#'   link scale and says so. A term with no entry is treated as
-#'   `"identity"`.
+#'   link scale and says so. A term with no entry takes the link of the
+#'   longest entry it starts with followed by `_` (`kappa_task1` takes
+#'   the link of `kappa`), and is treated as `"identity"` when there is
+#'   none.
 #' @param ci_level The interval mass, passed to [extract_estimates()]
 #'   when `fits` is a fit.
 #' @param drop_constants Passed to [extract_estimates()]. Parameters the
@@ -362,6 +440,11 @@ score_recovery <- function(fits, truth, level, group, scale, links,
 #'   metrics.
 #'
 #' @details
+#' Standard deviations are always scored on the link scale, the scale
+#' the model estimates them on. Under `scale = "natural"` a message says
+#' so, their `scale` column reads `"link"`, and the other rows and the
+#' object's `scale` attribute stay on the natural scale.
+#'
 #' A term in `truth` that no fit estimated produces a warning listing
 #' what was available, and is dropped. A term a fit estimated that
 #' `truth` does not mention is dropped silently, because fits routinely
@@ -387,16 +470,18 @@ score_recovery <- function(fits, truth, level, group, scale, links,
 #' @export
 recover <- function(fits,
                     truth,
+                    level = "population",
                     scale = c("natural", "link"),
                     links = NULL,
                     ci_level = 0.95,
                     drop_constants = TRUE,
                     ...) {
   rlang::check_dots_empty()
+  level <- rlang::arg_match(level, c("population", "sd"), multiple = TRUE)
   scale <- rlang::arg_match(scale)
   score_recovery(
     fits, truth,
-    level = "population", group = NULL, scale = scale, links = links,
+    level = level, group = NULL, scale = scale, links = links,
     ci_level = ci_level, drop_constants = drop_constants,
     call = match.call(), error_call = rlang::current_env()
   )

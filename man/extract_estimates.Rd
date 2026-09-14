@@ -12,7 +12,7 @@ extract_estimates(fit, ...)
 
 \method{extract_estimates}{brmsfit}(
   fit,
-  level = c("population", "subject"),
+  level = c("population", "subject", "sd", "cor"),
   group = NULL,
   ci_level = 0.95,
   ci_method = "eti",
@@ -28,12 +28,13 @@ extract_estimates(fit, ...)
 anything passed is an error.}
 
 \item{level}{Which estimates to return: \code{"population"}, \code{"subject"},
-or both, in which case they are stacked and the \code{level} column
-separates them.}
+\code{"sd"} (the group-level standard deviations), \code{"cor"} (the
+group-level correlations), or several, in which case they are
+stacked and the \code{level} column separates them.}
 
-\item{group}{The grouping factor subject-level estimates come from.
-\code{NULL} uses the fit's only grouping factor and errors if there is
-more than one.}
+\item{group}{The grouping factor subject-level, SD and correlation
+estimates come from. \code{NULL} uses the fit's only grouping factor and
+errors if there is more than one.}
 
 \item{ci_level}{The interval mass, a single number strictly between 0
 and 1.}
@@ -56,9 +57,8 @@ from \code{\link[=check_convergence]{check_convergence()}} with other thresholds
 \value{
 A tibble with the columns \code{term}, \code{estimate}, \code{ci_low},
 \code{ci_high}, \code{ci_method}, \code{ci_level}, \code{rhat}, \code{ess_bulk}, \code{ess_tail},
-\code{level}, \code{id} and \code{converged}, in that order. \code{id} is \code{NA} for
-population rows; \code{converged} is the same value on every row of a
-fit.
+\code{level}, \code{id} and \code{converged}, in that order. \code{id} is \code{NA} except on
+subject rows; \code{converged} is the same value on every row of a fit.
 }
 \description{
 The bridge between a fitted model and everything bmmtools scores. It
@@ -80,9 +80,13 @@ puts them on the same scale as the population rows, so a per-subject
 truth can be compared against them directly; taking the sum after
 summarising instead would give intervals that are too narrow.
 
-Group-level standard deviations are not returned in this version.
-\code{level = "sd"} is reserved for them, so that adding them later does
-not change what the existing levels mean.
+Standard deviations and correlations are returned on the link scale,
+with \code{id} set to \code{NA}. An SD row carries the parameter's name
+(\code{kappa}); a correlation row carries the two names joined by \verb{__} and
+sorted in the C locale (\code{kappa__thetat}), whichever order brms used.
+A correlation the model does not estimate has no row. A parameter
+with more than one group-level coefficient is an error in this
+version.
 }
 \examples{
 \dontrun{

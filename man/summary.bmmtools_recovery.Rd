@@ -40,9 +40,10 @@ from this design". The correlation interval is a 95\% confidence
 interval and does not follow \code{ci_level}, which is the mass of the
 posterior interval and a different quantity.
 
-Subject-level objects are summarised \strong{within replication and then
-combined}. Pooling subjects across replications would mix
-between-subject with between-replication variance. \code{r} and \code{rank_r}
+Population and SD rows are summarised across replications, one pair
+per replication. Subject-level objects are summarised \strong{within
+replication and then combined}. Pooling subjects across replications
+would mix between-subject with between-replication variance. \code{r} and \code{rank_r}
 are combined on Fisher's z scale with weights \code{n - 3}; \code{ccc} on Lin's
 Z scale with weights from his asymptotic variance, and without an
 interval if any replication has no variance (three subjects, or a

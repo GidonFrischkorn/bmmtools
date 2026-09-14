@@ -194,7 +194,9 @@ warning that lists the available terms.
   maps them onto the same term, and scoring stops with an error rather
   than join them wrongly. `recovery_formula()` writes intercept-only
   formulas.
-- Group-level standard deviations are not extracted or scored yet.
+- Group-level standard deviations are scored on the link scale only
+  (`recover(level = "sd")`). Group-level correlations are extracted
+  (`extract_estimates(level = "cor")`) but not yet scored.
 - `prior_check()` derives the floor and ceiling of the response only
   for the models with an adapter; for your model, pass `range` or a
   `summary` function of your own.
