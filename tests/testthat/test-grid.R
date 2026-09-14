@@ -413,3 +413,312 @@ test_that("a row-wise model must keep one link table across rows", {
     "links"
   )
 })
+
+# the sidecar, sd level and correlations (spec 5, section 5.3, D31) -----
+
+grid_fit_files <- function(dir) {
+  list.files(dir, pattern = "^(cell-[0-9]+-rep-[0-9]+|preflight)\\.rds$",
+    full.names = TRUE
+  )
+}
+
+# everything but the timings, which differ between two runs
+grid_result_parts <- function(out) {
+  cells <- attr(out, "cells")
+  cells$elapsed <- NULL
+  list(
+    # the columns only; the attributes are compared one by one below
+    rows = unclass(out)[names(out)],
+    cells = cells,
+    correlations = attr(out, "correlations"),
+    subject_means = attr(out, "subject_means")
+  )
+}
+
+test_that("the defaults extract no correlations and keep today's levels", {
+  skip_if_not_installed("bmm")
+  dir <- withr::local_tempdir()
+  out <- suppressMessages(grid_run(dir, grid_mock_fitter()))
+  expect_null(attr(out, "correlations"))
+  expect_setequal(out$level, c("population", "subject"))
+  sidecar <- readRDS(file.path(dir, "cell-1-rep-1-est.rds"))
+  expect_equal(sidecar$levels, c("population", "subject"))
+  expect_null(sidecar$correlations)
+  expect_null(sidecar$cor_estimates)
+})
+
+test_that("each cell writes a sidecar with the documented fields", {
+  skip_if_not_installed("bmm")
+  dir <- withr::local_tempdir()
+  suppressMessages(grid_run(
+    dir, grid_mock_fitter(),
+    correlations = c("draws", "point")
+  ))
+
+  expect_equal(
+    sort(list.files(dir, pattern = "-est\\.rds$")),
+    sort(sprintf("cell-%d-rep-%d-est.rds", c(1, 2, 1, 2), c(1, 1, 2, 2)))
+  )
+  sidecar <- readRDS(file.path(dir, "cell-2-rep-1-est.rds"))
+  expect_named(sidecar, c(
+    "key", "bmmtools_version", "levels", "correlations", "cor_scale",
+    "estimates", "cor_estimates", "subject_means"
+  ))
+
+  sim <- readRDS(file.path(dir, "cell-2-rep-1-sim.rds"))
+  key <- cache_key(
+    recovery_formula(sim$model), sim$data, sim$model, NULL,
+    list(seed = cell_seed(100, 2L, 1L), chains = 2, iter = 400)
+  )$key
+  expect_identical(sidecar$key, key)
+  expect_identical(
+    sidecar$bmmtools_version,
+    as.character(utils::packageVersion("bmmtools"))
+  )
+  expect_equal(sidecar$levels, c("population", "subject"))
+  expect_equal(sidecar$correlations, c("draws", "point"))
+  expect_equal(sidecar$cor_scale, "link")
+  expect_setequal(sidecar$estimates$level, c("population", "subject"))
+  expect_setequal(sidecar$cor_estimates$estimator, c("draws", "point"))
+  expect_equal(unique(sidecar$cor_estimates$scale), "link")
+
+  means <- sidecar$subject_means
+  expect_named(means, c("id", "term", "mean", "median"))
+  expect_equal(nrow(means), 4L * 2L)
+  mock_fit <- structure(
+    list(parameters = c("kappa", "thetat"), ids = as.character(1:4)),
+    class = "mockfit"
+  )
+  draws <- extract_subject_draws(mock_fit)
+  at <- means$id == "3" & means$term == "thetat"
+  expect_equal(means$mean[at], mean(draws[, , "3", "thetat"]))
+  expect_equal(means$median[at], stats::median(draws[, , "3", "thetat"]))
+})
+
+test_that("a resume with the fits deleted reads the sidecars, fitting none", {
+  skip_if_not_installed("bmm")
+  dir <- withr::local_tempdir()
+  first <- suppressMessages(grid_run(
+    dir, grid_mock_fitter(),
+    correlations = c("draws", "point"),
+    covariates = list(G = c(mean = 0, sd = 1))
+  ))
+  unlink(grid_fit_files(dir))
+  expect_length(grid_fit_files(dir), 0L)
+
+  mock <- grid_mock_fitter()
+  second <- suppressMessages(grid_run(
+    dir, mock,
+    correlations = c("draws", "point"),
+    covariates = list(G = c(mean = 0, sd = 1))
+  ))
+
+  expect_identical(mock$calls$n, 0L)
+  expect_length(grid_fit_files(dir), 0L)
+  expect_identical(grid_result_parts(second), grid_result_parts(first))
+  expect_true(all(attr(second, "cells")$status == "ok"))
+})
+
+test_that("a different bmmtools version re-extracts through the fit", {
+  skip_if_not_installed("bmm")
+  dir <- withr::local_tempdir()
+  suppressMessages(grid_run(dir, grid_mock_fitter(), correlations = "draws"))
+  unlink(grid_fit_files(dir))
+
+  local_mocked_bindings(bmmtools_version = function() "99.0.0")
+  mock <- grid_mock_fitter()
+  out <- suppressMessages(grid_run(dir, mock, correlations = "draws"))
+
+  # the preflight (the first sidecar is stale) plus four cells
+  expect_identical(mock$calls$n, 5L)
+  expect_equal(
+    readRDS(file.path(dir, "cell-1-rep-1-est.rds"))$bmmtools_version,
+    "99.0.0"
+  )
+  expect_s3_class(attr(out, "correlations"), "bmmtools_cor_recovery")
+})
+
+test_that("a sidecar lacking a requested level, estimator or scale is redone", {
+  skip_if_not_installed("bmm")
+  dir <- withr::local_tempdir()
+  suppressMessages(grid_run(dir, grid_mock_fitter(), correlations = "draws"))
+
+  # an estimator the sidecar lacks
+  unlink(grid_fit_files(dir))
+  mock <- grid_mock_fitter()
+  out <- suppressMessages(grid_run(
+    dir, mock,
+    correlations = c("draws", "point")
+  ))
+  expect_identical(mock$calls$n, 5L)
+  expect_setequal(attr(out, "correlations")$estimator, c("draws", "point"))
+
+  # a level the sidecar lacks
+  unlink(grid_fit_files(dir))
+  mock <- grid_mock_fitter()
+  suppressMessages(grid_run(
+    dir, mock,
+    levels = c("population", "subject", "sd"),
+    correlations = c("draws", "point")
+  ))
+  expect_identical(mock$calls$n, 5L)
+
+  # another correlation scale
+  unlink(grid_fit_files(dir))
+  mock <- grid_mock_fitter()
+  out <- suppressMessages(grid_run(
+    dir, mock,
+    correlations = "point", cor_scale = "natural"
+  ))
+  expect_identical(mock$calls$n, 5L)
+  expect_equal(attr(out, "scale", exact = TRUE), "natural")
+  expect_equal(unique(attr(out, "correlations")$scale), "natural")
+
+  # a request the sidecar covers, and one it holds more than
+  unlink(grid_fit_files(dir))
+  mock <- grid_mock_fitter()
+  subset <- suppressMessages(grid_run(dir, mock, levels = "population"))
+  expect_identical(mock$calls$n, 0L)
+  expect_setequal(subset$level, "population")
+  expect_null(attr(subset, "correlations"))
+})
+
+test_that("a sidecar that cannot be read is replaced", {
+  skip_if_not_installed("bmm")
+  dir <- withr::local_tempdir()
+  suppressMessages(grid_run(dir, grid_mock_fitter(), reps = 1L))
+  path <- file.path(dir, "cell-2-rep-1-est.rds")
+  writeLines("not an rds file", path)
+  mock <- grid_mock_fitter()
+  out <- suppressMessages(grid_run(dir, mock, reps = 1L))
+  # the fit is still cached, so fit_cached() reads it without the fitter
+  expect_identical(mock$calls$n, 0L)
+  expect_named(readRDS(path)[1:2], c("key", "bmmtools_version"))
+  expect_true(all(attr(out, "cells")$status == "ok"))
+})
+
+test_that("levels may include 'sd', scored on the link scale", {
+  skip_if_not_installed("bmm")
+  dir <- withr::local_tempdir()
+  out <- suppressMessages(grid_run(
+    dir, grid_mock_fitter(),
+    levels = c("population", "subject", "sd")
+  ))
+  expect_setequal(out$level, c("population", "subject", "sd"))
+  sd_rows <- out[out$level == "sd", ]
+  expect_equal(nrow(sd_rows), 2L * 2L * 2L)
+  expect_true(all(sd_rows$scale == "link"))
+  expect_equal(
+    sd_rows$true_value[sd_rows$term == "kappa" & sd_rows$condition == "row-1"],
+    c(0.3, 0.3)
+  )
+  expect_equal(attr(out, "scale"), "natural")
+  expect_equal(unique(out$scale[out$level == "population"]), "natural")
+
+  s <- summary(out)
+  expect_true("sd" %in% s$level)
+})
+
+test_that("score_cells attaches correlations and subject means", {
+  skip_if_not_installed("bmm")
+  dir <- withr::local_tempdir()
+  out <- suppressMessages(grid_run(
+    dir, grid_mock_fitter(),
+    correlations = c("draws", "point"),
+    covariates = list(G = c(mean = 0, sd = 1))
+  ))
+
+  cors <- attr(out, "correlations")
+  expect_s3_class(cors, "bmmtools_cor_recovery")
+  expect_setequal(cors$condition, c("row-1", "row-2"))
+  expect_setequal(cors$replication, c(1L, 2L))
+  expect_setequal(cors$term, c("G__kappa", "G__thetat", "kappa__thetat"))
+  expect_equal(nrow(cors), 2L * 2L * 3L * 2L)
+
+  # sample_value is the in-sample correlation of that cell's true values
+  sim <- readRDS(file.path(dir, "cell-2-rep-2-sim.rds"))
+  wide <- subjects_wide(sim$truth$subjects)
+  at <- cors$condition == "row-2" & cors$replication == 2L &
+    cors$term == "kappa__thetat"
+  expect_equal(
+    unique(cors$sample_value[at]),
+    stats::cor(wide$kappa, wide$thetat)
+  )
+  expect_equal(unique(cors$true_value[at]), 0)
+
+  means <- attr(out, "subject_means")
+  expect_named(means, c(
+    "condition", "replication", "id", "term", "covariate", "mean",
+    "median", "true_value"
+  ))
+  # (3 + 4) subjects, two replications, two parameters and one covariate
+  expect_equal(nrow(means), 7L * 2L * 3L)
+  at_g <- means$term == "G" & means$condition == "row-2" &
+    means$replication == 2L
+  g <- means[at_g, ]
+  expect_true(all(g$covariate))
+  expect_equal(g$mean, g$true_value)
+  expect_equal(
+    g$true_value,
+    sim$truth$covariates$true_value[match(g$id, sim$truth$covariates$id)]
+  )
+  expect_equal(attr(means, "links"), unlist(sim$model$links))
+
+  # the cells and grid attributes are still there
+  expect_equal(nrow(attr(out, "cells")), 4L)
+  expect_equal(attr(out, "grid"), small_grid())
+})
+
+test_that("recovery_grid validates levels, correlations and cor_scale", {
+  skip_if_not_installed("bmm")
+  dir <- withr::local_tempdir()
+  mock <- grid_mock_fitter()
+  expect_error(grid_run(dir, mock, levels = "bogus"), "levels")
+  expect_error(grid_run(dir, mock, levels = character(0)), "levels")
+  expect_error(grid_run(dir, mock, correlations = "bogus"), "correlations")
+  expect_error(
+    grid_run(dir, mock, correlations = character(0)),
+    "correlations"
+  )
+  expect_error(grid_run(dir, mock, correlations = NA), "correlations")
+  expect_error(
+    grid_run(dir, mock, correlations = "draws", cor_scale = "bogus"),
+    "cor_scale"
+  )
+  expect_error(
+    grid_run(dir, mock, correlations = "model", cor_scale = "natural"),
+    "link scale"
+  )
+  # the default uncorrelated formula cannot give model correlations
+  expect_error(
+    grid_run(dir, mock, correlations = "model"),
+    "re_cor"
+  )
+  expect_identical(mock$calls$n, 0L)
+})
+
+test_that("a grid with nothing to score at its levels says so", {
+  skip_if_not_installed("bmm")
+  dir <- withr::local_tempdir()
+  one_sd <- function(dir, ...) {
+    suppressMessages(recovery_grid(
+      bmm::mixture2p(resp_error = "y"),
+      grid = small_grid()[1, ],
+      pars = c(kappa = log(8), thetat = stats::qlogis(0.75)),
+      dir = dir, reps = 1L, seed = 1, preflight = FALSE, ...,
+      .fitter = grid_mock_fitter()$fitter
+    ))
+  }
+
+  # one varying parameter and no covariate: no correlation pair
+  expect_warning(
+    out <- one_sd(dir, sds = c(kappa = 0.3), correlations = "draws"),
+    "no cell has a correlation pair"
+  )
+  expect_null(attr(out, "correlations"))
+  expect_setequal(out$level, c("population", "subject"))
+
+  # nothing varies, so there is no subject level to score
+  dir2 <- withr::local_tempdir()
+  expect_error(one_sd(dir2, levels = "subject"), "Nothing to score")
+})

@@ -45,6 +45,11 @@ reference:
   - summary.bmmtools_recovery
   - recovery_ccc
   - extract_estimates
+  - recover_correlations
+  - summary.bmmtools_cor_recovery
+  - extract_correlations
+  - extract_subject_draws
+  - subject_table
   - inverse_link
 
 - title: Prior predictive checks
@@ -69,6 +74,7 @@ reference:
   contents:
   - starts_with("format.")
   - '`[.bmmtools_recovery`'
+  - '`[.bmmtools_cor_recovery`'
   - '`[.bmmtools_prior_check`'
   - starts_with("dplyr_reconstruct.")
 

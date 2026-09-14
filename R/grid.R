@@ -28,7 +28,10 @@ cell_seed <- function(seed, row, rep) {
 #' @noRd
 cell_paths <- function(dir, row, rep) {
   stem <- file.path(dir, sprintf("cell-%d-rep-%d", row, rep))
-  list(sim = paste0(stem, "-sim.rds"), fit = stem)
+  list(
+    sim = paste0(stem, "-sim.rds"), fit = stem,
+    est = paste0(stem, "-est.rds")
+  )
 }
 
 #' @noRd
@@ -234,29 +237,190 @@ run_preflight <- function(sim, model, formula, prior, dir, dots, fitter,
   as.double(difftime(Sys.time(), started, units = "secs"))
 }
 
-#' Fit one cell and extract its estimates
+#' The version string a sidecar records
 #'
-#' @return A list with `status`, `message`, `estimates`, `elapsed`,
-#'   `converged`.
+#' A function of its own so that a test can pretend to be another version.
+#'
 #' @noRd
-run_cell <- function(sim, model, formula, prior, paths, seed, dots, fitter) {
+bmmtools_version <- function() {
+  as.character(utils::packageVersion("bmmtools"))
+}
+
+#' What the grid extracts from every fit
+#' @noRd
+extraction_request <- function(levels = c("population", "subject"),
+                               correlations = NULL,
+                               cor_scale = "link",
+                               links = NULL) {
+  list(
+    levels = levels, correlations = correlations, cor_scale = cor_scale,
+    links = links
+  )
+}
+
+#' Validate `levels`, `correlations` and `cor_scale` of recovery_grid()
+#' @noRd
+check_extraction_args <- function(levels, correlations, cor_scale,
+                                  call = rlang::caller_env()) {
+  if (!is.character(levels) || length(levels) == 0L) {
+    cli::cli_abort(
+      "{.arg levels} must be one or more of {.val {c(\"population\", \\
+       \"subject\", \"sd\")}}.",
+      call = call
+    )
+  }
+  levels <- unique(rlang::arg_match(
+    levels, c("population", "subject", "sd"),
+    multiple = TRUE, error_call = call
+  ))
+  if (!is.null(correlations)) {
+    bad <- !is.character(correlations) || length(correlations) == 0L ||
+      anyNA(correlations)
+    if (bad) {
+      cli::cli_abort(
+        "{.arg correlations} must be {.code NULL} or one or more of \\
+         {.val {c(\"model\", \"draws\", \"point\")}}.",
+        call = call
+      )
+    }
+    correlations <- unique(rlang::arg_match(
+      correlations, c("model", "draws", "point"),
+      multiple = TRUE, error_call = call
+    ))
+  }
+  cor_scale <- rlang::arg_match(
+    cor_scale, c("link", "natural"),
+    error_call = call
+  )
+  if ("model" %in% correlations && identical(cor_scale, "natural")) {
+    cli::cli_abort(
+      c(
+        "The {.val model} estimator is on the link scale only.",
+        i = "Use {.code cor_scale = \"link\"}, or leave {.val model} out of \\
+             {.arg correlations}."
+      ),
+      call = call
+    )
+  }
+  list(levels = levels, correlations = correlations, cor_scale = cor_scale)
+}
+
+#' Read a cell's sidecar when it matches the cell and the request
+#'
+#' It matches when its key is the cell's cache key, it was written by this
+#' version of bmmtools, and it holds every requested level and estimator
+#' (and, for correlations, the requested scale). What it holds beyond the
+#' request is dropped, so that the result is what a fresh extraction
+#' would give. An unreadable file counts as no sidecar.
+#'
+#' @return The trimmed sidecar, or `NULL`.
+#' @noRd
+read_sidecar <- function(path, key, request) {
+  if (!file.exists(path)) {
+    return(NULL)
+  }
+  stored <- tryCatch(readRDS(path), error = function(e) NULL)
+  scale_ok <- is.null(request$correlations) ||
+    identical(stored$cor_scale, request$cor_scale)
+  matches <- is.list(stored) &&
+    identical(stored$key, key) &&
+    identical(stored$bmmtools_version, bmmtools_version()) &&
+    all(request$levels %in% stored$levels) &&
+    all(request$correlations %in% stored$correlations) &&
+    scale_ok
+  if (!matches) {
+    return(NULL)
+  }
+  estimates <- stored$estimates
+  stored$estimates <- estimates[estimates$level %in% request$levels, ]
+  if (is.null(request$correlations)) {
+    stored["cor_estimates"] <- list(NULL)
+  } else {
+    cors <- stored$cor_estimates
+    cors <- cors[cors$estimator %in% request$correlations, ]
+    stored$cor_estimates <- cors[
+      order(match(cors$estimator, request$correlations)), ,
+      drop = FALSE
+    ]
+  }
+  stored
+}
+
+#' Everything the grid keeps from one fit, while it is in memory
+#' @noRd
+extract_cell <- function(fit, sim, request) {
+  estimates <- extract_estimates(fit, level = request$levels)
+  converged <- NULL
+  if (nrow(estimates) > 0L) converged <- as.logical(estimates$converged[[1L]])
+
+  cor_estimates <- NULL
+  if (!is.null(request$correlations)) {
+    cov_names <- names(sim$covariates)
+    covariates <- NULL
+    if (length(cov_names) > 0L) {
+      covariates <- as.data.frame(sim$data)[c("id", cov_names)]
+    }
+    cor_estimates <- extract_correlations(
+      fit,
+      estimator = request$correlations, covariates = covariates,
+      scale = request$cor_scale, links = request$links,
+      converged = converged
+    )
+  }
+
+  subject_means <- empty_subject_means()
+  if (nrow(sim$truth$subjects) > 0L) {
+    subject_means <- subject_means_from_draws(
+      extract_subject_draws(fit), sim$truth$covariates
+    )
+  }
+  list(
+    estimates = estimates, cor_estimates = cor_estimates,
+    subject_means = subject_means
+  )
+}
+
+#' Fit one cell and extract its estimates, or read them from its sidecar
+#'
+#' @return A list with `status`, `message`, `estimates`, `cor_estimates`,
+#'   `subject_means`, `elapsed`, `converged`.
+#' @noRd
+run_cell <- function(sim, model, formula, prior, paths, seed, dots, fitter,
+                     request = extraction_request()) {
+  fit_dots <- c(if (!is.na(seed)) list(seed = seed), dots)
   cache_args <- c(
     list(
       formula = formula, data = sim$data, model = model,
       file = paths$fit, prior = prior, .fitter = fitter
     ),
-    if (!is.na(seed)) list(seed = seed),
-    dots
+    fit_dots
   )
   started <- Sys.time()
   result <- tryCatch(
     {
-      fit <- rlang::exec(fit_cached, !!!cache_args)
-      estimates <- extract_estimates(
-        fit,
-        level = c("population", "subject")
+      key <- cache_key(formula, sim$data, model, prior, fit_dots)$key
+      extracted <- read_sidecar(paths$est, key, request)
+      if (is.null(extracted)) {
+        fit <- rlang::exec(fit_cached, !!!cache_args)
+        extracted <- extract_cell(fit, sim, request)
+        sidecar <- c(
+          list(
+            key = key,
+            bmmtools_version = bmmtools_version(),
+            levels = request$levels,
+            correlations = request$correlations,
+            cor_scale = request$cor_scale
+          ),
+          extracted
+        )
+        write_atomic(paths$est, function(tmp) saveRDS(sidecar, tmp))
+      }
+      list(
+        status = "ok", message = NA_character_,
+        estimates = extracted$estimates,
+        cor_estimates = extracted$cor_estimates,
+        subject_means = extracted$subject_means
       )
-      list(status = "ok", message = NA_character_, estimates = estimates)
     },
     error = function(e) {
       list(status = "error", message = conditionMessage(e), estimates = NULL)
@@ -264,59 +428,122 @@ run_cell <- function(sim, model, formula, prior, paths, seed, dots, fitter) {
   )
   result$elapsed <- as.double(difftime(Sys.time(), started, units = "secs"))
   result$converged <- NA
-  if (!is.null(result$estimates)) {
+  if (!is.null(result$estimates) && nrow(result$estimates) > 0L) {
     result$converged <- result$estimates$converged[[1L]]
   }
   result
 }
 
-#' Score every cell that has estimates
+#' Bind one table of every scored cell, labelled with its cell
 #' @noRd
-score_cells <- function(runs, sims, cells, links, scale = "natural") {
+bind_cells <- function(ok, cells, table_of) {
+  dplyr::bind_rows(lapply(ok, function(i) {
+    out <- table_of(i)
+    out$replication <- rep(cells$rep[[i]], nrow(out))
+    out$condition <- rep(sprintf("row-%d", cells$row[[i]]), nrow(out))
+    out
+  }))
+}
+
+#' Score the correlations of every cell that has estimates
+#' @noRd
+score_cell_correlations <- function(runs, sims, cells, ok, request, links) {
+  if (is.null(request$correlations)) {
+    return(NULL)
+  }
+  estimates <- bind_cells(ok, cells, function(i) runs[[i]]$cor_estimates)
+  truth <- lapply(
+    stats::setNames(nm = c("cor", "subjects", "covariates")),
+    function(name) bind_cells(ok, cells, function(i) sims[[i]]$truth[[name]])
+  )
+  if (nrow(estimates) == 0L || nrow(truth$cor) == 0L) {
+    cli::cli_warn(
+      "Correlations were requested, but no cell has a correlation pair to \\
+       score."
+    )
+    return(NULL)
+  }
+  recover_correlations(
+    estimates, truth,
+    estimator = request$correlations, scale = request$cor_scale,
+    links = links
+  )
+}
+
+#' Score every cell that has estimates
+#'
+#' @return A `bmmtools_recovery` with the attributes `correlations` (a
+#'   `bmmtools_cor_recovery`, or absent) and `subject_means`.
+#' @noRd
+score_cells <- function(runs, sims, cells, links, scale = "natural",
+                        request = extraction_request()) {
   ok <- which(vapply(runs, function(r) r$status == "ok", logical(1)))
   if (length(ok) == 0L) {
     cli::cli_abort("No cell produced a fit; nothing to score.")
   }
-  label <- function(i) sprintf("row-%d", cells$row[[i]])
 
-  estimates <- dplyr::bind_rows(lapply(ok, function(i) {
-    out <- runs[[i]]$estimates
-    out$replication <- cells$rep[[i]]
-    out$condition <- label(i)
-    out
-  }))
-  truth_pop <- dplyr::bind_rows(lapply(ok, function(i) {
-    out <- sims[[i]]$truth$population
-    out$replication <- cells$rep[[i]]
-    out$condition <- label(i)
-    out
-  }))
-  truth_sub <- dplyr::bind_rows(lapply(ok, function(i) {
-    out <- sims[[i]]$truth$subjects
-    out$replication <- rep(cells$rep[[i]], nrow(out))
-    out$condition <- rep(label(i), nrow(out))
-    out
-  }))
+  estimates <- bind_cells(ok, cells, function(i) runs[[i]]$estimates)
+  truth_of <- function(name) {
+    bind_cells(ok, cells, function(i) sims[[i]]$truth[[name]])
+  }
+  # the names truth_pop and truth_sub reach the `call` attribute
+  truth_pop <- truth_of("population")
+  truth_sub <- truth_of("subjects")
 
-  population <- recover(
-    estimates[estimates$level == "population", ],
-    truth_pop,
-    scale = scale, links = links
-  )
-  pieces <- list(population)
-  if (nrow(truth_sub) > 0L) {
+  pieces <- list()
+  if ("population" %in% request$levels) {
+    pieces$population <- recover(
+      estimates[estimates$level == "population", ],
+      truth_pop,
+      scale = scale, links = links
+    )
+  }
+  if ("subject" %in% request$levels && nrow(truth_sub) > 0L) {
     pieces$subjects <- recover_subjects(
       estimates[estimates$level == "subject", ],
       truth_sub,
       scale = scale, links = links
     )
   }
-  new_bmmtools_recovery(
+  truth_sd <- truth_of("sd")
+  if ("sd" %in% request$levels && nrow(truth_sd) > 0L) {
+    # SDs are scored on the link scale whatever `scale` says
+    pieces$sd <- recover(
+      estimates[estimates$level == "sd", ],
+      truth_sd,
+      level = "sd", scale = "link"
+    )
+  }
+  if (length(pieces) == 0L) {
+    cli::cli_abort(
+      "Nothing to score at the level{?s} {.val {request$levels}}."
+    )
+  }
+  out <- new_bmmtools_recovery(
     dplyr::bind_rows(lapply(pieces, tibble::as_tibble)),
     scale = scale,
-    ci_level = attr(population, "ci_level"),
-    call = attr(population, "call")
+    ci_level = attr(pieces[[1L]], "ci_level"),
+    call = attr(pieces[[1L]], "call")
   )
+
+  attr(out, "correlations") <- score_cell_correlations(
+    runs, sims, cells, ok, request, links
+  )
+  subject_means <- dplyr::bind_rows(
+    label_subject_means(
+      empty_subject_means(), list(), character(), character(), integer()
+    ),
+    lapply(ok, function(i) {
+      label_subject_means(
+        runs[[i]]$subject_means, sims[[i]]$truth, names(sims[[i]]$covariates),
+        condition = sprintf("row-%d", cells$row[[i]]),
+        replication = cells$rep[[i]]
+      )
+    })
+  )
+  attr(subject_means, "links") <- links
+  attr(out, "subject_means") <- subject_means
+  out
 }
 
 #' Run a parameter-recovery grid
@@ -361,22 +588,44 @@ score_cells <- function(runs, sims, cells, links, scale = "natural") {
 #' @param re_cor Passed to [recovery_formula()] when `formula` is `NULL`.
 #' @param scale The scale recovery is scored on, as in [recover()];
 #'   natural by default.
+#' @param levels The estimate levels extracted from every fit and scored:
+#'   one or more of `"population"`, `"subject"` and `"sd"` (the
+#'   between-subject standard deviations, always scored on the link
+#'   scale).
+#' @param correlations `NULL` (the default) for no correlations, or one or
+#'   more of the estimators of [extract_correlations()], `"model"`,
+#'   `"draws"` and `"point"`, to extract and score the between-subject
+#'   correlations of every cell, pairs with covariates included.
+#' @param cor_scale The scale the correlations are extracted and scored
+#'   on, `"link"` or `"natural"`. The `"model"` estimator exists on the
+#'   link scale only.
 #' @param smoke `TRUE` runs the first two rows with two replications
 #'   into `<dir>/smoke`, so a smoke run never overwrites a full one.
 #' @param preflight Run the first cell once with one chain and 200
 #'   iterations into `<dir>/preflight` before the loop. Skipped when the
-#'   first cell already has a cached fit.
+#'   first cell already has a cached fit or a sidecar that can be used.
 #' @param ... Passed to [fit_cached()] and so to the fitter: `chains`,
 #'   `iter`, `warmup`, `backend`, `cores`, ...
 #' @param .fitter As in [fit_cached()].
 #'
 #' @return A `bmmtools_recovery` object over every cell that produced a
-#'   fit, at both the population and the subject level, with a
-#'   `condition` column (`"row-<i>"`) naming the grid row. Two
-#'   attributes: `cells`, a tibble with one row per cell (`condition`,
-#'   `replication`, `n_subjects`, `n_trials`, `seed`, `file`, `status`,
-#'   `elapsed` in seconds, `converged`), and `grid`. `summary()` groups
-#'   by condition.
+#'   fit, at the requested `levels`, with a `condition` column
+#'   (`"row-<i>"`) naming the grid row. `summary()` groups by condition.
+#'   Its attributes:
+#'   * `cells`: a tibble with one row per cell (`condition`,
+#'     `replication`, `n_subjects`, `n_trials`, `seed`, `file`, `status`,
+#'     `elapsed` in seconds, `converged`).
+#'   * `grid`: the grid as run.
+#'   * `correlations`: with `correlations` requested, a
+#'     `bmmtools_cor_recovery` from [recover_correlations()] over every
+#'     cell, with `condition` and `replication`; otherwise `NULL`.
+#'   * `subject_means`: a tibble with one row per cell, subject and term:
+#'     `condition`, `replication`, `id`, `term`, `covariate` (whether the
+#'     term is a covariate), the posterior `mean` and `median` on the link
+#'     scale, and `true_value`, the generating value on the link scale (a
+#'     covariate's value is its own mean, median and true value). Its
+#'     attribute `links` is the model's link table. [subject_table()]
+#'     turns it into one row per subject.
 #'
 #' @details
 #' A cell whose fit errors is recorded with `status = "error"` and the
@@ -387,6 +636,16 @@ score_cells <- function(runs, sims, cells, links, scale = "natural") {
 #' `cell-<row>-rep-<rep>.rds` with its `.key` (the fit, through
 #' [fit_cached()]); a resume reads an existing simulation file rather
 #' than regenerating, so a cached fit and its truth always match.
+#'
+#' **The sidecar.** While a fit is in memory, everything scored from it is
+#' written to `cell-<row>-rep-<rep>-est.rds`: the estimates at `levels`,
+#' the correlations, the subject means, and what they were extracted
+#' with (the cell's cache key, the bmmtools version, `levels`,
+#' `correlations`, `cor_scale`). A resume uses the sidecar without
+#' reading the fit when the key and the version match and it holds every
+#' requested level and estimator, so the fit files may be deleted once a
+#' grid has run. Otherwise the cell goes through [fit_cached()] again,
+#' which reuses a cached fit, and the sidecar is rewritten.
 #'
 #' @examples
 #' \dontrun{
@@ -417,6 +676,9 @@ recovery_grid <- function(model,
                           subjects = c("redraw", "fixed"),
                           re_cor = c("none", "all"),
                           scale = c("natural", "link"),
+                          levels = c("population", "subject"),
+                          correlations = NULL,
+                          cor_scale = "link",
                           smoke = FALSE,
                           preflight = TRUE,
                           ...,
@@ -424,6 +686,20 @@ recovery_grid <- function(model,
   subjects <- rlang::arg_match(subjects)
   re_cor <- rlang::arg_match(re_cor)
   scale <- rlang::arg_match(scale)
+  extraction <- check_extraction_args(levels, correlations, cor_scale)
+  # the default formula with re_cor = "none" estimates no correlation, so
+  # asking for the model estimator would fail only after every cell ran
+  model_without_cors <- "model" %in% extraction$correlations &&
+    is.null(formula) && identical(re_cor, "none")
+  if (model_without_cors) {
+    cli::cli_abort(c(
+      "{.code correlations = \"model\"} needs correlated random effects, \\
+       but the default formula has none.",
+      i = "Use {.code re_cor = \"all\"}, a {.arg formula} with \\
+           {.code (1 | p | id)} terms, or the {.val draws} and \\
+           {.val point} estimators."
+    ))
+  }
   check_grid(grid)
   reps <- check_count(reps, "reps")
   dots <- rlang::list2(...)
@@ -476,9 +752,38 @@ recovery_grid <- function(model,
     sim
   }
 
+  # one link table scores every cell, so a row-wise model must not
+  # change it; a differing table would score some cells on the wrong
+  # scale without any sign of it
+  links <- model_for(1L)$links
+  for (i in seq_len(nrow(grid))[-1L]) {
+    if (!identical(model_for(i)$links, links)) {
+      cli::cli_abort(c(
+        "The model of grid row {i} has different links from row 1.",
+        i = "A row-wise {.arg model} must keep one link table across rows."
+      ))
+    }
+  }
+  request <- extraction_request(
+    extraction$levels, extraction$correlations, extraction$cor_scale,
+    links = unlist(links)
+  )
+
   first_paths <- cell_paths(dir, 1L, 1L)
-  if (isTRUE(preflight) && !file.exists(paste0(first_paths$fit, ".rds"))) {
+  run_first <- isTRUE(preflight) &&
+    !file.exists(paste0(first_paths$fit, ".rds"))
+  if (run_first && file.exists(first_paths$est)) {
     sims[[1L]] <- simulate_cell(1L)
+    first_dots <- c(
+      if (!is.na(cells$seed[[1L]])) list(seed = cells$seed[[1L]]), dots
+    )
+    first_key <- cache_key(
+      formula_for(1L), sims[[1L]]$data, model_for(1L), prior, first_dots
+    )$key
+    run_first <- is.null(read_sidecar(first_paths$est, first_key, request))
+  }
+  if (run_first) {
+    if (is.null(sims[[1L]])) sims[[1L]] <- simulate_cell(1L)
     # nolint next: object_usage_linter. Used by cli's glue interpolation.
     elapsed <- run_preflight(
       sims[[1L]], model_for(1L), formula_for(1L), prior, dir, dots, .fitter
@@ -494,7 +799,7 @@ recovery_grid <- function(model,
     runs[[i]] <- run_cell(
       sims[[i]], model_for(cells$row[[i]]), formula_for(cells$row[[i]]),
       prior, cell_paths(dir, cells$row[[i]], cells$rep[[i]]),
-      cells$seed[[i]], dots, .fitter
+      cells$seed[[i]], dots, .fitter, request
     )
   }
 
@@ -509,19 +814,7 @@ recovery_grid <- function(model,
     ))
   }
 
-  # one link table scores every cell, so a row-wise model must not
-  # change it; a differing table would score some cells on the wrong
-  # scale without any sign of it
-  links <- model_for(1L)$links
-  for (i in seq_len(nrow(grid))[-1L]) {
-    if (!identical(model_for(i)$links, links)) {
-      cli::cli_abort(c(
-        "The model of grid row {i} has different links from row 1.",
-        i = "A row-wise {.arg model} must keep one link table across rows."
-      ))
-    }
-  }
-  out <- score_cells(runs, sims, cells, unlist(links), scale)
+  out <- score_cells(runs, sims, cells, unlist(links), scale, request)
   attr(out, "cells") <- tibble::tibble(
     condition = sprintf("row-%d", cells$row),
     replication = cells$rep,

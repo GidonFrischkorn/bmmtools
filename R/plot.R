@@ -106,13 +106,21 @@ recovery_panel_labels <- function(x, facet_by, call = rlang::caller_env()) {
 #' biased puts them on a line beside it, and a model that cannot
 #' distinguish them puts them on a cloud.
 #'
+#' For a correlation recovery from [recover_correlations()] the x axis is
+#' the in-sample correlation of the simulated subjects (`truth =
+#' "sample"`) or the generating correlation (`truth = "true"`), and the
+#' points are coloured by estimator.
+#'
 #' @param x A `bmmtools_recovery` object from [recover()] or
-#'   [recover_subjects()].
+#'   [recover_subjects()], or a `bmmtools_cor_recovery` object from
+#'   [recover_correlations()].
 #' @param facet_by A column name to make panels from, or `NULL` for a
 #'   single panel. Defaults to `"term"`: parameters usually live on
 #'   scales too different to share an axis.
-#' @param color_by A column name to colour points by, or `NULL`.
-#' @param intervals Draw the credible intervals as bars.
+#' @param color_by A column name to colour points by, or `NULL`. `NULL`
+#'   by default for a recovery object and `"estimator"` for a correlation
+#'   recovery.
+#' @param intervals Draw the intervals as bars.
 #' @param identity_line Draw the line where the estimate equals the
 #'   generating value.
 #' @param scales Passed to [ggplot2::facet_wrap()]. `"free"` by default,
@@ -139,23 +147,31 @@ recovery_panel_labels <- function(x, facet_by, call = rlang::caller_env()) {
 #' plot_recovery(population, color_by = "condition")
 #'
 #' @export
-plot_recovery <- function(x,
-                          facet_by = "term",
-                          color_by = NULL,
-                          intervals = TRUE,
-                          identity_line = TRUE,
-                          scales = "free",
-                          annotate = FALSE,
-                          ...) {
+plot_recovery <- function(x, ...) {
+  UseMethod("plot_recovery")
+}
+
+#' @rdname plot_recovery
+#' @export
+plot_recovery.default <- function(x, ...) {
+  cli::cli_abort(
+    "{.arg x} must be a {.cls bmmtools_recovery} object, \\
+     not {.obj_type_friendly {x}}."
+  )
+}
+
+#' @rdname plot_recovery
+#' @export
+plot_recovery.bmmtools_recovery <- function(x,
+                                            facet_by = "term",
+                                            color_by = NULL,
+                                            intervals = TRUE,
+                                            identity_line = TRUE,
+                                            scales = "free",
+                                            annotate = FALSE,
+                                            ...) {
   rlang::check_dots_empty()
   rlang::check_installed("ggplot2", "to plot a recovery object.")
-
-  if (!inherits(x, "bmmtools_recovery")) {
-    cli::cli_abort(
-      "{.arg x} must be a {.cls bmmtools_recovery} object, \\
-       not {.obj_type_friendly {x}}."
-    )
-  }
   check_recovery_contract(x)
   check_plot_column(x, facet_by, "facet_by")
   check_plot_column(x, color_by, "color_by")
@@ -211,6 +227,83 @@ plot_recovery <- function(x,
     ggplot2::labs(
       x = scale_label(scale, "Generating value"),
       y = scale_label(scale, "Posterior median"),
+      colour = color_by
+    ) +
+    ggplot2::theme_bw()
+}
+
+#' @rdname plot_recovery
+#' @param truth For a correlation recovery, the value on the x axis:
+#'   `"sample"`, the in-sample correlation, or `"true"`, the generating
+#'   one. Rows without that value (a nonzero `true_value` on the natural
+#'   scale is `NA`) are left out with a message.
+#' @export
+plot_recovery.bmmtools_cor_recovery <- function(x,
+                                                truth = c("sample", "true"),
+                                                facet_by = "term",
+                                                color_by = "estimator",
+                                                intervals = TRUE,
+                                                identity_line = TRUE,
+                                                ...) {
+  rlang::check_dots_empty()
+  rlang::check_installed("ggplot2", "to plot a recovery object.")
+  check_cor_recovery_contract(x)
+  truth <- rlang::arg_match(truth)
+  check_plot_column(x, facet_by, "facet_by")
+  check_plot_column(x, color_by, "color_by")
+
+  column <- if (identical(truth, "sample")) "sample_value" else "true_value"
+  scale <- attr(x, "scale") %||% unique(x$scale)
+  data <- tibble::as_tibble(x)
+  absent <- is.na(data[[column]])
+  if (all(absent)) {
+    cli::cli_abort(
+      c(
+        "No row has a {.field {column}} to plot.",
+        i = "On the natural scale a nonzero generating correlation has no \\
+             {.field true_value}; use {.code truth = \"sample\"}."
+      )
+    )
+  }
+  if (any(absent)) {
+    cli::cli_inform(
+      "{sum(absent)} row{?s} without a {.field {column}} {?is/are} not drawn."
+    )
+    data <- data[!absent, ]
+  }
+
+  mapping <- if (is.null(color_by)) {
+    ggplot2::aes(x = .data[[column]], y = .data$estimate)
+  } else {
+    ggplot2::aes(
+      x = .data[[column]], y = .data$estimate, colour = .data[[color_by]]
+    )
+  }
+  p <- ggplot2::ggplot(data, mapping)
+  if (isTRUE(identity_line)) {
+    p <- p + ggplot2::geom_abline(
+      slope = 1, intercept = 0, linetype = "dashed", colour = "grey40"
+    )
+  }
+  if (isTRUE(intervals)) {
+    p <- p + ggplot2::geom_linerange(
+      ggplot2::aes(ymin = .data$ci_low, ymax = .data$ci_high),
+      alpha = 0.5
+    )
+  }
+  p <- p + ggplot2::geom_point()
+  if (!is.null(facet_by)) {
+    p <- p + ggplot2::facet_wrap(facet_by)
+  }
+  x_label <- if (identical(truth, "sample")) {
+    "In-sample correlation"
+  } else {
+    "Generating correlation"
+  }
+  p +
+    ggplot2::labs(
+      x = scale_label(scale, x_label),
+      y = scale_label(scale, "Estimated correlation"),
       colour = color_by
     ) +
     ggplot2::theme_bw()

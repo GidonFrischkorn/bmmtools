@@ -20,6 +20,9 @@ recovery_grid(
   subjects = c("redraw", "fixed"),
   re_cor = c("none", "all"),
   scale = c("natural", "link"),
+  levels = c("population", "subject"),
+  correlations = NULL,
+  cor_scale = "link",
   smoke = FALSE,
   preflight = TRUE,
   ...,
@@ -72,12 +75,26 @@ replication 1 are reused too.}
 \item{scale}{The scale recovery is scored on, as in \code{\link[=recover]{recover()}};
 natural by default.}
 
+\item{levels}{The estimate levels extracted from every fit and scored:
+one or more of \code{"population"}, \code{"subject"} and \code{"sd"} (the
+between-subject standard deviations, always scored on the link
+scale).}
+
+\item{correlations}{\code{NULL} (the default) for no correlations, or one or
+more of the estimators of \code{\link[=extract_correlations]{extract_correlations()}}, \code{"model"},
+\code{"draws"} and \code{"point"}, to extract and score the between-subject
+correlations of every cell, pairs with covariates included.}
+
+\item{cor_scale}{The scale the correlations are extracted and scored
+on, \code{"link"} or \code{"natural"}. The \code{"model"} estimator exists on the
+link scale only.}
+
 \item{smoke}{\code{TRUE} runs the first two rows with two replications
 into \verb{<dir>/smoke}, so a smoke run never overwrites a full one.}
 
 \item{preflight}{Run the first cell once with one chain and 200
 iterations into \verb{<dir>/preflight} before the loop. Skipped when the
-first cell already has a cached fit.}
+first cell already has a cached fit or a sidecar that can be used.}
 
 \item{...}{Passed to \code{\link[=fit_cached]{fit_cached()}} and so to the fitter: \code{chains},
 \code{iter}, \code{warmup}, \code{backend}, \code{cores}, ...}
@@ -86,12 +103,25 @@ first cell already has a cached fit.}
 }
 \value{
 A \code{bmmtools_recovery} object over every cell that produced a
-fit, at both the population and the subject level, with a
-\code{condition} column (\code{"row-<i>"}) naming the grid row. Two
-attributes: \code{cells}, a tibble with one row per cell (\code{condition},
+fit, at the requested \code{levels}, with a \code{condition} column
+(\code{"row-<i>"}) naming the grid row. \code{summary()} groups by condition.
+Its attributes:
+\itemize{
+\item \code{cells}: a tibble with one row per cell (\code{condition},
 \code{replication}, \code{n_subjects}, \code{n_trials}, \code{seed}, \code{file}, \code{status},
-\code{elapsed} in seconds, \code{converged}), and \code{grid}. \code{summary()} groups
-by condition.
+\code{elapsed} in seconds, \code{converged}).
+\item \code{grid}: the grid as run.
+\item \code{correlations}: with \code{correlations} requested, a
+\code{bmmtools_cor_recovery} from \code{\link[=recover_correlations]{recover_correlations()}} over every
+cell, with \code{condition} and \code{replication}; otherwise \code{NULL}.
+\item \code{subject_means}: a tibble with one row per cell, subject and term:
+\code{condition}, \code{replication}, \code{id}, \code{term}, \code{covariate} (whether the
+term is a covariate), the posterior \code{mean} and \code{median} on the link
+scale, and \code{true_value}, the generating value on the link scale (a
+covariate's value is its own mean, median and true value). Its
+attribute \code{links} is the model's link table. \code{\link[=subject_table]{subject_table()}}
+turns it into one row per subject.
+}
 }
 \description{
 The loop the validation scripts in bmm wrote by hand, with the
@@ -111,6 +141,16 @@ design error rather than a sampler accident. Cell files are
 \verb{cell-<row>-rep-<rep>.rds} with its \code{.key} (the fit, through
 \code{\link[=fit_cached]{fit_cached()}}); a resume reads an existing simulation file rather
 than regenerating, so a cached fit and its truth always match.
+
+\strong{The sidecar.} While a fit is in memory, everything scored from it is
+written to \verb{cell-<row>-rep-<rep>-est.rds}: the estimates at \code{levels},
+the correlations, the subject means, and what they were extracted
+with (the cell's cache key, the bmmtools version, \code{levels},
+\code{correlations}, \code{cor_scale}). A resume uses the sidecar without
+reading the fit when the key and the version match and it holds every
+requested level and estimator, so the fit files may be deleted once a
+grid has run. Otherwise the cell goes through \code{\link[=fit_cached]{fit_cached()}} again,
+which reuses a cached fit, and the sidecar is rewritten.
 }
 \examples{
 \dontrun{

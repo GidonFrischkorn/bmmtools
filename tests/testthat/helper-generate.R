@@ -36,6 +36,10 @@ grid_mock_fitter <- function(fail_on = NULL) {
 }
 
 #' Estimates for a mock fit: 0 with a wide interval, converged
+#'
+#' The `"sd"` level repeats the population rows under that level, so a
+#' grid can score SDs; `"cor"` gives no rows, as for an uncorrelated fit.
+#'
 #' @noRd
 extract_estimates_mockfit <- function(fit,
                                       level = c("population", "subject"),
@@ -62,11 +66,52 @@ extract_estimates_mockfit <- function(fit,
       one(fit$parameters, i, "subject")
     }))
   }
+  if ("sd" %in% level) {
+    pieces$sd <- one(fit$parameters, NA_character_, "sd")
+  }
   dplyr::bind_rows(pieces)
 }
 
 registerS3method(
   "extract_estimates", "mockfit", extract_estimates_mockfit,
+  envir = asNamespace("bmmtools")
+)
+
+#' Subject draws for a mock fit: deterministic, with spread in every margin
+#'
+#' Ten iterations and two chains per id and parameter. The values are a
+#' smooth function of the indices, so a test can rely on them being the
+#' same on every call and on every subject and draw differing.
+#'
+#' @noRd
+extract_subject_draws_mockfit <- function(fit, group = NULL, ...) {
+  ids <- as.character(fit$ids)
+  terms <- fit$parameters
+  n_iter <- 10L
+  n_chain <- 2L
+  out <- array(
+    NA_real_,
+    dim = c(n_iter, n_chain, length(ids), length(terms)),
+    dimnames = list(
+      iteration = as.character(seq_len(n_iter)),
+      chain = as.character(seq_len(n_chain)),
+      id = ids,
+      term = terms
+    )
+  )
+  for (t in seq_along(terms)) {
+    for (i in seq_along(ids)) {
+      draw <- outer(seq_len(n_iter), seq_len(n_chain), function(it, ch) {
+        sin(i * t + 0.37 * it + 1.3 * ch) / 4
+      })
+      out[, , i, t] <- cos(1.7 * i * t) + draw
+    }
+  }
+  structure(out, group = group %||% "id")
+}
+
+registerS3method(
+  "extract_subject_draws", "mockfit", extract_subject_draws_mockfit,
   envir = asNamespace("bmmtools")
 )
 

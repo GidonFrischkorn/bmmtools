@@ -623,6 +623,350 @@ print.bmmtools_recovery_summary <- function(x, ...) {
   invisible(x)
 }
 
+# correlation recovery ---------------------------------------------------
+
+#' The correlation-recovery contract
+#'
+#' As for `recovery_contract()`, `replication` is required but its type is
+#' the caller's choice.
+#'
+#' @noRd
+cor_recovery_contract <- function() {
+  c(
+    term = "character",
+    var1 = "character",
+    var2 = "character",
+    estimator = "character",
+    estimate = "double",
+    ci_low = "double",
+    ci_high = "double",
+    ci_method = "character",
+    ci_level = "double",
+    rhat = "double",
+    ess_bulk = "double",
+    ess_tail = "double",
+    true_value = "double",
+    sample_value = "double",
+    bias = "double",
+    bias_sample = "double",
+    covered = "logical",
+    covered_sample = "logical",
+    excludes_zero = "logical",
+    scale = "character",
+    n = "integer",
+    converged = "logical",
+    condition = "character"
+  )
+}
+
+#' @noRd
+cor_recovery_contract_columns <- function() {
+  c(names(cor_recovery_contract()), "replication")
+}
+
+#' The columns `summary()` of a correlation recovery returns
+#' @noRd
+cor_recovery_summary_columns <- function() {
+  c(
+    "term", "estimator", "scale", "n_replications", "n_converged",
+    "true_value", "sample_sd", "mean_estimate", "bias", "rmse",
+    "bias_sample", "rmse_sample", "coverage", "coverage_sample", "ci_width",
+    "rejection_rate", "false_positive_rate", "power",
+    "r", "r_low", "r_high", "ccc", "ccc_low", "ccc_high"
+  )
+}
+
+#' Construct a correlation-recovery object
+#' @noRd
+new_bmmtools_cor_recovery <- function(x,
+                                      scale,
+                                      ci_level,
+                                      call = NULL,
+                                      error_call = rlang::caller_env()) {
+  if (!is.data.frame(x)) {
+    cli::cli_abort(
+      "{.arg x} must be a data frame, not {.obj_type_friendly {x}}.",
+      call = error_call
+    )
+  }
+  x <- fill_optional_columns(x)
+  missing <- setdiff(cor_recovery_contract_columns(), names(x))
+  if (length(missing) > 0L) {
+    cli::cli_abort(
+      c(
+        "A correlation recovery object is missing the column{?s} \\
+         {.val {missing}}.",
+        i = "The contract is {.val {cor_recovery_contract_columns()}}."
+      ),
+      call = error_call
+    )
+  }
+  contract <- cor_recovery_contract()
+  for (column in names(contract)) {
+    if (!identical(typeof(x[[column]]), contract[[column]])) {
+      cli::cli_abort(
+        "Column {.val {column}} must be {.cls {contract[[column]]}}, \\
+         not {.cls {typeof(x[[column]])}}.",
+        call = error_call
+      )
+    }
+  }
+  x <- tibble::as_tibble(x)[cor_recovery_contract_columns()]
+  structure(
+    x,
+    class = c("bmmtools_cor_recovery", class(x)),
+    scale = scale,
+    ci_level = ci_level,
+    call = call
+  )
+}
+
+#' @noRd
+check_cor_recovery_contract <- function(x, call = rlang::caller_env()) {
+  missing <- setdiff(cor_recovery_contract_columns(), names(x))
+  if (length(missing) > 0L) {
+    cli::cli_abort(
+      c(
+        "This {.cls bmmtools_cor_recovery} is missing the column{?s} \\
+         {.val {missing}}.",
+        i = "It was built by hand or altered in place; \\
+             {.fn recover_correlations} and the {.pkg dplyr} verbs keep \\
+             the contract or drop the class."
+      ),
+      call = call
+    )
+  }
+  invisible(x)
+}
+
+#' @noRd
+#' @importFrom dplyr dplyr_reconstruct
+#' @exportS3Method dplyr::dplyr_reconstruct
+dplyr_reconstruct.bmmtools_cor_recovery <- function(data, template) {
+  if (!all(cor_recovery_contract_columns() %in% names(data))) {
+    return(tibble::as_tibble(data))
+  }
+  NextMethod()
+}
+
+#' Subset a correlation-recovery object
+#'
+#' As for [`[.bmmtools_recovery`]: `dplyr::select()` on a tibble subclass
+#' subsets through `[` and never reaches `dplyr_reconstruct()`, so this
+#' method is what drops the class once a contract column is gone.
+#'
+#' @param x A `bmmtools_cor_recovery` object.
+#' @param ... Passed to the tibble method.
+#' @return A correlation-recovery object while the contract holds, a
+#'   plain tibble once it does not.
+#' @export
+`[.bmmtools_cor_recovery` <- function(x, ...) {
+  demote_if_incomplete(NextMethod(), cor_recovery_contract_columns())
+}
+
+#' Standard deviation of the values that are not missing
+#' @noRd
+sd_or_na <- function(x) {
+  x <- x[!is.na(x)]
+  if (length(x) < 2L) NA_real_ else stats::sd(x)
+}
+
+#' The summary metrics of one term x estimator x scale group
+#' @noRd
+summarise_cor_rows <- function(rows) {
+  truth <- unique(rows$true_value)
+  rejection <- mean_or_na(as.double(rows$excludes_zero))
+  r <- metric_r(rows$estimate, rows$sample_value)
+  ccc <- metric_ccc(rows$estimate, rows$sample_value)
+  list(
+    n_replications = length(unique(rows$replication)),
+    n_converged = count_converged(rows),
+    true_value = if (length(truth) == 1L) as.double(truth) else NA_real_,
+    sample_sd = sd_or_na(rows$sample_value),
+    mean_estimate = mean_or_na(rows$estimate),
+    bias = metric_bias(rows$estimate, rows$true_value),
+    rmse = metric_rmse(rows$estimate, rows$true_value),
+    bias_sample = metric_bias(rows$estimate, rows$sample_value),
+    rmse_sample = metric_rmse(rows$estimate, rows$sample_value),
+    coverage = metric_coverage(rows$true_value, rows$ci_low, rows$ci_high),
+    coverage_sample = metric_coverage(
+      rows$sample_value, rows$ci_low, rows$ci_high
+    ),
+    ci_width = metric_ci_width(rows$ci_low, rows$ci_high),
+    rejection_rate = rejection,
+    # an NA true_value is a nonzero correlation on the natural scale, so
+    # it counts as "not 0"
+    false_positive_rate = if (all(rows$true_value %in% 0)) {
+      rejection
+    } else {
+      NA_real_
+    },
+    power = if (!any(rows$true_value %in% 0)) rejection else NA_real_,
+    r = r$r,
+    r_low = r$r_low,
+    r_high = r$r_high,
+    ccc = ccc$ccc,
+    ccc_low = ccc$ccc_low,
+    ccc_high = ccc$ccc_high
+  )
+}
+
+#' @noRd
+empty_cor_recovery_summary <- function() {
+  columns <- cor_recovery_summary_columns()
+  types <- stats::setNames(rep("double", length(columns)), columns)
+  types[c("term", "estimator", "scale")] <- "character"
+  types[c("n_replications", "n_converged")] <- "integer"
+  tibble::as_tibble(lapply(types, function(type) vector(type, 0L)))
+}
+
+#' @noRd
+new_cor_recovery_summary <- function(x) {
+  columns <- cor_recovery_summary_columns()
+  if ("condition" %in% names(x)) columns <- c("condition", columns)
+  x <- tibble::as_tibble(x)[columns]
+  structure(x, class = c("bmmtools_cor_recovery_summary", class(x)))
+}
+
+#' Summarise a correlation recovery into per-pair metrics
+#'
+#' One row per condition, pair, estimator and scale, summarised across
+#' replications. Errors, coverage and the correlations are reported
+#' against both truths: the generating correlation (`bias`, `rmse`,
+#' `coverage`) and the correlation the simulated subjects had
+#' (`bias_sample`, `rmse_sample`, `coverage_sample`, `r`, `ccc`).
+#'
+#' @param object A `bmmtools_cor_recovery` object from
+#'   [recover_correlations()].
+#' @param ... Not used.
+#'
+#' @return A `bmmtools_cor_recovery_summary` tibble with the columns
+#'   `term`, `estimator`, `scale`, `n_replications`, `n_converged`,
+#'   `true_value`, `sample_sd`, `mean_estimate`, `bias`, `rmse`,
+#'   `bias_sample`, `rmse_sample`, `coverage`, `coverage_sample`,
+#'   `ci_width`, `rejection_rate`, `false_positive_rate`, `power`, `r`,
+#'   `r_low`, `r_high`, `ccc`, `ccc_low` and `ccc_high`, preceded by
+#'   `condition` when the object came from a grid.
+#'
+#' @details
+#' `true_value` is the generating correlation when it is the same in
+#' every replication and `NA` otherwise. `sample_sd` is the standard
+#' deviation of the in-sample correlations across replications.
+#'
+#' `rejection_rate` is the share of intervals that exclude zero. It is
+#' reported as `false_positive_rate` when every `true_value` is 0 and as
+#' `power` when none is. A `true_value` that is `NA`, which is what a
+#' nonzero correlation becomes on the natural scale, counts as not 0, so
+#' `power` is defined there. With a mix of zero and nonzero values both
+#' are `NA`.
+#'
+#' `r` (with a Fisher-z interval) and `ccc` (Lin's concordance, see
+#' [recovery_ccc()]) compare the estimates with `sample_value` across
+#' replications, one pair per replication. They are `NA` with fewer than
+#' three replications or when either side has no spread.
+#'
+#' @export
+summary.bmmtools_cor_recovery <- function(object, ...) {
+  check_cor_recovery_contract(object)
+  if (nrow(object) == 0L) {
+    return(new_cor_recovery_summary(empty_cor_recovery_summary()))
+  }
+  by_condition <- !all(is.na(object$condition))
+  keys <- paste(object$term, object$estimator, object$scale, sep = "\r")
+  if (by_condition) keys <- paste(object$condition, keys, sep = "\r")
+  groups <- split(seq_len(nrow(object)), factor(keys, levels = unique(keys)))
+  pieces <- lapply(groups, function(i) {
+    rows <- object[i, ]
+    tibble::as_tibble(c(
+      if (by_condition) list(condition = rows$condition[[1L]]),
+      list(
+        term = rows$term[[1L]],
+        estimator = rows$estimator[[1L]],
+        scale = rows$scale[[1L]]
+      ),
+      summarise_cor_rows(rows)
+    ))
+  })
+  new_cor_recovery_summary(dplyr::bind_rows(pieces))
+}
+
+#' @rdname summary.bmmtools_cor_recovery
+#' @export
+summary.bmmtools_cor_recovery_summary <- function(object, ...) {
+  object
+}
+
+#' Format and print a correlation recovery
+#'
+#' The printed object leads with the scale and the estimators, because
+#' the three estimators answer different questions and a correlation
+#' table without that label cannot be read.
+#'
+#' @param x A `bmmtools_cor_recovery` object.
+#' @param ... Not used.
+#'
+#' @return `format()` returns a character vector; `print()` returns `x`
+#'   invisibly.
+#'
+#' @export
+format.bmmtools_cor_recovery <- function(x, ...) {
+  check_cor_recovery_contract(x)
+  if (nrow(x) == 0L) {
+    return(c("<bmmtools_cor_recovery>", "No correlations scored."))
+  }
+  scale <- attr(x, "scale") %||% unique(x$scale)
+  estimators <- unique(x$estimator)
+  terms <- unique(x$term)
+  n_fits <- length(unique(x$replication))
+  summarised <- summary(x)
+
+  header <- c(
+    "<bmmtools_cor_recovery>",
+    paste0(
+      "Scored on the ", paste(scale, collapse = ", "), " scale; estimator",
+      if (length(estimators) != 1L) "s", ": ",
+      paste(estimators, collapse = ", "), "."
+    ),
+    paste0(
+      n_fits, " fit", if (n_fits != 1L) "s", ", ",
+      length(terms), " correlation", if (length(terms) != 1L) "s",
+      ": ", paste(terms, collapse = ", "), "."
+    ),
+    if (identical(scale, "natural")) {
+      paste0(
+        "On the natural scale true_value is 0 where the generating ",
+        "correlation is 0 and NA otherwise; compare with sample_value."
+      )
+    },
+    ""
+  )
+  note <- character(0)
+  if (anyNA(summarised$r)) {
+    note <- c(
+      "",
+      paste0(
+        "r and ccc are NA where they are not estimable: they need at ",
+        "least 3 replications and spread on both sides."
+      )
+    )
+  }
+  c(header, utils::capture.output(print(summarised)), note)
+}
+
+#' @rdname format.bmmtools_cor_recovery
+#' @export
+print.bmmtools_cor_recovery <- function(x, ...) {
+  cat(format(x, ...), sep = "\n")
+  invisible(x)
+}
+
+#' @rdname format.bmmtools_cor_recovery
+#' @export
+print.bmmtools_cor_recovery_summary <- function(x, ...) {
+  print(tibble::as_tibble(x), n = Inf, width = Inf)
+  invisible(x)
+}
+
 # the prior check --------------------------------------------------------
 
 #' The prior-check contract

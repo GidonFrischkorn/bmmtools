@@ -30,6 +30,8 @@ grid with replications, one file per cell.
 \code{\link[=recover]{recover()}} and \code{\link[=recover_subjects]{recover_subjects()}} score population-level and
 person-level estimates against the truth; \code{summary()} of the result
 gives bias, RMSE, coverage, interval width and the correlations.
+\code{\link[=extract_correlations]{extract_correlations()}} and \code{\link[=recover_correlations]{recover_correlations()}} do the same for
+between-subject correlations.
 \code{\link[=prior_check]{prior_check()}} summarises prior-predictive draws on the observable
 scale. \code{\link[=plot_recovery]{plot_recovery()}} and \code{\link[=plot_prior_check]{plot_prior_check()}} draw both.
 

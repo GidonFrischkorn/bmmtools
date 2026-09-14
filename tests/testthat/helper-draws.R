@@ -57,6 +57,44 @@ mixture2p_cor_draws <- function() {
   readRDS(test_path("fixtures", "mixture2p-cor-draws.rds"))
 }
 
+#' A hand-built subject-draws array, iteration x chain x id x term
+#'
+#' Each subject has its own mean per term, drawn once, and the draws
+#' scatter around it, so the per-draw correlation and the correlation of
+#' the posterior means differ. The shape is what
+#' `extract_subject_draws()` returns.
+#'
+#' @noRd
+fake_subject_draws <- function(n_subjects = 6L,
+                               terms = c("kappa", "thetat"),
+                               n_iter = 40L,
+                               n_chain = 2L,
+                               noise = 0.5,
+                               seed = 1) {
+  withr::local_seed(seed)
+  ids <- as.character(seq_len(n_subjects))
+  means <- matrix(
+    stats::rnorm(n_subjects * length(terms)),
+    nrow = n_subjects, dimnames = list(ids, terms)
+  )
+  out <- array(
+    NA_real_,
+    dim = c(n_iter, n_chain, n_subjects, length(terms)),
+    dimnames = list(
+      iteration = as.character(seq_len(n_iter)),
+      chain = as.character(seq_len(n_chain)),
+      id = ids,
+      term = terms
+    )
+  )
+  for (t in terms) {
+    for (i in ids) {
+      out[, , i, t] <- means[i, t] + noise * stats::rnorm(n_iter * n_chain)
+    }
+  }
+  structure(out, group = "id")
+}
+
 #' A hand-built `ranef` table in the shape brms gives one
 #'
 #' One row per coefficient. Only the columns the extraction reads are

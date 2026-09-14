@@ -19,6 +19,8 @@
 #' [recover()] and [recover_subjects()] score population-level and
 #' person-level estimates against the truth; `summary()` of the result
 #' gives bias, RMSE, coverage, interval width and the correlations.
+#' [extract_correlations()] and [recover_correlations()] do the same for
+#' between-subject correlations.
 #' [prior_check()] summarises prior-predictive draws on the observable
 #' scale. [plot_recovery()] and [plot_prior_check()] draw both.
 #'

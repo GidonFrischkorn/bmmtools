@@ -680,6 +680,20 @@ estimates_from_draws <- function(draws,
   out
 }
 
+#' The convergence verdict of a fit under the default thresholds
+#'
+#' What `converged = NULL` means in [extract_estimates()] and
+#' [extract_correlations()], in one place.
+#'
+#' @noRd
+fit_converged <- function(fit, draws) {
+  convergence_from_fit(
+    fit, draws,
+    thresholds = check_thresholds(),
+    treedepth_max = fit_treedepth_max(fit)
+  )$pass
+}
+
 #' Extract a tidy table of parameter estimates from a fit
 #'
 #' The bridge between a fitted model and everything bmmtools scores. It
@@ -776,11 +790,7 @@ extract_estimates.brmsfit <- function(fit,
   if (missing(level)) level <- "population"
   draws <- posterior::as_draws_array(fit)
   if (is.null(converged)) {
-    converged <- convergence_from_fit(
-      fit, draws,
-      thresholds = check_thresholds(),
-      treedepth_max = fit_treedepth_max(fit)
-    )$pass
+    converged <- fit_converged(fit, draws)
   }
 
   estimates_from_draws(

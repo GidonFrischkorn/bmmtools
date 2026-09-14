@@ -2,9 +2,16 @@
 % Please edit documentation in R/plot.R
 \name{plot_recovery}
 \alias{plot_recovery}
+\alias{plot_recovery.default}
+\alias{plot_recovery.bmmtools_recovery}
+\alias{plot_recovery.bmmtools_cor_recovery}
 \title{Plot recovered estimates against their generating values}
 \usage{
-plot_recovery(
+plot_recovery(x, ...)
+
+\method{plot_recovery}{default}(x, ...)
+
+\method{plot_recovery}{bmmtools_recovery}(
   x,
   facet_by = "term",
   color_by = NULL,
@@ -14,18 +21,33 @@ plot_recovery(
   annotate = FALSE,
   ...
 )
+
+\method{plot_recovery}{bmmtools_cor_recovery}(
+  x,
+  truth = c("sample", "true"),
+  facet_by = "term",
+  color_by = "estimator",
+  intervals = TRUE,
+  identity_line = TRUE,
+  ...
+)
 }
 \arguments{
 \item{x}{A \code{bmmtools_recovery} object from \code{\link[=recover]{recover()}} or
-\code{\link[=recover_subjects]{recover_subjects()}}.}
+\code{\link[=recover_subjects]{recover_subjects()}}, or a \code{bmmtools_cor_recovery} object from
+\code{\link[=recover_correlations]{recover_correlations()}}.}
+
+\item{...}{Not used.}
 
 \item{facet_by}{A column name to make panels from, or \code{NULL} for a
 single panel. Defaults to \code{"term"}: parameters usually live on
 scales too different to share an axis.}
 
-\item{color_by}{A column name to colour points by, or \code{NULL}.}
+\item{color_by}{A column name to colour points by, or \code{NULL}. \code{NULL}
+by default for a recovery object and \code{"estimator"} for a correlation
+recovery.}
 
-\item{intervals}{Draw the credible intervals as bars.}
+\item{intervals}{Draw the intervals as bars.}
 
 \item{identity_line}{Draw the line where the estimate equals the
 generating value.}
@@ -38,7 +60,10 @@ Lin's concordance from \link[=summary.bmmtools_recovery]{summary()} of
 the rows in that panel. Each panel must then hold a single term,
 level and condition; filter the object first if it does not.}
 
-\item{...}{Not used.}
+\item{truth}{For a correlation recovery, the value on the x axis:
+\code{"sample"}, the in-sample correlation, or \code{"true"}, the generating
+one. Rows without that value (a nonzero \code{true_value} on the natural
+scale is \code{NA}) are left out with a message.}
 }
 \value{
 A \code{ggplot} object.
@@ -50,6 +75,11 @@ as a bar and an identity line to compare against. A model that
 recovers its parameters puts the points on the line; a model that is
 biased puts them on a line beside it, and a model that cannot
 distinguish them puts them on a cloud.
+}
+\details{
+For a correlation recovery from \code{\link[=recover_correlations]{recover_correlations()}} the x axis is
+the in-sample correlation of the simulated subjects (\code{truth = "sample"}) or the generating correlation (\code{truth = "true"}), and the
+points are coloured by estimator.
 }
 \examples{
 \dontshow{if (rlang::is_installed("ggplot2")) withAutoprint(\{ # examplesIf}
