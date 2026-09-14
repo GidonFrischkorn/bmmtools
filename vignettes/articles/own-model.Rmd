@@ -189,11 +189,12 @@ warning that lists the available terms.
 
 ## Limits of this version
 
-- Each parameter is scored through its intercept. A formula with
-  several coefficients for one parameter, say `kappa ~ 1 + setsize`,
-  maps them onto the same term, and scoring stops with an error rather
-  than join them wrongly. `recovery_formula()` writes intercept-only
-  formulas.
+- Each parameter is scored through its intercept, or through one cell
+  mean per task (`kappa ~ 0 + task`, the terms `kappa_task1`,
+  `kappa_task2`, ...), which is what `recovery_formula()` writes with and
+  without `task_col`. A formula with an intercept and other coefficients
+  for one parameter, say `kappa ~ 1 + setsize`, stops with an error
+  rather than join the estimates wrongly.
 - Group-level standard deviations are scored on the link scale only
   (`recover(level = "sd")`). Group-level correlations are extracted
   (`extract_estimates(level = "cor")`) but not yet scored.

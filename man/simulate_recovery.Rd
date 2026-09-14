@@ -12,6 +12,8 @@ simulate_recovery(
   sds = NULL,
   cors = NULL,
   covariates = NULL,
+  tasks = NULL,
+  task_col = "task",
   subject_pars = NULL,
   generator = NULL,
   seed = NULL
@@ -46,6 +48,15 @@ becomes a subject-constant data column after \code{id}. A name must be
 syntactic, contain no \verb{_}, and differ from the model's parameters and
 columns.}
 
+\item{tasks}{\code{NULL}, or a character vector of at least two task levels
+(letters and digits) for a design in which every subject does every
+task. Each free parameter then has one value per task, under the term
+\verb{<parameter>_<task_col><level>} (\code{kappa_task1}), brms's coefficient
+name for \code{0 + task}. See the details.}
+
+\item{task_col}{The name of the task column in \code{data}, \code{"task"} by
+default. Used only with \code{tasks}.}
+
 \item{subject_pars}{A data frame \code{id}, \code{term}, \code{true_value} (link
 scale) of subject values to use instead of drawing them, so that
 replications can share the same simulated people. With \code{covariates}
@@ -61,15 +72,16 @@ and the generator; \code{NULL} leaves the random number generator alone.}
 }
 \value{
 A list of class \code{bmmtools_simulation} with \code{data} (a tibble,
-\code{id} first, then any covariates), \code{truth} (a list of tibbles on the
-link scale: \code{population} with \code{term} and \code{true_value}; \code{subjects}
-with \code{id}, \code{term} and \code{true_value}; \code{sd} with \code{term} and
-\code{true_value}; \code{cor} with \code{term}, \code{var1}, \code{var2} and \code{true_value};
+\code{id} first, then any covariates, then the task column), \code{truth} (a
+list of tibbles on the link scale: \code{population} with \code{term} and
+\code{true_value}; \code{subjects} with \code{id}, \code{term} and \code{true_value}; \code{sd} with
+\code{term} and \code{true_value}; \code{cor} with \code{term}, \code{var1}, \code{var2} and
+\code{true_value};
 \code{covariates} with \code{id}, \code{term} and \code{true_value}), the realised
 \code{pars}, \code{sds}, \code{cors} (the full matrix over varying parameters then
 covariates, \code{NULL} with fewer than two) and \code{covariates},
-\code{n_subjects}, \code{n_trials}, \code{seed} (\code{NA} when none), \code{model} and
-\code{generator}.
+\code{n_subjects}, \code{n_trials}, \code{seed} (\code{NA} when none), \code{model},
+\code{generator}, \code{tasks} and \code{task_col} (both \code{NULL} without tasks).
 }
 \description{
 The generate half of the engine: a model plus population values on
@@ -95,6 +107,19 @@ uncorrelated draw gave in earlier versions, so seeded simulations
 stay reproducible; adding a covariate never changes the parameter
 values. A correlation pair is named \verb{<a>__<b>}, the two names sorted
 in the C locale.
+
+\strong{Tasks.} With \code{tasks}, \code{pars} and \code{sds} may name a parameter, which
+gives every task that value, or a full term such as \code{kappa_task2}, which
+overrides it for that task; the realised \code{pars} and \code{sds} are stored
+with full terms. \code{cors}, \code{subject_pars} and the truth tables use full
+terms only, so a correlation between tasks is, for example,
+\code{kappa_task1__kappa_task2}. The generator is called once per subject and
+task with that task's values under the bare parameter names, and
+\code{n_trials} is per task. The task values are cell means: fit them with
+\code{recovery_formula(model, task_col = "task")}. Fixed parameters are the
+same in every task. Adding tasks changes the random numbers drawn
+compared with a simulation without them; \code{tasks = NULL} gives exactly
+the simulation of earlier versions.
 }
 \examples{
 \dontrun{
@@ -107,6 +132,22 @@ sim <- simulate_recovery(
 fit <- bmm::bmm(recovery_formula(sim$model), sim$data, sim$model)
 recover(fit, sim$truth$population)
 recover_subjects(fit, sim$truth$subjects)
+
+# two tasks, kappa lower in the second, correlated .6 across tasks
+cors <- diag(2)
+dimnames(cors) <- rep(list(c("kappa_task1", "kappa_task2")), 2)
+cors[1, 2] <- cors[2, 1] <- 0.6
+two_tasks <- simulate_recovery(
+  bmm::mixture2p(resp_error = "y"),
+  pars = c(kappa = log(8), kappa_task2 = log(5), thetat = qlogis(0.75)),
+  n_subjects = 30, n_trials = 60,
+  sds = c(kappa_task1 = 0.3, kappa_task2 = 0.3), cors = cors,
+  tasks = c("1", "2"), seed = 1
+)
+formula <- recovery_formula(
+  two_tasks$model,
+  re_cor = "within", task_col = "task"
+)
 }
 
 }

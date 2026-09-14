@@ -272,11 +272,23 @@ test_that("a named group resolves without ambiguity", {
 
 # term naming -----------------------------------------------------------
 
-test_that("strip_design_suffix reduces a term to the bare parameter name", {
-  expect_equal(strip_design_suffix("b_kappa_Intercept"), "kappa")
-  expect_equal(strip_design_suffix("b_thetat_Intercept"), "thetat")
-  expect_equal(strip_design_suffix("b_kappa_setsize2"), "kappa")
-  expect_equal(strip_design_suffix("b_Intercept"), "Intercept")
+test_that("split_coefficient separates the parameter from the coefficient", {
+  # the four names the retired strip_design_suffix() test pinned
+  parts <- split_coefficient(
+    c("kappa_Intercept", "thetat_Intercept", "kappa_setsize2", "Intercept")
+  )
+  expect_equal(parts$par, c("kappa", "thetat", "kappa", ""))
+  expect_equal(parts$coef, c("Intercept", "Intercept", "setsize2", "Intercept"))
+})
+
+test_that("a lone coefficient keeps the bare parameter name", {
+  # one non-Intercept coefficient reads back as the parameter, as before 5.4
+  draws <- fake_draws(list(
+    b_kappa_setsize2 = seq_len(80) / 10,
+    b_Intercept = stats::rnorm(80)
+  ))
+  out <- estimates_from_draws(draws, groups = character(0))
+  expect_equal(out$term, c("kappa", "Intercept"))
 })
 
 test_that("terms that do not reduce to unique names are an error", {
@@ -711,4 +723,112 @@ test_that("the correlated fixture gives sd and cor rows with finite rhat", {
     level = c("population", "sd", "cor")
   )
   expect_identical(parsed, out)
+})
+
+# the task dimension (spec 5, section 5.4) --------------------------------
+
+# Cell-means draws of a two-task fit with correlated random effects, as
+# brms names them for `kappa ~ 0 + task + (0 + task | id)`.
+task_draws <- function(seed = 21) {
+  withr::local_seed(seed)
+  fake_draws(list(
+    b_kappa_task1 = stats::rnorm(80, 2),
+    b_kappa_task2 = stats::rnorm(80, 1),
+    `r_id__kappa[1,task1]` = stats::rnorm(80),
+    `r_id__kappa[1,task2]` = stats::rnorm(80),
+    `r_id__kappa[2,task1]` = stats::rnorm(80),
+    `r_id__kappa[2,task2]` = stats::rnorm(80),
+    sd_id__kappa_task1 = abs(stats::rnorm(80)),
+    sd_id__kappa_task2 = abs(stats::rnorm(80)),
+    cor_id__kappa_task2__kappa_task1 = stats::runif(80, -1, 1)
+  ))
+}
+
+task_ranef <- function() {
+  fake_ranef(c("kappa", "kappa"), coef = c("task1", "task2"))
+}
+
+test_that("cell-means coefficients get one term per task at every level", {
+  draws <- task_draws()
+  levels <- c("population", "subject", "sd", "cor")
+  with_ranef <- estimates_from_draws(
+    draws, "id",
+    level = levels, ranef = task_ranef()
+  )
+  parsed <- estimates_from_draws(draws, "id", level = levels)
+
+  for (out in list(with_ranef, parsed)) {
+    at <- function(lv) out$term[out$level == lv]
+    expect_equal(at("population"), c("kappa_task1", "kappa_task2"))
+    expect_setequal(at("subject"), c("kappa_task1", "kappa_task2"))
+    expect_equal(nrow(out[out$level == "subject", ]), 4L)
+    expect_equal(at("sd"), c("kappa_task1", "kappa_task2"))
+    # brms put task2 first; the pair term is sorted
+    expect_equal(at("cor"), "kappa_task1__kappa_task2")
+  }
+  expect_identical(parsed, with_ranef)
+
+  # a subject value is the task's intercept plus that task's deviation
+  at <- with_ranef$level == "subject" & with_ranef$term == "kappa_task2" &
+    with_ranef$id == "2"
+  row <- with_ranef[at, ]
+  summed <- as.vector(draws[, , "b_kappa_task2"]) +
+    as.vector(draws[, , "r_id__kappa[2,task2]"])
+  expect_equal(row$estimate, stats::median(summed))
+})
+
+test_that("the subject-draws array names its terms per task", {
+  out <- subject_draws_from_draws(task_draws(), "id")
+  expect_equal(dimnames(out)$term, c("kappa_task1", "kappa_task2"))
+  expect_equal(dimnames(out)$id, c("1", "2"))
+
+  cors <- correlations_from_parts(out, estimator = c("draws", "point"))
+  expect_equal(unique(cors$term), "kappa_task1__kappa_task2")
+})
+
+test_that("an intercept together with a contrast is an error", {
+  withr::local_seed(22)
+  draws <- fake_draws(list(
+    b_kappa_Intercept = stats::rnorm(80),
+    b_kappa_task2 = stats::rnorm(80),
+    `r_id__kappa[1,Intercept]` = stats::rnorm(80),
+    `r_id__kappa[1,task2]` = stats::rnorm(80),
+    sd_id__kappa_Intercept = abs(stats::rnorm(80)),
+    sd_id__kappa_task2 = abs(stats::rnorm(80)),
+    cor_id__kappa_Intercept__kappa_task2 = stats::runif(80, -1, 1)
+  ))
+  ranef <- fake_ranef(c("kappa", "kappa"), coef = c("Intercept", "task2"))
+  for (level in c("population", "subject", "sd", "cor")) {
+    for (rf in list(NULL, ranef)) {
+      err <- expect_error(
+        estimates_from_draws(draws, "id", level = level, ranef = rf),
+        "kappa"
+      )
+      message <- conditionMessage(err)
+      expect_match(message, "contrasts")
+      expect_match(message, "0 + task", fixed = TRUE)
+      expect_no_match(message, "Milestone")
+      expect_no_match(message, "D22")
+    }
+  }
+  expect_error(subject_draws_from_draws(draws, "id"), "intercept")
+})
+
+test_that("the duplicate-term error no longer names a milestone", {
+  withr::local_seed(23)
+  draws <- fake_draws(list(
+    sd_id__kappa = abs(stats::rnorm(80)),
+    sd_id__kappa_Intercept = abs(stats::rnorm(80))
+  ))
+  err <- expect_error(estimates_from_draws(draws, "id", level = "sd"), "kappa")
+  expect_no_match(conditionMessage(err), "Milestone")
+  expect_match(conditionMessage(err), "cell-means")
+})
+
+test_that("a task term takes the link of its parameter", {
+  links <- c(kappa = "log", kappa2 = "log1p", thetat = "logit")
+  expect_equal(
+    link_of(c("kappa_task1", "kappa2_task1", "thetat_taskB"), links),
+    c("log", "log1p", "logit")
+  )
 })

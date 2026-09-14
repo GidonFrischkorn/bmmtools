@@ -23,7 +23,10 @@ grouping factor and errors if there is more than one.}
 }
 \value{
 A numeric array with the dimensions \code{iteration}, \code{chain}, \code{id}
-and \code{term}, named in its \code{dimnames}. \code{term} is the parameter name.
+and \code{term}, named in its \code{dimnames}. \code{term} is the parameter name, or
+\verb{<parameter>_<coefficient>} (\code{kappa_task1}) for a parameter with
+several group-level coefficients and no intercept, as in
+\code{\link[=extract_estimates]{extract_estimates()}}.
 Parameters the model fixed to a constant (zero posterior variance for
 every subject) are dropped. The grouping factor is stored in the
 attribute \code{group}.

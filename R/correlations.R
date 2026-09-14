@@ -29,7 +29,10 @@
 #' @param ... Not used.
 #'
 #' @return A numeric array with the dimensions `iteration`, `chain`, `id`
-#'   and `term`, named in its `dimnames`. `term` is the parameter name.
+#'   and `term`, named in its `dimnames`. `term` is the parameter name, or
+#'   `<parameter>_<coefficient>` (`kappa_task1`) for a parameter with
+#'   several group-level coefficients and no intercept, as in
+#'   [extract_estimates()].
 #'   Parameters the model fixed to a constant (zero posterior variance for
 #'   every subject) are dropped. The grouping factor is stored in the
 #'   attribute `group`.
@@ -79,7 +82,10 @@ extract_subject_draws.brmsfit <- function(fit, group = NULL, ...) {
 subject_draws_from_draws <- function(draws, groups, group = NULL,
                                      call = rlang::caller_env()) {
   group <- resolve_group(group, groups, call = call)
-  coefficients <- group_coefficients(posterior::variables(draws), group)
+  coefficients <- group_coefficients(
+    posterior::variables(draws), group,
+    call = call
+  )
   if (is.null(coefficients)) {
     cli::cli_abort(
       "The fit has no group-level coefficients for {.val {group}}.",

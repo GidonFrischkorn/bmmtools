@@ -53,9 +53,15 @@ check_count <- function(x, name, call = rlang::caller_env()) {
 }
 
 #' Validate the population values against the model
+#'
+#' With tasks, `pars` has already been expanded to full terms by
+#' `expand_task_values()`, and every free parameter needs a value per task.
+#'
 #' @noRd
-check_pars <- function(pars, model, call = rlang::caller_env()) {
+check_pars <- function(pars, model, tasks = NULL, task_col = NULL,
+                       call = rlang::caller_env()) {
   info <- model_parameters(model)
+  info$free <- task_terms(info$free, tasks, task_col)
   bad <- !is.numeric(pars) || is.null(names(pars)) ||
     anyNA(names(pars)) || !all(nzchar(names(pars)))
   if (bad) {
@@ -226,7 +232,7 @@ natural_pars <- function(link_values, model) {
 #'
 #' @noRd
 check_generated <- function(data, model, covariate_names = NULL,
-                            call = rlang::caller_env()) {
+                            task_col = NULL, call = rlang::caller_env()) {
   if (!is.data.frame(data)) {
     cli::cli_abort(
       "The generator must return a data frame, \\
@@ -242,6 +248,13 @@ check_generated <- function(data, model, covariate_names = NULL,
       call = call
     )
   }
+  if (!is.null(task_col) && task_col %in% names(data)) {
+    cli::cli_abort(
+      "The generator returned a column {.val {task_col}}, which is the \\
+       task column; choose another {.arg task_col}.",
+      call = call
+    )
+  }
   needed <- unlist(model$resp_vars, use.names = FALSE)
   missing <- setdiff(needed, names(data))
   if (length(missing) > 0L) {
@@ -254,6 +267,222 @@ check_generated <- function(data, model, covariate_names = NULL,
     )
   }
   invisible(data)
+}
+
+# tasks (spec 5, section 5.4; local/ARCHITECTURE.md decisions 27 and 30) ----
+
+#' Validate `tasks` and, when there are tasks, `task_col`
+#'
+#' A task level becomes part of a brms coefficient name (`task1`) and so of
+#' a term, which is why it may hold letters and digits only. A single level
+#' is refused: brms would estimate one coefficient per parameter, which the
+#' extraction reads back under the bare parameter name, so the truth terms
+#' (`kappa_task1`) would never match.
+#'
+#' @return A list with `tasks` and `task_col`, both `NULL` without tasks.
+#' @noRd
+check_tasks <- function(tasks, task_col, model, covariates = NULL,
+                        call = rlang::caller_env()) {
+  if (is.null(tasks)) {
+    return(list(tasks = NULL, task_col = NULL))
+  }
+  if (!is.character(tasks) || anyNA(tasks) || length(tasks) < 2L) {
+    cli::cli_abort(
+      "{.arg tasks} must be {.code NULL} or a character vector of at least \\
+       two task levels, not {.obj_type_friendly {tasks}}.",
+      call = call
+    )
+  }
+  bad_level <- tasks[!grepl("^[A-Za-z0-9]+$", tasks)]
+  if (length(bad_level) > 0L) {
+    cli::cli_abort(
+      "{.arg tasks} level{?s} {.val {bad_level}} must consist of letters \\
+       and digits only.",
+      call = call
+    )
+  }
+  if (anyDuplicated(tasks) > 0L) {
+    cli::cli_abort(
+      "{.arg tasks} names {.val {unique(tasks[duplicated(tasks)])}} more \\
+       than once.",
+      call = call
+    )
+  }
+  bad_col <- !is.character(task_col) || length(task_col) != 1L ||
+    is.na(task_col) || !grepl("^[A-Za-z][A-Za-z0-9]*$", task_col)
+  if (bad_col) {
+    cli::cli_abort(
+      "{.arg task_col} must be a single name of letters and digits that \\
+       starts with a letter.",
+      call = call
+    )
+  }
+  info <- model_parameters(model)
+  # other_vars also holds constants (sdt_yn's dist = "normal"), so a name
+  # equal to one is refused too; that is deliberate, as in
+  # check_covariates(): it catches a clash with a real column such as
+  # n_trials before any generator runs, at the price of a few odd names
+  columns <- Filter(is.character, c(model$resp_vars, model$other_vars))
+  taken <- c(
+    "id", info$free, info$fixed, unlist(columns, use.names = FALSE),
+    names(covariates)
+  )
+  if (task_col %in% taken) {
+    cli::cli_abort(
+      c(
+        "{.arg task_col} {.val {task_col}} cannot be used.",
+        i = "It must differ from {.val id}, the model's parameters and data \\
+             columns, and the covariates."
+      ),
+      call = call
+    )
+  }
+  list(tasks = tasks, task_col = task_col)
+}
+
+#' The full terms of parameters over tasks, parameter-major
+#'
+#' `c("kappa", "thetat")` over tasks 1 and 2 of `task` gives `kappa_task1`,
+#' `kappa_task2`, `thetat_task1`, `thetat_task2`: brms's coefficient name
+#' for `0 + task` after the parameter (D27). Without tasks, the parameters.
+#'
+#' @noRd
+task_terms <- function(pars, tasks = NULL, task_col = NULL) {
+  if (is.null(tasks) || length(pars) == 0L) {
+    return(pars)
+  }
+  as.vector(t(outer(pars, paste0("_", task_col, tasks), paste0)))
+}
+
+#' Expand a `pars` or `sds` vector to full task terms
+#'
+#' A name is a free parameter, shared by every task, or a full term, which
+#' overrides the shared value for its task. A fixed parameter stays bare
+#' (in `sds` it is left for `check_sds()` to refuse). Free parameters come
+#' out in the order they first appear, then any not named at all (so that
+#' `check_pars()` can report them missing), each over the tasks in order;
+#' a term with no value is left out.
+#'
+#' @return `x` unchanged without tasks or when it is not a named numeric
+#'   vector (the checks after it report that); otherwise the expanded
+#'   vector.
+#' @noRd
+expand_task_values <- function(x, model, tasks, task_col, arg,
+                               call = rlang::caller_env()) {
+  shaped <- is.numeric(x) && !is.null(names(x)) && !anyNA(names(x))
+  if (is.null(tasks) || !shaped) {
+    return(x)
+  }
+  info <- model_parameters(model)
+  given <- names(x)
+  per_task <- lapply(stats::setNames(nm = info$free), function(p) {
+    task_terms(p, tasks, task_col)
+  })
+  owner <- rep(NA_character_, length(given))
+  for (p in info$free) {
+    owner[given == p | given %in% per_task[[p]]] <- p
+  }
+  unknown <- given[is.na(owner) & !given %in% info$fixed]
+  if (length(unknown) > 0L) {
+    example <- task_terms(info$free, tasks, task_col)[1L]
+    cli::cli_abort(
+      c(
+        "{.arg {arg}} names {.val {unknown}}, which {?is/are} neither a \\
+         parameter of the model nor one of its task terms.",
+        i = paste0(
+          "Name a free parameter for every task, or one task of it as ",
+          "{.val ", example, "}; fixed parameters are not per task. ",
+          "Tasks: {.val {tasks}}."
+        )
+      ),
+      call = call
+    )
+  }
+
+  out <- numeric()
+  for (p in unique(c(owner[!is.na(owner)], info$free))) {
+    for (term in per_task[[p]]) {
+      if (term %in% given) {
+        out[[term]] <- x[[term]]
+      } else if (p %in% given) {
+        out[[term]] <- x[[p]]
+      }
+    }
+  }
+  c(out, x[given %in% info$fixed])
+}
+
+#' Refuse bare parameter names in `cors` when there are tasks
+#' @noRd
+check_task_cors <- function(cors, model, tasks, task_col,
+                            call = rlang::caller_env()) {
+  if (is.null(tasks) || !is.matrix(cors)) {
+    return(invisible(cors))
+  }
+  free <- model_parameters(model)$free
+  bare <- intersect(unique(c(rownames(cors), colnames(cors))), free)
+  if (length(bare) > 0L) {
+    cli::cli_abort(
+      c(
+        "{.arg cors} names {.val {bare}}, but with tasks a correlation is \\
+         between task terms.",
+        i = "Use the full terms, such as \\
+             {.val {task_terms(bare[[1L]], tasks, task_col)}}."
+      ),
+      call = call
+    )
+  }
+  invisible(cors)
+}
+
+#' Which columns of the subject values each generator call reads
+#'
+#' One element per task (a single one without tasks): a character vector
+#' of value columns named by the bare parameter the generator sees.
+#'
+#' @noRd
+task_layout <- function(pars, model, tasks, task_col) {
+  terms <- names(pars)
+  if (is.null(tasks)) {
+    return(list(stats::setNames(terms, terms)))
+  }
+  info <- model_parameters(model)
+  fixed <- terms[terms %in% info$fixed]
+  lapply(tasks, function(task) {
+    suffix <- paste0("_", task_col, task)
+    own <- terms[terms %in% paste0(info$free, suffix)]
+    bare <- substr(own, 1L, nchar(own) - nchar(suffix))
+    stats::setNames(c(own, fixed), c(bare, fixed))
+  })
+}
+
+#' Run the generator for every subject, and every task within a subject
+#' @noRd
+generate_data <- function(values, pars, model, generator, n_subjects,
+                          n_trials, tasks, task_col, cov_names) {
+  layout <- task_layout(pars, model, tasks, task_col)
+  pieces <- lapply(seq_len(n_subjects), function(i) {
+    lapply(seq_along(layout), function(k) {
+      # keep the names when the matrix has a single column
+      link_values <- stats::setNames(values[i, layout[[k]]], names(layout[[k]]))
+      rows <- generator(natural_pars(link_values, model), n_trials, model)
+      check_generated(rows, model, cov_names, task_col)
+      rows <- tibble::as_tibble(rows)
+      if (!is.null(tasks)) {
+        rows <- tibble::add_column(
+          rows,
+          !!task_col := factor(rep(tasks[[k]], nrow(rows)), levels = tasks),
+          .before = 1L
+        )
+      }
+      tibble::add_column(
+        rows,
+        id = factor(rep(i, nrow(rows)), levels = seq_len(n_subjects)),
+        .before = 1L
+      )
+    })
+  })
+  dplyr::bind_rows(do.call(c, pieces))
 }
 
 #' Run an expression under a seed, or as is when there is none
@@ -332,6 +561,13 @@ truth_tables <- function(pars, sds, values, cors = NULL, covariates = NULL) {
 #'   becomes a subject-constant data column after `id`. A name must be
 #'   syntactic, contain no `_`, and differ from the model's parameters and
 #'   columns.
+#' @param tasks `NULL`, or a character vector of at least two task levels
+#'   (letters and digits) for a design in which every subject does every
+#'   task. Each free parameter then has one value per task, under the term
+#'   `<parameter>_<task_col><level>` (`kappa_task1`), brms's coefficient
+#'   name for `0 + task`. See the details.
+#' @param task_col The name of the task column in `data`, `"task"` by
+#'   default. Used only with `tasks`.
 #' @param subject_pars A data frame `id`, `term`, `true_value` (link
 #'   scale) of subject values to use instead of drawing them, so that
 #'   replications can share the same simulated people. With `covariates`
@@ -344,15 +580,16 @@ truth_tables <- function(pars, sds, values, cors = NULL, covariates = NULL) {
 #'   and the generator; `NULL` leaves the random number generator alone.
 #'
 #' @return A list of class `bmmtools_simulation` with `data` (a tibble,
-#'   `id` first, then any covariates), `truth` (a list of tibbles on the
-#'   link scale: `population` with `term` and `true_value`; `subjects`
-#'   with `id`, `term` and `true_value`; `sd` with `term` and
-#'   `true_value`; `cor` with `term`, `var1`, `var2` and `true_value`;
+#'   `id` first, then any covariates, then the task column), `truth` (a
+#'   list of tibbles on the link scale: `population` with `term` and
+#'   `true_value`; `subjects` with `id`, `term` and `true_value`; `sd` with
+#'   `term` and `true_value`; `cor` with `term`, `var1`, `var2` and
+#'   `true_value`;
 #'   `covariates` with `id`, `term` and `true_value`), the realised
 #'   `pars`, `sds`, `cors` (the full matrix over varying parameters then
 #'   covariates, `NULL` with fewer than two) and `covariates`,
-#'   `n_subjects`, `n_trials`, `seed` (`NA` when none), `model` and
-#'   `generator`.
+#'   `n_subjects`, `n_trials`, `seed` (`NA` when none), `model`,
+#'   `generator`, `tasks` and `task_col` (both `NULL` without tasks).
 #'
 #' @details
 #' Adapters exist for `sdt_yn`, `sdt_mafc`, `ezdm` (three parameters),
@@ -370,6 +607,19 @@ truth_tables <- function(pars, sds, values, cors = NULL, covariates = NULL) {
 #' values. A correlation pair is named `<a>__<b>`, the two names sorted
 #' in the C locale.
 #'
+#' **Tasks.** With `tasks`, `pars` and `sds` may name a parameter, which
+#' gives every task that value, or a full term such as `kappa_task2`, which
+#' overrides it for that task; the realised `pars` and `sds` are stored
+#' with full terms. `cors`, `subject_pars` and the truth tables use full
+#' terms only, so a correlation between tasks is, for example,
+#' `kappa_task1__kappa_task2`. The generator is called once per subject and
+#' task with that task's values under the bare parameter names, and
+#' `n_trials` is per task. The task values are cell means: fit them with
+#' `recovery_formula(model, task_col = "task")`. Fixed parameters are the
+#' same in every task. Adding tasks changes the random numbers drawn
+#' compared with a simulation without them; `tasks = NULL` gives exactly
+#' the simulation of earlier versions.
+#'
 #' @examples
 #' \dontrun{
 #' sim <- simulate_recovery(
@@ -381,6 +631,22 @@ truth_tables <- function(pars, sds, values, cors = NULL, covariates = NULL) {
 #' fit <- bmm::bmm(recovery_formula(sim$model), sim$data, sim$model)
 #' recover(fit, sim$truth$population)
 #' recover_subjects(fit, sim$truth$subjects)
+#'
+#' # two tasks, kappa lower in the second, correlated .6 across tasks
+#' cors <- diag(2)
+#' dimnames(cors) <- rep(list(c("kappa_task1", "kappa_task2")), 2)
+#' cors[1, 2] <- cors[2, 1] <- 0.6
+#' two_tasks <- simulate_recovery(
+#'   bmm::mixture2p(resp_error = "y"),
+#'   pars = c(kappa = log(8), kappa_task2 = log(5), thetat = qlogis(0.75)),
+#'   n_subjects = 30, n_trials = 60,
+#'   sds = c(kappa_task1 = 0.3, kappa_task2 = 0.3), cors = cors,
+#'   tasks = c("1", "2"), seed = 1
+#' )
+#' formula <- recovery_formula(
+#'   two_tasks$model,
+#'   re_cor = "within", task_col = "task"
+#' )
 #' }
 #'
 #' @export
@@ -391,6 +657,8 @@ simulate_recovery <- function(model,
                               sds = NULL,
                               cors = NULL,
                               covariates = NULL,
+                              tasks = NULL,
+                              task_col = "task",
                               subject_pars = NULL,
                               generator = NULL,
                               seed = NULL) {
@@ -423,15 +691,22 @@ simulate_recovery <- function(model,
 
   covariates <- check_covariates(covariates, model)
   cov_names <- names(covariates)
+  design <- check_tasks(tasks, task_col, model, covariates)
+  tasks <- design$tasks
+  task_col <- design$task_col
 
   # functions first, under the seed and in a fixed order, so that random
   # hyperparameters continue the stream the subject draws then take
   out <- with_seed_if(seed, {
-    pars <- check_pars(resolve_truth_arg(pars, "pars"), model)
-    sds <- check_sds(resolve_truth_arg(sds, "sds"), pars, model)
-    cors <- check_cors(
-      resolve_truth_arg(cors, "cors", want = "matrix"), pars, sds, covariates
-    )
+    pars <- resolve_truth_arg(pars, "pars")
+    pars <- expand_task_values(pars, model, tasks, task_col, "pars")
+    pars <- check_pars(pars, model, tasks, task_col)
+    sds <- resolve_truth_arg(sds, "sds")
+    sds <- expand_task_values(sds, model, tasks, task_col, "sds")
+    sds <- check_sds(sds, pars, model)
+    cors <- resolve_truth_arg(cors, "cors", want = "matrix")
+    check_task_cors(cors, model, tasks, task_col)
+    cors <- check_cors(cors, pars, sds, covariates)
     parts <- NULL
     values <- if (is.null(subject_pars)) {
       parts <- draw_parameter_values(pars, sds, cors, n_subjects)
@@ -439,21 +714,10 @@ simulate_recovery <- function(model,
     } else {
       check_subject_pars(subject_pars, pars, sds, n_subjects, covariates)
     }
-    pieces <- lapply(seq_len(n_subjects), function(i) {
-      # keep the names when the matrix has a single column
-      link_values <- stats::setNames(
-        values[i, names(pars)], names(pars)
-      )
-      rows <- generator(natural_pars(link_values, model), n_trials, model)
-      check_generated(rows, model, cov_names)
-      rows <- tibble::as_tibble(rows)
-      tibble::add_column(
-        rows,
-        id = factor(rep(i, nrow(rows)), levels = seq_len(n_subjects)),
-        .before = 1L
-      )
-    })
-    data <- dplyr::bind_rows(pieces)
+    data <- generate_data(
+      values, pars, model, generator, n_subjects, n_trials,
+      tasks, task_col, cov_names
+    )
     # covariates are drawn after the generator, so their random numbers
     # never shift the ones that produced the responses
     if (!is.null(parts)) {
@@ -486,7 +750,9 @@ simulate_recovery <- function(model,
       n_trials = n_trials,
       seed = if (is.null(seed)) NA_real_ else as.double(seed),
       model = model,
-      generator = generator_name
+      generator = generator_name,
+      tasks = tasks,
+      task_col = task_col
     ),
     class = "bmmtools_simulation"
   )
@@ -496,6 +762,9 @@ simulate_recovery <- function(model,
 print.bmmtools_simulation <- function(x, ...) {
   varying <- names(x$sds)[x$sds > 0]
   extra <- character()
+  if (length(x$tasks) > 0L) {
+    extra <- c(extra, paste0("; tasks: ", paste(x$tasks, collapse = ", ")))
+  }
   if (length(x$covariates) > 0L) {
     extra <- c(extra, paste0(
       "; covariates: ", paste(names(x$covariates), collapse = ", ")
@@ -533,10 +802,18 @@ print.bmmtools_simulation <- function(x, ...) {
 #'
 #' @param model A `bmmodel`.
 #' @param group The grouping variable, `"id"` by default.
-#' @param re_cor Whether the random intercepts are correlated. `"none"`
-#'   gives `(1 | id)`, independent random effects; `"all"` gives
-#'   `(1 | p | id)`, one correlation matrix across every parameter, which
-#'   is what the `model` estimator of correlation recovery reads.
+#' @param re_cor Which random effects are correlated. `"none"` gives
+#'   independent random effects: `(1 | id)`, or `(0 + task || id)` with
+#'   tasks. `"within"` correlates the tasks of each parameter,
+#'   `(0 + task | id)`, and needs `task_col`. `"all"` gives one correlation
+#'   matrix across every parameter (and task), `(1 | p | id)` or
+#'   `(0 + task | p | id)`, which is what the `model` estimator of
+#'   correlation recovery reads.
+#' @param task_col `NULL`, or the task column of a simulation with `tasks`
+#'   (see [simulate_recovery()]). Each free parameter then gets one
+#'   population value per task, `<parameter> ~ 0 + task`, and one
+#'   subject-level effect per task: cell means, whose terms match the truth
+#'   of the simulation.
 #'
 #' @return A `bmmformula`.
 #'
@@ -544,25 +821,63 @@ print.bmmtools_simulation <- function(x, ...) {
 #' \dontrun{
 #' recovery_formula(bmm::mixture2p(resp_error = "y"))
 #' recovery_formula(bmm::mixture2p(resp_error = "y"), re_cor = "all")
+#' recovery_formula(
+#'   bmm::mixture2p(resp_error = "y"),
+#'   re_cor = "within", task_col = "task"
+#' )
 #' }
 #'
 #' @export
-recovery_formula <- function(model, group = "id", re_cor = c("none", "all")) {
+recovery_formula <- function(model,
+                             group = "id",
+                             re_cor = c("none", "within", "all"),
+                             task_col = NULL) {
   check_model(model)
   re_cor <- rlang::arg_match(re_cor)
+  valid_col <- is.character(task_col) && length(task_col) == 1L &&
+    !is.na(task_col) && make.names(task_col) == task_col &&
+    !grepl("[_.]", task_col)
+  if (!is.null(task_col) && !valid_col) {
+    cli::cli_abort(
+      "{.arg task_col} must be {.code NULL} or a single syntactic name \\
+       without {.code _} or {.code .}."
+    )
+  }
   rlang::check_installed("bmm", "to build a bmm formula.")
   free <- model_parameters(model)$free
-  if (identical(re_cor, "all") && length(free) < 2L) {
+  if (identical(re_cor, "within") && is.null(task_col)) {
     cli::cli_inform(
-      "The model estimates only one parameter, so there is nothing to \\
-       correlate; using {.code re_cor = \"none\"}."
+      "Without {.arg task_col} each parameter has a single random intercept, \\
+       so there is nothing to correlate within a parameter; using \\
+       {.code re_cor = \"none\"}."
     )
     re_cor <- "none"
   }
-  bar <- if (identical(re_cor, "all")) " | p | " else " | "
+  if (identical(re_cor, "all") && length(free) < 2L) {
+    if (is.null(task_col)) {
+      cli::cli_inform(
+        "The model estimates only one parameter, so there is nothing to \\
+         correlate; using {.code re_cor = \"none\"}."
+      )
+      re_cor <- "none"
+    } else {
+      cli::cli_inform(
+        "The model estimates only one parameter, so correlating across \\
+         parameters is correlating its tasks; using \\
+         {.code re_cor = \"within\"}."
+      )
+      re_cor <- "within"
+    }
+  }
+  effects <- if (is.null(task_col)) "1" else paste0("0 + ", task_col)
+  bar <- switch(re_cor,
+    none = if (is.null(task_col)) " | " else " || ",
+    within = " | ",
+    all = " | p | "
+  )
   formulas <- lapply(free, function(p) {
     stats::as.formula(
-      paste0(p, " ~ 1 + (1", bar, group, ")"),
+      paste0(p, " ~ ", effects, " + (", effects, bar, group, ")"),
       env = globalenv()
     )
   })

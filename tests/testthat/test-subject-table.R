@@ -183,3 +183,39 @@ test_that("subject_table refuses what it cannot read", {
   attr(with_means, "subject_means") <- attr(with_means, "subject_means")[0, ]
   expect_error(subject_table(with_means), "no subject means")
 })
+
+test_that("task terms give one column pair per parameter and task", {
+  skip_if_not_installed("bmm")
+  sim <- simulate_recovery(
+    bmm::mixture2p(resp_error = "y"),
+    c(kappa = 2, thetat = 0.5),
+    n_subjects = 4, n_trials = 3, sds = c(kappa = 0.3),
+    tasks = c("1", "2"), seed = 1
+  )
+  fit <- grid_mock_fitter()$fitter(
+    recovery_formula(sim$model, task_col = "task"), sim$data, sim$model
+  )
+  expect_equal(
+    dimnames(extract_subject_draws(fit))$term,
+    c("kappa_task1", "kappa_task2", "thetat_task1", "thetat_task2")
+  )
+  out <- subject_table(sim, fit)
+  expect_named(out, c(
+    "condition", "replication", "id",
+    "true_kappa_task1", "est_kappa_task1", "true_kappa_task2",
+    "est_kappa_task2", "true_thetat_task1", "est_thetat_task1",
+    "true_thetat_task2", "est_thetat_task2"
+  ))
+  subjects <- sim$truth$subjects
+  expect_equal(
+    out$true_kappa_task2,
+    subjects$true_value[subjects$term == "kappa_task2"]
+  )
+  expect_equal(out$true_thetat_task1, rep(0.5, 4L))
+
+  natural <- subject_table(sim, fit, scale = "natural")
+  expect_equal(natural$true_kappa_task1, exp(out$true_kappa_task1))
+
+  cors <- extract_correlations(fit, estimator = "draws")
+  expect_true("kappa_task1__kappa_task2" %in% cors$term)
+})

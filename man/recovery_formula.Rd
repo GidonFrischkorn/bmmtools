@@ -4,17 +4,31 @@
 \alias{recovery_formula}
 \title{The default recovery formula: every free parameter gets a random intercept}
 \usage{
-recovery_formula(model, group = "id", re_cor = c("none", "all"))
+recovery_formula(
+  model,
+  group = "id",
+  re_cor = c("none", "within", "all"),
+  task_col = NULL
+)
 }
 \arguments{
 \item{model}{A \code{bmmodel}.}
 
 \item{group}{The grouping variable, \code{"id"} by default.}
 
-\item{re_cor}{Whether the random intercepts are correlated. \code{"none"}
-gives \code{(1 | id)}, independent random effects; \code{"all"} gives
-\code{(1 | p | id)}, one correlation matrix across every parameter, which
-is what the \code{model} estimator of correlation recovery reads.}
+\item{re_cor}{Which random effects are correlated. \code{"none"} gives
+independent random effects: \code{(1 | id)}, or \code{(0 + task || id)} with
+tasks. \code{"within"} correlates the tasks of each parameter,
+\code{(0 + task | id)}, and needs \code{task_col}. \code{"all"} gives one correlation
+matrix across every parameter (and task), \code{(1 | p | id)} or
+\code{(0 + task | p | id)}, which is what the \code{model} estimator of
+correlation recovery reads.}
+
+\item{task_col}{\code{NULL}, or the task column of a simulation with \code{tasks}
+(see \code{\link[=simulate_recovery]{simulate_recovery()}}). Each free parameter then gets one
+population value per task, \verb{<parameter> ~ 0 + task}, and one
+subject-level effect per task: cell means, whose terms match the truth
+of the simulation.}
 }
 \value{
 A \code{bmmformula}.
@@ -30,6 +44,10 @@ from it.
 \dontrun{
 recovery_formula(bmm::mixture2p(resp_error = "y"))
 recovery_formula(bmm::mixture2p(resp_error = "y"), re_cor = "all")
+recovery_formula(
+  bmm::mixture2p(resp_error = "y"),
+  re_cor = "within", task_col = "task"
+)
 }
 
 }

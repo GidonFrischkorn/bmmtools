@@ -13,12 +13,14 @@ recovery_grid(
   sds = NULL,
   cors = NULL,
   covariates = NULL,
+  tasks = NULL,
+  task_col = "task",
   formula = NULL,
   prior = NULL,
   generator = NULL,
   seed = NULL,
   subjects = c("redraw", "fixed"),
-  re_cor = c("none", "all"),
+  re_cor = c("none", "within", "all"),
   scale = c("natural", "link"),
   levels = c("population", "subject"),
   correlations = NULL,
@@ -38,8 +40,12 @@ the design.}
 A column named after a parameter gives that cell's population value
 on the link scale, overriding \code{pars}; a column \verb{sd_<parameter>}
 overrides \code{sds}; a column \verb{cor_<a>__<b>} sets the correlation of two
-parameters or covariates (the names in either order). A SimDesign
-design is a data frame and works as is.}
+parameters or covariates (the names in either order). With \code{tasks},
+these columns may also use full task terms (\code{kappa_task2},
+\code{sd_kappa_task2}, \code{cor_kappa_task1__kappa_task2}); a bare parameter
+column sets every task, and a full-term column in the same row
+overrides it for its task. A SimDesign design is a data frame and
+works as is.}
 
 \item{pars, sds, cors}{Defaults for every cell, as in
 \code{\link[=simulate_recovery]{simulate_recovery()}}. Each may also be a \verb{function(row)} of the
@@ -53,8 +59,14 @@ applied to its result.}
 
 \item{covariates}{As in \code{\link[=simulate_recovery]{simulate_recovery()}}, the same for every cell.}
 
+\item{tasks, task_col}{As in \code{\link[=simulate_recovery]{simulate_recovery()}}, the same for every
+cell. With \code{tasks}, the default formula is
+\code{recovery_formula(model, re_cor = re_cor, task_col = task_col)}.}
+
 \item{formula}{A \code{bmmformula}; \code{NULL} means \code{\link[=recovery_formula]{recovery_formula()}} of the
-cell's model.}
+cell's model; or a \verb{function(row)} of the one-row grid data frame
+returning a \code{bmmformula}, called once per row, for designs whose
+formula depends on the row.}
 
 \item{prior}{Passed to \code{\link[=fit_cached]{fit_cached()}}.}
 

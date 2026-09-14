@@ -23,16 +23,32 @@ grid_mock_fitter <- function(fail_on = NULL) {
     }
     structure(
       list(
-        parameters = {
-          p <- bmm::parameters(model)
-          p$parameter[!p$fixed]
-        },
+        parameters = mock_terms(formula, data, model),
         ids = levels(data$id)
       ),
       class = "mockfit"
     )
   }
   list(fitter = fitter, calls = calls)
+}
+
+#' The terms a fit of `formula` would have: one per free parameter, or one
+#' per parameter and task when the formula has cell means (`0 + task`)
+#'
+#' The task column is the variable of the first formula's right-hand side
+#' other than the grouping and correlation ids, as `recovery_formula()`
+#' writes it.
+#'
+#' @noRd
+mock_terms <- function(formula, data, model) {
+  p <- bmm::parameters(model)
+  free <- p$parameter[!p$fixed]
+  rhs <- if (length(formula) > 0L) all.vars(formula[[1L]][[3L]]) else NULL
+  task_col <- setdiff(rhs, c("id", "p"))
+  if (length(task_col) != 1L || !is.factor(data[[task_col]])) {
+    return(free)
+  }
+  task_terms(free, levels(data[[task_col]]), task_col)
 }
 
 #' Estimates for a mock fit: 0 with a wide interval, converged

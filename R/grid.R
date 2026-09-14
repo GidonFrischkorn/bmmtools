@@ -55,22 +55,79 @@ check_grid <- function(grid, call = rlang::caller_env()) {
   invisible(grid)
 }
 
-#' Apply a row's parameter and `sd_` columns
+#' Apply a row's parameter columns
+#'
+#' Without tasks a column named after an entry of `pars` replaces it. With
+#' tasks a column may also name a parameter whose task terms `pars` gives,
+#' or a full task term (spec 5, section 5.4): a bare column sets the bare
+#' value and every task term `pars` already has, and a full-term column is
+#' applied after it, so that within a row a full term still wins, as it
+#' does in `simulate_recovery()`.
+#'
 #' @noRd
-override_pars <- function(pars, row) {
-  for (p in intersect(names(row), names(pars))) {
-    pars[[p]] <- row[[p]]
+override_pars <- function(pars, row, tasks = NULL, task_col = NULL) {
+  if (is.null(tasks)) {
+    for (p in intersect(names(row), names(pars))) {
+      pars[[p]] <- row[[p]]
+    }
+    return(pars)
   }
-  pars
+  override_task_values(pars, row, names(row), tasks, task_col)
 }
 
 #' @noRd
-override_sds <- function(sds, row) {
-  for (col in grep("^sd_", names(row), value = TRUE)) {
-    if (is.null(sds)) sds <- numeric()
-    sds[sub("^sd_", "", col)] <- row[[col]]
+override_sds <- function(sds, row, tasks = NULL, task_col = NULL) {
+  cols <- grep("^sd_", names(row), value = TRUE)
+  if (length(cols) == 0L) {
+    return(sds)
   }
-  sds
+  if (is.null(sds)) sds <- numeric()
+  if (is.null(tasks)) {
+    for (col in cols) {
+      sds[sub("^sd_", "", col)] <- row[[col]]
+    }
+    return(sds)
+  }
+  # every sd_ column names a term, known to `sds` or not, as without tasks
+  override_task_values(sds, row, cols, tasks, task_col,
+    strip = "^sd_", add_all = TRUE
+  )
+}
+
+#' The shared step of `override_pars()` and `override_sds()` with tasks
+#'
+#' @param cols The row columns to consider.
+#' @param strip A pattern removed from a column name to give the term.
+#' @param add_all Whether a column adds its term even when `x` has neither
+#'   the term nor its task terms (the `sd_` columns do; a parameter column
+#'   without a matching entry is some other grid column).
+#' @noRd
+override_task_values <- function(x, row, cols, tasks, task_col,
+                                 strip = NULL, add_all = FALSE) {
+  terms <- if (is.null(strip)) cols else sub(strip, "", cols)
+  suffixes <- paste0("_", task_col, tasks)
+  ends_in_task <- vapply(terms, function(t) {
+    any(endsWith(t, suffixes))
+  }, logical(1), USE.NAMES = FALSE)
+  is_bare <- !ends_in_task
+  for (k in which(is_bare)) {
+    own <- intersect(paste0(terms[[k]], suffixes), names(x))
+    if (terms[[k]] %in% names(x) || length(own) > 0L || add_all) {
+      x[[terms[[k]]]] <- row[[cols[[k]]]]
+      x[own] <- row[[cols[[k]]]]
+    }
+  }
+  for (k in which(ends_in_task)) {
+    term <- terms[[k]]
+    suffix <- suffixes[endsWith(term, suffixes)][[1L]]
+    par <- substr(term, 1L, nchar(term) - nchar(suffix))
+    known <- term %in% names(x) || par %in% names(x) ||
+      any(paste0(par, suffixes) %in% names(x))
+    if (known || add_all) {
+      x[[term]] <- row[[cols[[k]]]]
+    }
+  }
+  x
 }
 
 #' The two terms of a `cor_<a>__<b>` column
@@ -106,10 +163,12 @@ override_cors <- function(cors, row) {
 
 #' Check the `cor_` columns of a grid against the model and covariates
 #' @noRd
-check_cor_columns <- function(grid, model, covariates,
-                              call = rlang::caller_env()) {
+check_cor_columns <- function(grid, model, covariates, tasks = NULL,
+                              task_col = NULL, call = rlang::caller_env()) {
   info <- model_parameters(model)
-  known <- c(info$free, info$fixed, names(covariates))
+  known <- c(
+    task_terms(info$free, tasks, task_col), info$fixed, names(covariates)
+  )
   for (col in grep("^cor_", names(grid), value = TRUE)) {
     ab <- cor_column_terms(col)
     if (length(ab) != 2L || !all(ab %in% known) || ab[[1L]] == ab[[2L]]) {
@@ -130,12 +189,14 @@ check_cor_columns <- function(grid, model, covariates,
 #'
 #' A grid column named after a parameter overrides `pars` for that row;
 #' a column `sd_<parameter>` overrides `sds`; a column `cor_<a>__<b>` sets
-#' one correlation. A `function(row)` default becomes a zero-argument
+#' one correlation. With tasks, parameter and `sd_` columns may use full
+#' task terms too. A `function(row)` default becomes a zero-argument
 #' function applying the same overrides, so that [simulate_recovery()]
 #' evaluates it under the cell seed.
 #'
 #' @noRd
-row_values <- function(row, pars, sds, cors = NULL) {
+row_values <- function(row, pars, sds, cors = NULL, tasks = NULL,
+                       task_col = NULL) {
   wrap <- function(value, override) {
     if (is.function(value)) {
       force(value)
@@ -144,19 +205,23 @@ row_values <- function(row, pars, sds, cors = NULL) {
     override(value, row)
   }
   list(
-    pars = wrap(pars, override_pars),
-    sds = wrap(sds, override_sds),
+    pars = wrap(pars, function(x, r) override_pars(x, r, tasks, task_col)),
+    sds = wrap(sds, function(x, r) override_sds(x, r, tasks, task_col)),
     cors = wrap(cors, override_cors)
   )
 }
 
-#' Fill in the truth tables a simulation written before 5.1 lacks
+#' Fill in what a simulation written by an earlier version lacks
 #'
-#' Such a file has no SD, correlation or covariate tables; its draws were
-#' uncorrelated and it had no covariates, so they are rebuilt from `sds`.
+#' A file from before 5.1 has no SD, correlation or covariate tables; its
+#' draws were uncorrelated and it had no covariates, so they are rebuilt
+#' from `sds`. A file from before 5.4 has no tasks.
 #'
 #' @noRd
 upgrade_simulation <- function(sim) {
+  for (field in setdiff(c("tasks", "task_col"), names(sim))) {
+    sim[field] <- list(NULL)
+  }
   if (!is.null(sim$truth$sd)) {
     return(sim)
   }
@@ -181,7 +246,8 @@ upgrade_simulation <- function(sim) {
 #'
 #' @noRd
 cell_simulation <- function(paths, model, values, row, seed, subjects,
-                            first_rep, generator, covariates) {
+                            first_rep, generator, covariates, tasks = NULL,
+                            task_col = "task") {
   if (file.exists(paths$sim)) {
     return(upgrade_simulation(readRDS(paths$sim)))
   }
@@ -198,6 +264,7 @@ cell_simulation <- function(paths, model, values, row, seed, subjects,
     model, values$pars,
     n_subjects = row$n_subjects, n_trials = row$n_trials,
     sds = values$sds, cors = values$cors, covariates = covariates,
+    tasks = tasks, task_col = task_col,
     subject_pars = subject_pars,
     generator = generator,
     seed = if (is.na(seed)) NULL else seed
@@ -546,6 +613,64 @@ score_cells <- function(runs, sims, cells, links, scale = "natural",
   out
 }
 
+#' Refuse the model estimator when the default formula correlates nothing
+#'
+#' Without it the grid would fail to find a model correlation only after
+#' every cell ran. `"within"` without tasks falls back to `"none"` in
+#' [recovery_formula()], so it is refused too.
+#'
+#' @noRd
+check_model_correlations <- function(correlations, formula, re_cor, tasks,
+                                     call = rlang::caller_env()) {
+  uncorrelated <- identical(re_cor, "none") ||
+    (identical(re_cor, "within") && is.null(tasks))
+  if ("model" %in% correlations && is.null(formula) && uncorrelated) {
+    hint <- if (is.null(tasks)) {
+      "{.code re_cor = \"all\"}"
+    } else {
+      "{.code re_cor = \"within\"} or {.code re_cor = \"all\"}"
+    }
+    cli::cli_abort(
+      c(
+        "{.code correlations = \"model\"} needs correlated random effects, \\
+         but the default formula has none.",
+        i = paste0(
+          "Use ", hint, ", a {.arg formula} with correlated terms such as \\
+           {.code (1 | p | id)}, or the {.val draws} and {.val point} \\
+           estimators."
+        )
+      ),
+      call = call
+    )
+  }
+  invisible(NULL)
+}
+
+#' The formula of one grid row
+#'
+#' `formula` is `NULL` (the default formula of the row's model), a
+#' `bmmformula`, or a `function(row)` returning one.
+#'
+#' @noRd
+grid_formula <- function(formula, row, i, model, re_cor, task_col,
+                         call = rlang::caller_env()) {
+  if (is.null(formula)) {
+    return(recovery_formula(model, re_cor = re_cor, task_col = task_col))
+  }
+  if (!is.function(formula)) {
+    return(formula)
+  }
+  out <- formula(row)
+  if (!inherits(out, "bmmformula")) {
+    cli::cli_abort(
+      "{.arg formula} returned {.obj_type_friendly {out}} for grid row {i}; \\
+       it must return a {.cls bmmformula}.",
+      call = call
+    )
+  }
+  out
+}
+
 #' Run a parameter-recovery grid
 #'
 #' The loop the validation scripts in bmm wrote by hand, with the
@@ -563,18 +688,27 @@ score_cells <- function(runs, sims, cells, links, scale = "natural",
 #'   A column named after a parameter gives that cell's population value
 #'   on the link scale, overriding `pars`; a column `sd_<parameter>`
 #'   overrides `sds`; a column `cor_<a>__<b>` sets the correlation of two
-#'   parameters or covariates (the names in either order). A SimDesign
-#'   design is a data frame and works as is.
+#'   parameters or covariates (the names in either order). With `tasks`,
+#'   these columns may also use full task terms (`kappa_task2`,
+#'   `sd_kappa_task2`, `cor_kappa_task1__kappa_task2`); a bare parameter
+#'   column sets every task, and a full-term column in the same row
+#'   overrides it for its task. A SimDesign design is a data frame and
+#'   works as is.
 #' @param pars,sds,cors Defaults for every cell, as in
 #'   [simulate_recovery()]. Each may also be a `function(row)` of the
 #'   one-row grid data frame, evaluated under the cell's seed, which draws
 #'   new hyperparameters for every data set; the grid columns above are
 #'   applied to its result.
 #' @param covariates As in [simulate_recovery()], the same for every cell.
+#' @param tasks,task_col As in [simulate_recovery()], the same for every
+#'   cell. With `tasks`, the default formula is
+#'   `recovery_formula(model, re_cor = re_cor, task_col = task_col)`.
 #' @param dir Directory for the per-cell files; created if missing.
 #' @param reps Replications per cell.
 #' @param formula A `bmmformula`; `NULL` means [recovery_formula()] of the
-#'   cell's model.
+#'   cell's model; or a `function(row)` of the one-row grid data frame
+#'   returning a `bmmformula`, called once per row, for designs whose
+#'   formula depends on the row.
 #' @param prior Passed to [fit_cached()].
 #' @param generator As in [simulate_recovery()].
 #' @param seed Master seed. Each cell derives its own from it and the
@@ -669,12 +803,14 @@ recovery_grid <- function(model,
                           sds = NULL,
                           cors = NULL,
                           covariates = NULL,
+                          tasks = NULL,
+                          task_col = "task",
                           formula = NULL,
                           prior = NULL,
                           generator = NULL,
                           seed = NULL,
                           subjects = c("redraw", "fixed"),
-                          re_cor = c("none", "all"),
+                          re_cor = c("none", "within", "all"),
                           scale = c("natural", "link"),
                           levels = c("population", "subject"),
                           correlations = NULL,
@@ -687,19 +823,7 @@ recovery_grid <- function(model,
   re_cor <- rlang::arg_match(re_cor)
   scale <- rlang::arg_match(scale)
   extraction <- check_extraction_args(levels, correlations, cor_scale)
-  # the default formula with re_cor = "none" estimates no correlation, so
-  # asking for the model estimator would fail only after every cell ran
-  model_without_cors <- "model" %in% extraction$correlations &&
-    is.null(formula) && identical(re_cor, "none")
-  if (model_without_cors) {
-    cli::cli_abort(c(
-      "{.code correlations = \"model\"} needs correlated random effects, \\
-       but the default formula has none.",
-      i = "Use {.code re_cor = \"all\"}, a {.arg formula} with \\
-           {.code (1 | p | id)} terms, or the {.val draws} and \\
-           {.val point} estimators."
-    ))
-  }
+  check_model_correlations(extraction$correlations, formula, re_cor, tasks)
   check_grid(grid)
   reps <- check_count(reps, "reps")
   dots <- rlang::list2(...)
@@ -728,11 +852,21 @@ recovery_grid <- function(model,
     }
     models[[i]]
   }
+  formulas <- vector("list", nrow(grid))
   formula_for <- function(i) {
-    formula %||% recovery_formula(model_for(i), re_cor = re_cor)
+    if (is.null(formulas[[i]])) {
+      formulas[[i]] <<- grid_formula(
+        formula, grid[i, , drop = FALSE], i, model_for(i), re_cor,
+        if (is.null(tasks)) NULL else task_col
+      )
+    }
+    formulas[[i]]
   }
 
-  check_cor_columns(grid, model_for(1L), covariates)
+  design <- check_tasks(tasks, task_col, model_for(1L), covariates)
+  check_cor_columns(
+    grid, model_for(1L), covariates, design$tasks, design$task_col
+  )
 
   cells <- grid_cells(nrow(grid), reps)
   cells$seed <- cell_seed(seed, cells$row, cells$rep)
@@ -742,11 +876,12 @@ recovery_grid <- function(model,
 
   simulate_cell <- function(i) {
     row <- grid[cells$row[[i]], , drop = FALSE]
-    values <- row_values(row, pars, sds, cors)
+    values <- row_values(row, pars, sds, cors, design$tasks, design$task_col)
     sim <- cell_simulation(
       cell_paths(dir, cells$row[[i]], cells$rep[[i]]),
       model_for(cells$row[[i]]), values, row, cells$seed[[i]], subjects,
-      first_rep[[cells$row[[i]]]], generator, covariates
+      first_rep[[cells$row[[i]]]], generator, covariates,
+      tasks, task_col
     )
     if (cells$rep[[i]] == 1L) first_rep[[cells$row[[i]]]] <<- sim
     sim

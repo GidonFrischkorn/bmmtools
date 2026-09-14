@@ -84,9 +84,14 @@ Standard deviations and correlations are returned on the link scale,
 with \code{id} set to \code{NA}. An SD row carries the parameter's name
 (\code{kappa}); a correlation row carries the two names joined by \verb{__} and
 sorted in the C locale (\code{kappa__thetat}), whichever order brms used.
-A correlation the model does not estimate has no row. A parameter
-with more than one group-level coefficient is an error in this
-version.
+A correlation the model does not estimate has no row.
+
+\strong{Terms.} A parameter with one coefficient carries its own name. One
+with several coefficients and no intercept, as cell-means coding
+(\code{kappa ~ 0 + task}) gives, has a row per coefficient, named
+\verb{<parameter>_<coefficient>} (\code{kappa_task1}) at every level. An intercept
+together with other coefficients (population effects or contrasts) is an
+error in this version.
 }
 \examples{
 \dontrun{

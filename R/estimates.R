@@ -53,19 +53,72 @@ empty_estimates <- function() {
   tibble::as_tibble(out)
 }
 
-#' Reduce a coefficient name to its bare parameter name
+#' Split a coefficient name into its parameter and its coefficient
 #'
-#' `b_kappa_Intercept` becomes `kappa`; so does `b_kappa_setsize2`.
-#' Milestone 1 scores intercept-only fits (the `~ 1 + (1 | id)` default
-#' of decision 5), so a design suffix is dropped rather than recorded ---
-#' and because two design coefficients then collapse onto one name, the
-#' caller's duplicate check turns such a fit into an error instead of a
-#' silent join fan-out.
+#' `kappa_Intercept` is parameter `kappa`, coefficient `Intercept`;
+#' `kappa_task1` is `kappa` and `task1`. A name without `_` has no
+#' parameter and is the coefficient itself (`Intercept` in a model without
+#' distributional parameters). The split is at the last `_`, which is
+#' unambiguous for task terms because neither `task_col` nor a task level
+#' may contain one. A `b_` prefix is removed by the caller.
 #'
+#' @return A list with `par` (`""` where there is none) and `coef`.
 #' @noRd
-strip_design_suffix <- function(x) {
-  x <- sub("^b_", "", x)
-  sub("_[^_]+$", "", x)
+split_coefficient <- function(x) {
+  has_par <- grepl("_", x, fixed = TRUE)
+  list(
+    par = ifelse(has_par, sub("_[^_]+$", "", x), ""),
+    coef = ifelse(has_par, sub("^.*_", "", x), x)
+  )
+}
+
+#' The terms of parameter and coefficient pairs (local/ARCHITECTURE.md D27)
+#'
+#' A parameter with one coefficient is its bare name, whatever the
+#' coefficient; one with several and no `Intercept`, as cell-means coding
+#' (`0 + task`) gives, is `<par>_<coef>` per coefficient. An `Intercept`
+#' together with other coefficients is population effects or contrasts,
+#' which are not scored (D22, D30), so it is an error: reducing it to the
+#' bare name would silently fan out the join with the truth. A coefficient
+#' without a parameter keeps its own name.
+#'
+#' @param par,coef Parallel character vectors, one entry per coefficient
+#'   (repeated entries, one per subject, are allowed).
+#' @noRd
+coefficient_terms <- function(par, coef, call = rlang::caller_env()) {
+  term <- ifelse(nzchar(par), par, coef)
+  contrasts <- character()
+  for (p in unique(par[nzchar(par)])) {
+    at <- par == p
+    coefs <- unique(coef[at])
+    if (length(coefs) < 2L) next
+    if ("Intercept" %in% coefs) {
+      contrasts <- c(contrasts, p)
+      next
+    }
+    term[at] <- paste0(p, "_", coef[at])
+  }
+  if (length(contrasts) > 0L) {
+    cli::cli_abort(
+      c(
+        "Parameter{?s} {.val {contrasts}} {?has/have} an intercept together \\
+         with other coefficients.",
+        i = "Population effects and contrasts (an intercept plus other \\
+             coefficients) are not scored yet; cell-means coding \\
+             ({.code 0 + task}) is."
+      ),
+      call = call
+    )
+  }
+  term
+}
+
+#' Terms for brms coefficient names, as a lookup keyed by the name
+#' @noRd
+name_terms <- function(x, call = rlang::caller_env()) {
+  x <- unique(x)
+  parts <- split_coefficient(x)
+  stats::setNames(coefficient_terms(parts$par, parts$coef, call = call), x)
 }
 
 #' The grouping factors a fit has
@@ -223,8 +276,9 @@ check_unique_terms <- function(x, keys, call = rlang::caller_env()) {
       c(
         "Parameter name{?s} {.val {duplicated_terms}} \\
          {?is/are} not unique in the fit.",
-        i = "Milestone 1 scores intercept-only fits; a term with design \\
-             structure reduces to the same bare name as its intercept.",
+        i = "Two coefficients reduce to the same term. Population effects \\
+             and contrasts (an intercept plus other coefficients) are not \\
+             scored yet; cell-means coding ({.code 0 + task}) is.",
         i = "The offending coefficient{?s}: {.val {offending}}."
       ),
       call = call
@@ -242,10 +296,12 @@ population_estimates <- function(draws, ci_level, ci_method, drop_constants,
     return(structure(empty_estimates(), n_found = 0L))
   }
 
+  # named before summarising, so a refused design costs no summary
+  terms <- name_terms(sub("^b_", "", variables), call = call)
   out <- summarise_selected(
     posterior::subset_draws(draws, variable = variables), ci_level
   )
-  out$term <- strip_design_suffix(out$variable)
+  out$term <- unname(terms[sub("^b_", "", out$variable)])
   out$id <- NA_character_
   n_found <- nrow(out)
   out <- drop_constant_rows(out, drop_constants)
@@ -263,12 +319,14 @@ population_estimates <- function(draws, ci_level, ci_method, drop_constants,
 #' subject draws are named `r_id__kappa[1,Intercept]`, so the parameter
 #' sits in the distributional-parameter slot and the level in the
 #' bracket. A model without distributional parameters names them
-#' `r_id[1,Intercept]`, where the coefficient is the parameter.
+#' `r_id[1,Intercept]`, where the coefficient is the parameter. Cell-means
+#' coding gives `r_id__kappa[1,task1]` and the term `kappa_task1` (see
+#' `coefficient_terms()`).
 #'
 #' @return A tibble with `variable`, `term`, `id` and `population`, the
 #'   name of the population coefficient the deviation belongs to.
 #' @noRd
-group_coefficients <- function(variables, group) {
+group_coefficients <- function(variables, group, call = rlang::caller_env()) {
   prefix <- paste0("r_", group)
   keep <- startsWith(variables, paste0(prefix, "__")) |
     startsWith(variables, paste0(prefix, "["))
@@ -289,7 +347,7 @@ group_coefficients <- function(variables, group) {
   has_dpar <- nzchar(dpar)
   tibble::tibble(
     variable = variables,
-    term = ifelse(has_dpar, dpar, coefficient),
+    term = coefficient_terms(dpar, coefficient, call = call),
     id = id,
     population = ifelse(
       has_dpar,
@@ -341,7 +399,10 @@ sum_group_draws <- function(draws, coefficients, call = rlang::caller_env()) {
 subject_estimates <- function(draws, groups, group, ci_level, ci_method,
                               drop_constants, call = rlang::caller_env()) {
   group <- resolve_group(group, groups, call = call)
-  coefficients <- group_coefficients(posterior::variables(draws), group)
+  coefficients <- group_coefficients(
+    posterior::variables(draws), group,
+    call = call
+  )
   if (is.null(coefficients)) {
     cli::cli_abort(
       "The fit has no group-level coefficients for {.val {group}}.",
@@ -411,8 +472,10 @@ ranef_column <- function(ranef, column) {
 #' `_` intact.
 #'
 #' The term is the parameter (`nlpar`, else `dpar`), or the coefficient
-#' when there is neither, as in `group_coefficients()`. `resp` is not part
-#' of the term until Milestone 8 prepends it.
+#' when there is neither, as in `group_coefficients()`; a parameter with
+#' several coefficients gets one term per coefficient through
+#' `coefficient_terms()`. `resp` is not part of the term until Milestone 8
+#' prepends it.
 #'
 #' Columns are read as vectors, never by subsetting the table: brms gives
 #' it a class of its own whose `[` method needs brms loaded.
@@ -420,7 +483,7 @@ ranef_column <- function(ranef, column) {
 #' @return A tibble with `variable` (the brms name without its `sd_`
 #'   prefix), `term`, `cor` and `block` (the correlation block id).
 #' @noRd
-ranef_coefficients <- function(ranef, group) {
+ranef_coefficients <- function(ranef, group, call = rlang::caller_env()) {
   rows <- as.character(ranef$group) == group
   resp <- ranef_column(ranef, "resp")[rows]
   dpar <- ranef_column(ranef, "dpar")[rows]
@@ -436,21 +499,32 @@ ranef_coefficients <- function(ranef, group) {
   par <- ifelse(nzchar(nlpar), nlpar, dpar)
   tibble::tibble(
     variable = paste0(prefix, coef),
-    term = ifelse(nzchar(par), par, coef),
+    term = coefficient_terms(par, coef, call = call),
     cor = as.logical(ranef$cor)[rows] %in% TRUE,
     block = as.character(ranef$id)[rows]
   )
 }
 
-#' Reduce a coefficient name inside `sd_`/`cor_` to its term
+#' Terms for the coefficient names inside `sd_` and `cor_`, parsed
 #'
-#' `kappa_Intercept` becomes `kappa`, `Intercept` stays. Only for draws
-#' without a `ranef` table; `strip_design_suffix()` is not used because
-#' it also removes a `b_` prefix.
+#' Only for draws without a `ranef` table. The names of both kinds of
+#' variable are pooled, so that a coefficient is named the same way at the
+#' `sd` and the `cor` level, whichever draws a hand-built object carries.
 #'
+#' @return A named character vector: coefficient name to term.
 #' @noRd
-drop_coefficient <- function(x) {
-  ifelse(grepl("_", x, fixed = TRUE), sub("_[^_]+$", "", x), x)
+parsed_group_terms <- function(variables, group, call = rlang::caller_env()) {
+  sd_prefix <- paste0("sd_", group, "__")
+  cor_prefix <- paste0("cor_", group, "__")
+  sds <- variables[startsWith(variables, sd_prefix)]
+  cors <- variables[startsWith(variables, cor_prefix)]
+  coefficients <- c(
+    substring(sds, nchar(sd_prefix) + 1L),
+    unlist(strsplit(substring(cors, nchar(cor_prefix) + 1L), "__",
+      fixed = TRUE
+    ))
+  )
+  name_terms(coefficients, call = call)
 }
 
 #' The `sd_` variables of one grouping factor and their terms
@@ -461,14 +535,15 @@ drop_coefficient <- function(x) {
 #'
 #' @return A tibble with `variable` and `term`.
 #' @noRd
-sd_variables <- function(variables, group, ranef) {
+sd_variables <- function(variables, group, ranef, call = rlang::caller_env()) {
   prefix <- paste0("sd_", group, "__")
   if (is.null(ranef)) {
     found <- variables[startsWith(variables, prefix)]
     rest <- substring(found, nchar(prefix) + 1L)
-    return(tibble::tibble(variable = found, term = drop_coefficient(rest)))
+    terms <- parsed_group_terms(variables, group, call = call)
+    return(tibble::tibble(variable = found, term = unname(terms[rest])))
   }
-  coefficients <- ranef_coefficients(ranef, group)
+  coefficients <- ranef_coefficients(ranef, group, call = call)
   out <- tibble::tibble(
     variable = paste0(prefix, coefficients$variable),
     term = coefficients$term
@@ -485,7 +560,8 @@ sd_variables <- function(variables, group, ranef) {
 #'
 #' @return A tibble with `variable`, `term`, `var1` and `var2`.
 #' @noRd
-cor_variables <- function(variables, group, ranef) {
+cor_variables <- function(variables, group, ranef,
+                          call = rlang::caller_env()) {
   prefix <- paste0("cor_", group, "__")
   empty <- tibble::tibble(
     variable = character(), term = character(),
@@ -495,14 +571,15 @@ cor_variables <- function(variables, group, ranef) {
   if (is.null(ranef)) {
     found <- variables[startsWith(variables, prefix)]
     parts <- strsplit(substring(found, nchar(prefix) + 1L), "__", fixed = TRUE)
+    terms <- parsed_group_terms(variables, group, call = call)
     pairs <- lapply(seq_along(found)[lengths(parts) == 2L], function(k) {
-      names <- drop_coefficient(parts[[k]])
+      names <- unname(terms[parts[[k]]])
       c(variable = found[[k]], pair_term(names[[1L]], names[[2L]]))
     })
     return(dplyr::bind_rows(empty, pairs))
   }
 
-  coefficients <- ranef_coefficients(ranef, group)
+  coefficients <- ranef_coefficients(ranef, group, call = call)
   correlated <- coefficients[coefficients$cor, ]
   if (nrow(correlated) < 2L) {
     return(empty)
@@ -533,9 +610,9 @@ cor_variables <- function(variables, group, ranef) {
 #' Standard-deviation and correlation rows of one grouping factor
 #'
 #' One body for both levels, since they differ only in which variables
-#' they select. A parameter with several coefficients would give two SDs
-#' under one term; until Milestone 5.4 names them apart that is an error,
-#' checked on the coefficients so that the cor level refuses it too.
+#' they select. The terms are checked on all of the group's coefficients
+#' first, so that an intercept with contrasts, or two coefficients reduced
+#' to one term, is refused at the cor level too.
 #'
 #' @noRd
 group_level_estimates <- function(draws, groups, group, ranef, level,
@@ -545,17 +622,20 @@ group_level_estimates <- function(draws, groups, group, ranef, level,
   variables <- posterior::variables(draws)
 
   if (is.null(ranef)) {
-    check_unique_terms(sd_variables(variables, group, NULL), "term",
+    check_unique_terms(sd_variables(variables, group, NULL, call = call),
+      "term",
       call = call
     )
   } else {
-    check_unique_terms(ranef_coefficients(ranef, group), "term", call = call)
+    check_unique_terms(ranef_coefficients(ranef, group, call = call), "term",
+      call = call
+    )
   }
 
   selected <- if (identical(level, "sd")) {
-    sd_variables(variables, group, ranef)
+    sd_variables(variables, group, ranef, call = call)
   } else {
-    cor_variables(variables, group, ranef)
+    cor_variables(variables, group, ranef, call = call)
   }
   if (nrow(selected) == 0L) {
     if (identical(level, "sd")) {
@@ -749,9 +829,14 @@ fit_converged <- function(fit, draws) {
 #' with `id` set to `NA`. An SD row carries the parameter's name
 #' (`kappa`); a correlation row carries the two names joined by `__` and
 #' sorted in the C locale (`kappa__thetat`), whichever order brms used.
-#' A correlation the model does not estimate has no row. A parameter
-#' with more than one group-level coefficient is an error in this
-#' version.
+#' A correlation the model does not estimate has no row.
+#'
+#' **Terms.** A parameter with one coefficient carries its own name. One
+#' with several coefficients and no intercept, as cell-means coding
+#' (`kappa ~ 0 + task`) gives, has a row per coefficient, named
+#' `<parameter>_<coefficient>` (`kappa_task1`) at every level. An intercept
+#' together with other coefficients (population effects or contrasts) is an
+#' error in this version.
 #'
 #' @examples
 #' \dontrun{

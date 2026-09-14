@@ -563,3 +563,331 @@ test_that("subject_pars may only give parameters that vary", {
     "thetat"
   )
 })
+
+# the task dimension (spec 5, section 5.4) ------------------------------
+
+# A cheap generator: one row per call, carrying the natural-scale values it
+# was given, so a test can read them back from the data.
+echo_generator <- function(pars, n_trials, model) {
+  data.frame(y = 0, kappa_seen = pars$kappa, thetat_seen = pars$thetat)
+}
+
+task_pars <- c(kappa = log(8), kappa_task2 = log(4), thetat = 0.5)
+
+test_that("tasks = NULL reproduces the simulations of 273cc47 bit for bit", {
+  skip_if_not_installed("bmm")
+  # Built by running exactly these calls at commit 273cc47, before the
+  # task dimension existed, and saving the fields compared here.
+  head <- readRDS(test_path("fixtures", "simulation-273cc47.rds"))
+  model <- bmm::mixture2p(resp_error = "y")
+  gen <- function(pars, n_trials, model) {
+    data.frame(y = stats::rnorm(n_trials, pars$kappa, pars$thetat))
+  }
+  cors <- diag(3)
+  dimnames(cors) <- rep(list(c("kappa", "thetat", "G")), 2)
+  cors["kappa", "thetat"] <- cors["thetat", "kappa"] <- 0.5
+  cors["G", "kappa"] <- cors["kappa", "G"] <- 0.3
+  correlated <- simulate_recovery(
+    model, c(kappa = log(8), thetat = stats::qlogis(0.75)),
+    n_subjects = 5, n_trials = 4, sds = c(kappa = 0.3, thetat = 0.5),
+    cors = cors, covariates = list(G = c(mean = 0, sd = 1)),
+    generator = gen, seed = 42
+  )
+  plain <- simulate_recovery(
+    model, c(kappa = log(8), thetat = stats::qlogis(0.75), mu1 = 0),
+    n_subjects = 3, n_trials = 6, sds = c(kappa = 0.3), generator = gen,
+    seed = 7
+  )
+  fields <- names(head$correlated)
+  expect_identical(unclass(correlated)[fields], head$correlated)
+  expect_identical(unclass(plain)[fields], head$plain)
+  expect_null(correlated$tasks)
+  expect_null(correlated$task_col)
+  expect_true(all(c("tasks", "task_col") %in% names(correlated)))
+})
+
+test_that("tasks expand pars and sds to full terms, full terms winning", {
+  skip_if_not_installed("bmm")
+  sim <- simulate_recovery(
+    bmm::mixture2p(resp_error = "y"), task_pars,
+    n_subjects = 3, n_trials = 1,
+    sds = c(kappa = 0.2, kappa_task1 = 0.4, thetat_task2 = 0.1),
+    tasks = c("1", "2"), generator = echo_generator, seed = 1
+  )
+  expect_equal(sim$pars, c(
+    kappa_task1 = log(8), kappa_task2 = log(4),
+    thetat_task1 = 0.5, thetat_task2 = 0.5
+  ))
+  expect_equal(sim$sds, c(
+    kappa_task1 = 0.4, kappa_task2 = 0.2,
+    thetat_task1 = 0, thetat_task2 = 0.1
+  ))
+  expect_equal(sim$truth$population$term, names(sim$pars))
+  expect_equal(
+    sim$truth$sd$term, c("kappa_task1", "kappa_task2", "thetat_task2")
+  )
+  expect_setequal(
+    unique(sim$truth$subjects$term),
+    c("kappa_task1", "kappa_task2", "thetat_task2")
+  )
+  expect_setequal(sim$truth$cor$term, c(
+    "kappa_task1__kappa_task2", "kappa_task1__thetat_task2",
+    "kappa_task2__thetat_task2"
+  ))
+  expect_identical(sim$tasks, c("1", "2"))
+  expect_identical(sim$task_col, "task")
+  expect_output(print(sim), "; tasks: 1, 2")
+  expect_output(print(sim), "kappa_task1")
+
+  # a fixed parameter stays bare and reaches every task
+  with_fixed <- simulate_recovery(
+    bmm::mixture2p(resp_error = "y"), c(task_pars, mu1 = 1),
+    n_subjects = 1, n_trials = 1, tasks = c("1", "2"),
+    generator = function(pars, n_trials, model) data.frame(y = pars$mu1)
+  )
+  expect_equal(names(with_fixed$pars)[[5L]], "mu1")
+  expect_equal(with_fixed$data$y, rep(inverse_link(1, "tan_half"), 2L))
+})
+
+test_that("the generator runs per subject and task with that task's values", {
+  skip_if_not_installed("bmm")
+  calls <- new.env()
+  calls$pars <- list()
+  recorder <- function(pars, n_trials, model) {
+    calls$pars[[length(calls$pars) + 1L]] <- pars
+    data.frame(y = rep(0, n_trials))
+  }
+  sim <- simulate_recovery(
+    bmm::mixture2p(resp_error = "y"),
+    c(kappa = log(8), kappa_condB = log(4), thetat = 0.5),
+    n_subjects = 3, n_trials = 2, sds = c(kappa_condA = 0.3),
+    tasks = c("A", "B"), task_col = "cond", generator = recorder, seed = 2
+  )
+  expect_length(calls$pars, 6L)
+  expect_named(sim$data, c("id", "cond", "y"))
+  expect_s3_class(sim$data$cond, "factor")
+  expect_identical(levels(sim$data$cond), c("A", "B"))
+  expect_equal(nrow(sim$data), 3L * 2L * 2L)
+  # subject-major, task-minor
+  expect_equal(as.character(sim$data$id), rep(c("1", "2", "3"), each = 4L))
+  expect_equal(
+    as.character(sim$data$cond), rep(rep(c("A", "B"), each = 2L), 3L)
+  )
+
+  subjects <- sim$truth$subjects
+  for (i in 1:3) {
+    a <- calls$pars[[2L * i - 1L]]
+    b <- calls$pars[[2L * i]]
+    kappa_a <- subjects$true_value[subjects$id == i]
+    expect_equal(a$kappa, exp(kappa_a))
+    expect_equal(b$kappa, 4)
+    expect_equal(a$thetat, stats::plogis(0.5))
+    expect_equal(b$mu1, 0)
+    expect_false(any(grepl("_", names(a))))
+  }
+})
+
+test_that("covariates sit between id and the task column", {
+  skip_if_not_installed("bmm")
+  sim <- simulate_recovery(
+    bmm::mixture2p(resp_error = "y"), task_pars,
+    n_subjects = 2, n_trials = 1, sds = c(kappa = 0.3),
+    covariates = list(G = c(mean = 0, sd = 1)),
+    tasks = c("1", "2"), generator = echo_generator, seed = 3
+  )
+  expect_named(sim$data, c("id", "G", "task", "y", "kappa_seen", "thetat_seen"))
+  per_id <- tapply(sim$data$G, sim$data$id, function(g) length(unique(g)))
+  expect_true(all(per_id == 1L))
+  expect_true("G__kappa_task1" %in% sim$truth$cor$term)
+})
+
+test_that("correlated task terms reach their target in large samples", {
+  skip_if_not_installed("bmm")
+  cors <- diag(3)
+  terms <- c("kappa_task1", "kappa_task2", "thetat_task1")
+  dimnames(cors) <- list(terms, terms)
+  cors[1, 2] <- cors[2, 1] <- 0.5
+  cors[1, 3] <- cors[3, 1] <- -0.3
+  sim <- simulate_recovery(
+    bmm::mixture2p(resp_error = "y"), task_pars,
+    n_subjects = 4000, n_trials = 1,
+    sds = c(kappa = 0.3, thetat_task1 = 0.5), cors = cors,
+    tasks = c("1", "2"),
+    generator = function(pars, n_trials, model) data.frame(y = 0),
+    seed = 4
+  )
+  wide <- subjects_wide(sim$truth$subjects)
+  expect_lt(abs(stats::cor(wide$kappa_task1, wide$kappa_task2) - 0.5), 0.05)
+  expect_lt(abs(stats::cor(wide$kappa_task1, wide$thetat_task1) + 0.3), 0.05)
+  expect_equal(
+    sim$truth$cor$true_value[sim$truth$cor$term == "kappa_task1__kappa_task2"],
+    0.5
+  )
+})
+
+test_that("realised task values passed back reproduce the simulation", {
+  skip_if_not_installed("bmm")
+  model <- bmm::mixture2p(resp_error = "y")
+  first <- simulate_recovery(
+    model, task_pars,
+    n_subjects = 3, n_trials = 5, sds = c(kappa = 0.3),
+    tasks = c("1", "2"), seed = 6
+  )
+  replay <- function() {
+    simulate_recovery(
+      model, first$pars,
+      n_subjects = 3, n_trials = 5, sds = first$sds,
+      subject_pars = first$truth$subjects,
+      tasks = c("1", "2"), seed = 6
+    )
+  }
+  again <- replay()
+  expect_identical(again$pars, first$pars)
+  expect_identical(again$sds, first$sds)
+  expect_identical(again$truth, first$truth)
+  expect_identical(replay()$data, again$data)
+
+  # tasks shift the random stream relative to a task-free simulation: the
+  # first varying term takes the same numbers, the responses do not
+  none <- simulate_recovery(
+    model, c(kappa = log(8), thetat = 0.5),
+    n_subjects = 3, n_trials = 5, sds = c(kappa = 0.3), seed = 6
+  )
+  task1 <- first$truth$subjects$term == "kappa_task1"
+  expect_identical(
+    none$truth$subjects$true_value, first$truth$subjects$true_value[task1]
+  )
+  expect_false(identical(none$data$y, first$data$y[first$data$task == "1"]))
+})
+
+test_that("bad tasks, task_col and task terms are refused by name", {
+  skip_if_not_installed("bmm")
+  model <- bmm::mixture2p(resp_error = "y")
+  sim <- function(pars = task_pars, ...) {
+    simulate_recovery(
+      model, pars,
+      n_subjects = 2, n_trials = 1, generator = echo_generator, ...
+    )
+  }
+  expect_error(sim(tasks = c(1, 2)), "tasks")
+  expect_error(sim(tasks = "1"), "at least")
+  expect_error(sim(tasks = c("1", NA)), "tasks")
+  expect_error(sim(tasks = c("a_1", "b")), "a_1")
+  expect_error(sim(tasks = c("x", "x")), "x")
+  expect_error(sim(tasks = c("1", "2"), task_col = "1task"), "task_col")
+  expect_error(sim(tasks = c("1", "2"), task_col = c("a", "b")), "task_col")
+  expect_error(sim(tasks = c("1", "2"), task_col = "id"), "id")
+  expect_error(sim(tasks = c("1", "2"), task_col = "y"), "y")
+  expect_error(sim(tasks = c("1", "2"), task_col = "kappa"), "kappa")
+  expect_error(sim(tasks = c("1", "2"), task_col = "mu1"), "mu1")
+  expect_error(
+    sim(
+      tasks = c("1", "2"), task_col = "G",
+      covariates = list(G = c(mean = 0, sd = 1))
+    ),
+    "G"
+  )
+  # task_col is not checked without tasks
+  expect_no_error(sim(pars = c(kappa = 1, thetat = 0), task_col = "id"))
+
+  expect_error(
+    sim(pars = c(task_pars, kappa_task3 = 1), tasks = c("1", "2")),
+    "kappa_task3"
+  )
+  expect_error(
+    sim(pars = c(task_pars, mu1_task1 = 1), tasks = c("1", "2")),
+    "mu1_task1"
+  )
+  expect_error(
+    sim(tasks = c("1", "2"), sds = c(thetat_task9 = 0.1)),
+    "thetat_task9"
+  )
+  expect_error(sim(tasks = c("1", "2"), sds = c(mu1 = 0.1)), "mu1")
+  expect_error(
+    sim(pars = c(kappa_task1 = 1, thetat = 0), tasks = c("1", "2")),
+    "kappa_task2"
+  )
+  bare_cors <- matrix(c(1, 0.5, 0.5, 1), 2,
+    dimnames = rep(list(c("kappa", "thetat")), 2)
+  )
+  err <- expect_error(
+    sim(
+      tasks = c("1", "2"), sds = c(kappa = 0.3, thetat = 0.2),
+      cors = bare_cors
+    ),
+    "kappa"
+  )
+  expect_match(conditionMessage(err), "full terms")
+  collide <- function(pars, n_trials, model) data.frame(y = 0, task = 1)
+  expect_error(
+    simulate_recovery(
+      model, task_pars,
+      n_subjects = 2, n_trials = 1, tasks = c("1", "2"), generator = collide
+    ),
+    "task column"
+  )
+})
+
+# recovery_formula with tasks -------------------------------------------
+
+test_that("task formulas are cell means with three random-effect structures", {
+  skip_if_not_installed("bmm")
+  model <- bmm::mixture2p(resp_error = "y")
+  f <- function(re_cor) {
+    recovery_formula(model, re_cor = re_cor, task_col = "task")
+  }
+  expect_equal(
+    deparse(f("none")$kappa), "kappa ~ 0 + task + (0 + task || id)"
+  )
+  expect_equal(
+    deparse(f("within")$thetat), "thetat ~ 0 + task + (0 + task | id)"
+  )
+  expect_equal(
+    deparse(f("all")$kappa), "kappa ~ 0 + task + (0 + task | p | id)"
+  )
+
+  expect_message(
+    within <- recovery_formula(model, re_cor = "within"),
+    "nothing to correlate within a parameter"
+  )
+  expect_equal(deparse(within$kappa), "kappa ~ 1 + (1 | id)")
+
+  mafc <- bmm::sdt_mafc(response = "k", n_trials = "n", m = 4)
+  expect_message(
+    single <- recovery_formula(mafc, re_cor = "all", task_col = "cond"),
+    "within"
+  )
+  expect_equal(deparse(single$d), "d ~ 0 + cond + (0 + cond | id)")
+
+  expect_error(recovery_formula(model, task_col = "my_task"), "task_col")
+  expect_error(recovery_formula(model, task_col = "my.task"), "task_col")
+  expect_error(recovery_formula(model, task_col = 1), "task_col")
+  expect_error(recovery_formula(model, task_col = c("a", "b")), "task_col")
+})
+
+test_that("task formulas pass the mock backend and match the truth terms", {
+  skip_if_not_installed("bmm")
+  skip_if_not_installed("brms")
+  model <- bmm::mixture2p(resp_error = "y")
+  sim <- simulate_recovery(
+    model, task_pars,
+    n_subjects = 4, n_trials = 20, sds = c(kappa = 0.3, thetat = 0.2),
+    tasks = c("1", "2"), seed = 1
+  )
+  for (re_cor in c("none", "within", "all")) {
+    formula <- recovery_formula(model, re_cor = re_cor, task_col = "task")
+    fit <- mock_bmm(formula, sim$data, model)
+    expect_s3_class(fit, "bmmfit")
+    ranef <- as.data.frame(fit$ranef)
+    expect_equal(
+      paste0(ranef$nlpar, "_", ranef$coef),
+      c("kappa_task1", "kappa_task2", "thetat_task1", "thetat_task2"),
+      label = re_cor
+    )
+    expect_equal(all(ranef$cor), re_cor != "none", label = re_cor)
+  }
+
+  prior <- as.data.frame(bmm::default_prior(formula, sim$data, model))
+  b <- prior[prior$class == "b" & nzchar(prior$coef), ]
+  expect_setequal(paste0(b$nlpar, "_", b$coef), sim$truth$population$term)
+})

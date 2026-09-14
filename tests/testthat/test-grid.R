@@ -722,3 +722,247 @@ test_that("a grid with nothing to score at its levels says so", {
   dir2 <- withr::local_tempdir()
   expect_error(one_sd(dir2, levels = "subject"), "Nothing to score")
 })
+
+# the task dimension (spec 5, section 5.4) --------------------------------
+
+task_grid_run <- function(dir, mock = grid_mock_fitter(), grid = small_grid(),
+                          reps = 1L, ...) {
+  suppressMessages(recovery_grid(
+    bmm::mixture2p(resp_error = "y"),
+    grid = grid,
+    pars = c(kappa = log(8), kappa_task2 = log(4), thetat = 0.5),
+    dir = dir,
+    reps = reps,
+    sds = c(kappa = 0.3, thetat_task1 = 0.4),
+    tasks = c("1", "2"),
+    seed = 200,
+    ...,
+    .fitter = mock$fitter
+  ))
+}
+
+test_that("a grid with tasks scores task terms at every level", {
+  skip_if_not_installed("bmm")
+  dir <- withr::local_tempdir()
+  seen <- new.env()
+  mock <- grid_mock_fitter()
+  fitter <- function(formula, data, model, prior = NULL, ...) {
+    seen$formula <- formula
+    mock$fitter(formula, data, model, prior, ...)
+  }
+  out <- task_grid_run(
+    dir, list(fitter = fitter),
+    re_cor = "within",
+    levels = c("population", "subject", "sd"),
+    correlations = c("draws", "point")
+  )
+
+  expect_equal(
+    deparse(seen$formula$kappa), "kappa ~ 0 + task + (0 + task | id)"
+  )
+  terms <- c("kappa_task1", "kappa_task2", "thetat_task1", "thetat_task2")
+  expect_setequal(out$term[out$level == "population"], terms)
+  expect_setequal(
+    out$term[out$level == "subject"],
+    c("kappa_task1", "kappa_task2", "thetat_task1")
+  )
+  expect_setequal(
+    out$term[out$level == "sd"],
+    c("kappa_task1", "kappa_task2", "thetat_task1")
+  )
+  pop <- out[out$level == "population" & out$condition == "row-1", ]
+  expect_equal(
+    pop$true_value[match(terms, pop$term)],
+    c(8, 4, stats::plogis(0.5), stats::plogis(0.5))
+  )
+
+  cors <- attr(out, "correlations")
+  expect_s3_class(cors, "bmmtools_cor_recovery")
+  expect_setequal(cors$estimator, c("draws", "point"))
+  expect_true("kappa_task1__kappa_task2" %in% cors$term)
+  sim <- readRDS(file.path(dir, "cell-1-rep-1-sim.rds"))
+  expect_identical(sim$tasks, c("1", "2"))
+  expect_named(sim$data, c("id", "task", "y"))
+
+  table <- subject_table(out)
+  expect_true(all(c(
+    "true_kappa_task1", "est_kappa_task1", "true_thetat_task2",
+    "est_thetat_task2"
+  ) %in% names(table)))
+  expect_equal(nrow(table), 3L + 4L)
+})
+
+test_that("grid columns may set bare and full task terms", {
+  skip_if_not_installed("bmm")
+  dir <- withr::local_tempdir()
+  grid <- data.frame(
+    n_subjects = 3L, n_trials = 2L,
+    kappa = c(1, 2), kappa_task1 = c(1, 5),
+    sd_thetat = c(0.2, 0.2), sd_kappa_task2 = c(0.1, 0.6),
+    cor_kappa_task2__thetat_task1 = c(0, 0.4)
+  )
+  task_grid_run(dir, grid = grid, preflight = FALSE)
+  s1 <- readRDS(file.path(dir, "cell-1-rep-1-sim.rds"))
+  s2 <- readRDS(file.path(dir, "cell-2-rep-1-sim.rds"))
+
+  # a bare column sets every task, a full-term column wins for its task
+  kappas <- c("kappa_task1", "kappa_task2")
+  expect_equal(s1$pars[kappas], c(kappa_task1 = 1, kappa_task2 = 1))
+  expect_equal(s2$pars[kappas], c(kappa_task1 = 5, kappa_task2 = 2))
+  expect_equal(
+    s2$sds,
+    c(
+      kappa_task1 = 0.3, kappa_task2 = 0.6,
+      thetat_task1 = 0.2, thetat_task2 = 0.2
+    )
+  )
+  expect_equal(
+    s2$truth$cor$true_value[s2$truth$cor$term == "kappa_task2__thetat_task1"],
+    0.4
+  )
+
+  # bare or unknown terms in a cor_ column are refused with tasks
+  bad <- data.frame(n_subjects = 3L, n_trials = 2L, cor_kappa__thetat = 0.2)
+  expect_error(
+    task_grid_run(withr::local_tempdir(), grid = bad, preflight = FALSE),
+    "cor_kappa__thetat"
+  )
+})
+
+test_that("subjects = 'fixed' with tasks reuses rep 1's task values", {
+  skip_if_not_installed("bmm")
+  dir <- withr::local_tempdir()
+  suppressMessages(recovery_grid(
+    bmm::mixture2p(resp_error = "y"),
+    grid = small_grid(),
+    pars = function(row) c(kappa = stats::rnorm(1, 2, 0.2), thetat = 1),
+    sds = c(kappa = 0.3),
+    tasks = c("1", "2"), subjects = "fixed",
+    dir = dir, reps = 2L, seed = 5, preflight = FALSE,
+    .fitter = grid_mock_fitter()$fitter
+  ))
+  s11 <- readRDS(file.path(dir, "cell-1-rep-1-sim.rds"))
+  s12 <- readRDS(file.path(dir, "cell-1-rep-2-sim.rds"))
+  expect_named(s11$pars, c(
+    "kappa_task1", "kappa_task2", "thetat_task1", "thetat_task2"
+  ))
+  expect_identical(s12$pars, s11$pars)
+  expect_identical(s12$sds, s11$sds)
+  expect_identical(s12$truth$subjects, s11$truth$subjects)
+  expect_false(identical(s12$data, s11$data))
+})
+
+test_that("formula may be a function of the grid row, called once per row", {
+  skip_if_not_installed("bmm")
+  dir <- withr::local_tempdir()
+  rows <- new.env()
+  rows$seen <- list()
+  formula <- function(row) {
+    rows$seen[[length(rows$seen) + 1L]] <- row
+    recovery_formula(
+      bmm::mixture2p(resp_error = "y"),
+      re_cor = if (row$n_subjects == 3L) "none" else "all",
+      task_col = "task"
+    )
+  }
+  calls <- new.env()
+  calls$formulas <- list()
+  mock <- grid_mock_fitter()
+  fitter <- function(formula, data, model, prior = NULL, ...) {
+    calls$formulas[[length(calls$formulas) + 1L]] <- formula
+    mock$fitter(formula, data, model, prior, ...)
+  }
+  task_grid_run(dir, list(fitter = fitter), reps = 2L, formula = formula)
+
+  expect_length(rows$seen, 2L)
+  expect_equal(rows$seen[[1L]], small_grid()[1, , drop = FALSE])
+  deparsed <- vapply(calls$formulas, function(f) deparse(f$kappa), "")
+  # preflight (row 1), then rows 1, 2 in each replication
+  expect_equal(deparsed, c(
+    "kappa ~ 0 + task + (0 + task || id)",
+    rep(c(
+      "kappa ~ 0 + task + (0 + task || id)",
+      "kappa ~ 0 + task + (0 + task | p | id)"
+    ), 2L)
+  ))
+
+  # a fixed bmmformula is used as given for every row
+  fixed <- recovery_formula(
+    bmm::mixture2p(resp_error = "y"),
+    re_cor = "within", task_col = "task"
+  )
+  calls$formulas <- list()
+  task_grid_run(
+    withr::local_tempdir(), list(fitter = fitter),
+    formula = fixed, preflight = FALSE
+  )
+  expect_true(all(vapply(calls$formulas, identical, TRUE, fixed)))
+
+  not_formula <- function(row) "kappa ~ 1"
+  err <- expect_error(
+    task_grid_run(withr::local_tempdir(), formula = not_formula),
+    "bmmformula"
+  )
+  expect_match(conditionMessage(err), "row 1")
+})
+
+test_that("tasks change the data and so the cache key", {
+  skip_if_not_installed("bmm")
+  model <- bmm::mixture2p(resp_error = "y")
+  sim_for <- function(tasks) {
+    simulate_recovery(
+      model, c(kappa = 1, thetat = 0),
+      n_subjects = 2, n_trials = 3, tasks = tasks, seed = 1
+    )
+  }
+  a <- sim_for(c("1", "2"))
+  b <- sim_for(c("1", "3"))
+  formula <- recovery_formula(model, task_col = "task")
+  expect_false(identical(
+    cache_key(formula, a$data, model, NULL, list())$key,
+    cache_key(formula, b$data, model, NULL, list())$key
+  ))
+})
+
+test_that("grid argument checks know about tasks and re_cor = 'within'", {
+  skip_if_not_installed("bmm")
+  mock <- grid_mock_fitter()
+  err <- expect_error(
+    task_grid_run(withr::local_tempdir(), mock, correlations = "model"),
+    "re_cor"
+  )
+  expect_match(conditionMessage(err), "within")
+  err <- expect_error(
+    grid_run(
+      withr::local_tempdir(), mock,
+      correlations = "model", re_cor = "within"
+    ),
+    "re_cor"
+  )
+  expect_no_match(conditionMessage(err), "within")
+  expect_error(
+    task_grid_run(withr::local_tempdir(), mock, tasks = 1:2),
+    "tasks"
+  )
+  expect_error(
+    task_grid_run(withr::local_tempdir(), mock, task_col = "id"),
+    "task_col"
+  )
+  expect_identical(mock$calls$n, 0L)
+})
+
+test_that("an older simulation file gains NULL tasks on resume", {
+  skip_if_not_installed("bmm")
+  dir <- withr::local_tempdir()
+  suppressMessages(grid_run(dir, grid_mock_fitter(), reps = 1L))
+  path <- file.path(dir, "cell-1-rep-1-sim.rds")
+  old <- unclass(readRDS(path))
+  old <- structure(
+    old[setdiff(names(old), c("tasks", "task_col"))],
+    class = "bmmtools_simulation"
+  )
+  sim <- upgrade_simulation(old)
+  expect_true(all(c("tasks", "task_col") %in% names(sim)))
+  expect_null(sim$tasks)
+  expect_identical(sim$truth, old$truth)
+})
