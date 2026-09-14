@@ -27,3 +27,8 @@ inst/doc/
 /doc/
 /Meta/
 tests/testthat/_problems/
+
+# Fits behind the example objects and the articles (results are tracked,
+# fits are not)
+data-raw/fits/
+vignettes/articles/precompute/fits/

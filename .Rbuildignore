@@ -16,3 +16,5 @@
 ^dev$
 ^Rplots\.pdf$
 ^tests/testthat/_problems$
+^data-raw$
+^vignettes/articles$

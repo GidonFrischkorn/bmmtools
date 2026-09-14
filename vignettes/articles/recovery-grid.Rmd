@@ -1,0 +1,196 @@
+---
+title: "Running a recovery study"
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 7,
+  fig.height = 4,
+  out.width = "100%"
+)
+options(width = 90)
+# paths relative to the package root, whether this renders from the
+# package root (pkgdown) or from vignettes/articles
+from_root <- function(path) {
+  if (dir.exists("vignettes")) path else file.path("..", "..", path)
+}
+# the code shown is read from the script that produced the results
+shown <- function(label, file) {
+  lines <- readLines(from_root(file))
+  markers <- grep("^## ---- ", lines)
+  start <- markers[lines[markers] == paste("## ----", label)]
+  end <- c(markers[markers > start], length(lines) + 1L)[[1L]] - 1L
+  code <- lines[(start + 1L):end]
+  while (length(code) > 0L && !nzchar(trimws(code[[length(code)]]))) {
+    code <- code[-length(code)]
+  }
+  code
+}
+library(bmmtools)
+```
+
+A recovery study repeats the loop of
+[Validating a new bmm model](bmmtools.html), simulate, fit and score,
+over a design: several numbers of subjects and trials, several
+replications of each. `recovery_grid()` runs that loop and takes care of
+what makes long simulations fragile: every cell is saved as soon as it
+finishes, an interrupted run resumes from those files, and a short
+preflight fit catches a broken model before hours are spent on it.
+
+The example below is the grid behind `recovery_mixture2p`, the recovery
+object that ships with the package. Its results are used live on this
+page. The run took 8 minutes 58 seconds, compilation and preflight
+included.
+
+## The call
+
+```{r grid, eval = FALSE, code = shown("grid", "data-raw/example-objects.R")}
+```
+
+Everything after `seed` is passed to `fit_cached()` and from there to
+`bmm::bmm()`.
+
+## The design grid
+
+`grid` is a data frame with one row per condition. It needs the columns
+`n_subjects` and `n_trials`; any other column named after a parameter
+sets that parameter's population value for the row, and a column
+`sd_<parameter>` sets its between-subject SD. Both override `pars` and
+`sds`, which act as the defaults for every row:
+
+```{r, eval = FALSE}
+grid <- expand.grid(
+  n_subjects = c(20, 50),
+  n_trials = c(30, 100),
+  kappa = log(c(4, 16))
+)
+```
+
+A design created with `SimDesign::createDesign()` is a data frame and
+can be passed as it is. `model` can also be a function of one grid row
+that returns a model, for designs where the model's arguments change
+between rows; the link table must stay the same across rows, because
+one table scores every cell.
+
+## Smoke run and preflight
+
+Before the full grid, run it with `smoke = TRUE`. This fits the first
+two rows with two replications into `<dir>/smoke`, so a smoke run never
+overwrites or gets mistaken for a full one.
+
+By default, the grid also runs a **preflight**: before any cell, the
+first cell is fitted once with one chain and 200 iterations into
+`<dir>/preflight`. A compile error, an init failure or data the model
+rejects stop the grid there, with nothing else run. The preflight is
+skipped when the first cell already has a cached fit.
+
+## Files on disk and resuming
+
+Each cell writes two files as soon as it is done, named after its grid
+row and replication:
+
+- `cell-<row>-rep-<rep>-sim.rds` holds the simulated data and truth;
+- `cell-<row>-rep-<rep>.rds` holds the fit, with its cache key in
+  `cell-<row>-rep-<rep>.key`.
+
+To resume after an interruption, run the same call again. A cell whose
+simulation file exists reads it instead of simulating, and a cell whose
+fit matches its key reuses the fit, so finished cells cost only the
+time to read them. Rerunning the script that builds the example
+objects, with all 20 grid fits on disk, took 23 seconds, including two
+prior-only fits that were not cached yet. If an argument that enters the key
+changes, say `iter`, every affected cell is refitted and the message
+names the component that changed.
+
+Cells run in replication-major order: every row of replication 1, then
+every row of replication 2, and so on. If a run is stopped early, the
+finished cells already span the whole design.
+
+## Seeds and simulated people
+
+`seed` is a master seed. Each cell derives its own seed from it, its
+row and its replication, so any single cell can be reproduced without
+running the ones before it.
+
+`subjects = "redraw"`, the default, draws new subject values in every
+replication. `subjects = "fixed"` draws them once per row, in the first
+replication, and reuses them in every later one, so the replications
+become repeated simulations of the same people.
+
+## When a cell fails
+
+A cell whose fit throws an error is recorded with `status = "error"`,
+the grid goes on, and a warning at the end lists the failed cells with
+the first error message. A cell whose data cannot be generated stops the
+grid instead, since that is an error in the design rather than in the
+sampler.
+
+## The result
+
+The grid returns a single `bmmtools_recovery` object with population and
+subject rows for every cell. The `condition` column names the grid row:
+
+```{r}
+recovery_mixture2p
+```
+
+`summary()` groups by condition. Population-level correlations are `NA`
+here because every replication of a row uses the same population
+values, so the truth has no spread within a condition; bias, RMSE and
+coverage are still defined.
+
+The attribute `cells` has one row per cell, with its seed, file, status,
+runtime in seconds and convergence verdict:
+
+```{r}
+cells <- attr(recovery_mixture2p, "cells")
+cells
+```
+
+To read the summary against the design, join the design columns from
+`cells`:
+
+```{r}
+design <- unique(cells[c("condition", "n_subjects", "n_trials")])
+
+subject_summary <- summary(recovery_mixture2p) |>
+  dplyr::filter(level == "subject") |>
+  dplyr::left_join(design, by = "condition")
+
+subject_summary[c("term", "n_subjects", "n_trials", "n_converged",
+                  "bias", "rmse", "coverage", "r", "r_low", "r_high")]
+```
+
+```{r, fig.height = 3.5}
+library(ggplot2)
+ggplot(
+  subject_summary,
+  aes(factor(n_trials), r, ymin = r_low, ymax = r_high,
+      colour = factor(n_subjects))
+) +
+  geom_pointrange(position = position_dodge(width = 0.4)) +
+  facet_wrap(~term) +
+  labs(x = "Trials per subject", y = "Subject-level r (95% CI)",
+       colour = "Subjects")
+```
+
+Because the object keeps its class through dplyr verbs, a single cell
+can be plotted directly:
+
+```{r}
+recovery_mixture2p |>
+  dplyr::filter(condition == "row-4", level == "subject") |>
+  plot_recovery()
+```
+
+`elapsed` is the time a cell took in the run that returned the object,
+in seconds, so the fitting time of the grid in minutes is:
+
+```{r}
+sum(cells$elapsed) / 60
+```
+
+After a resume, a cell whose fit was read from disk records the time it
+took to read it, not the time it once took to fit.

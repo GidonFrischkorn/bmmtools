@@ -400,6 +400,14 @@ summarise_subject <- function(rows) {
 #' verdict, as with a hand-built estimates tibble: reporting it as equal
 #' to `n` there would assert something that was never measured.
 #'
+#' @examples
+#' summary(recovery_mixture2p)
+#'
+#' # one cell of the example grid, subject level only
+#' recovery_mixture2p |>
+#'   dplyr::filter(condition == "row-4", level == "subject") |>
+#'   summary()
+#'
 #' @export
 summary.bmmtools_recovery <- function(object, ...) {
   check_recovery_contract(object)
@@ -615,6 +623,9 @@ dplyr_reconstruct.bmmtools_prior_check <- function(data, template) {
 #' @param ... Not used.
 #'
 #' @return A `bmmtools_prior_check_summary` tibble.
+#'
+#' @examples
+#' summary(prior_check_sdt_yn)
 #'
 #' @export
 summary.bmmtools_prior_check <- function(object, ...) {

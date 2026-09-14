@@ -46,10 +46,16 @@ biased puts them on a line beside it, and a model that cannot
 distinguish them puts them on a cloud.
 }
 \examples{
-\dontrun{
-recovery <- recover(fits, truth)
-plot_recovery(recovery)
-plot_recovery(recovery, facet_by = NULL, color_by = "term")
-}
+\dontshow{if (rlang::is_installed("ggplot2")) withAutoprint(\{ # examplesIf}
+# subject-level recovery in one cell of the example grid
+cell <- dplyr::filter(
+  recovery_mixture2p,
+  level == "subject", condition == "row-4"
+)
+plot_recovery(cell)
 
+# population-level estimates, coloured by design cell
+population <- dplyr::filter(recovery_mixture2p, level == "population")
+plot_recovery(population, color_by = "condition")
+\dontshow{\}) # examplesIf}
 }

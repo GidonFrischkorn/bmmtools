@@ -4,16 +4,44 @@
 \name{bmmtools-package}
 \alias{bmmtools}
 \alias{bmmtools-package}
-\title{bmmtools: Validate Cognitive Measurement Models Fitted with 'bmm'}
+\title{bmmtools: validate cognitive measurement models fitted with bmm}
 \description{
-\if{html}{\figure{logo.png}{options: style='float: right' alt='logo' width='120'}}
-
-Parameter recovery, prior predictive checks on the observable scale, simulation-based calibration and reference cross-checks for cognitive measurement models fitted with the 'bmm' package. The validation half of the 'bmm' model-development workflow: bmm::use_model_template() scaffolds a model, 'bmmtools' checks that it can be estimated, that its priors are sane, that its implementation is correct and that it agrees with what is already known.
+bmmtools checks a bmm model before it is used on real data: that it
+can be estimated from data of a given size, and that its priors imply
+plausible data. Every check is the same loop, simulate, fit, score.
 }
+\section{Simulate}{
+
+\code{\link[=simulate_recovery]{simulate_recovery()}} draws a data set and the truth that produced it
+from a bmm model and population values on the link scale.
+\code{\link[=recovery_formula]{recovery_formula()}} gives every free parameter a random intercept.
+}
+
+\section{Fit}{
+
+\code{\link[=fit_cached]{fit_cached()}} fits once and reuses the saved fit while nothing that
+determines it has changed. \code{\link[=check_convergence]{check_convergence()}} is the convergence
+gate. \code{\link[=recovery_grid]{recovery_grid()}} runs simulate, fit and score over a design
+grid with replications, one file per cell.
+}
+
+\section{Score}{
+
+\code{\link[=recover]{recover()}} and \code{\link[=recover_subjects]{recover_subjects()}} score population-level and
+person-level estimates against the truth; \code{summary()} of the result
+gives bias, RMSE, coverage, interval width and the correlations.
+\code{\link[=prior_check]{prior_check()}} summarises prior-predictive draws on the observable
+scale. \code{\link[=plot_recovery]{plot_recovery()}} and \code{\link[=plot_prior_check]{plot_prior_check()}} draw both.
+
+The articles on the package website walk through each step:
+\url{https://gidonfrischkorn.github.io/bmmtools/}.
+}
+
 \seealso{
 Useful links:
 \itemize{
   \item \url{https://github.com/GidonFrischkorn/bmmtools}
+  \item \url{https://gidonfrischkorn.github.io/bmmtools/}
   \item Report bugs at \url{https://github.com/GidonFrischkorn/bmmtools/issues}
 }
 

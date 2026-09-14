@@ -44,3 +44,12 @@ would mix between-subject with between-replication variance.
 verdict, as with a hand-built estimates tibble: reporting it as equal
 to \code{n} there would assert something that was never measured.
 }
+\examples{
+summary(recovery_mixture2p)
+
+# one cell of the example grid, subject level only
+recovery_mixture2p |>
+  dplyr::filter(condition == "row-4", level == "subject") |>
+  summary()
+
+}

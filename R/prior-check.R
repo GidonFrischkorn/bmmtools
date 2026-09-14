@@ -392,9 +392,11 @@ prior_fit <- function(set, prior, formula, data, model, base, refit, seed,
 #'   model, recovery_formula(model), my_data,
 #'   n_draws = 500, seed = 1
 #' )
-#' summary(checked)
-#' plot_prior_check(checked)
 #' }
+#'
+#' # a precomputed check comparing two prior sets
+#' prior_check_sdt_yn
+#' summary(prior_check_sdt_yn)
 #'
 #' @export
 prior_check <- function(model,

@@ -1,0 +1,211 @@
+---
+title: "Validating a model without a built-in adapter"
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 7,
+  fig.height = 3.5,
+  out.width = "100%"
+)
+options(width = 90)
+# paths relative to the package root, whether this renders from the
+# package root (pkgdown) or from vignettes/articles
+from_root <- function(path) {
+  if (dir.exists("vignettes")) path else file.path("..", "..", path)
+}
+# the code shown is read from the script that produced the results
+shown <- function(label, file) {
+  lines <- readLines(from_root(file))
+  markers <- grep("^## ---- ", lines)
+  start <- markers[lines[markers] == paste("## ----", label)]
+  end <- c(markers[markers > start], length(lines) + 1L)[[1L]] - 1L
+  code <- lines[(start + 1L):end]
+  while (length(code) > 0L && !nzchar(trimws(code[[length(code)]]))) {
+    code <- code[-length(code)]
+  }
+  code
+}
+library(bmmtools)
+res <- readRDS(from_root("vignettes/articles/assets/own-model.rds"))
+```
+
+bmmtools ships generator adapters for six bmm models: `sdt_yn`,
+`sdt_mafc`, the three-parameter `ezdm`, `ddm`, `mixture2p` and `sdm`.
+A model you are developing, for example one started with
+`bmm::use_model_template()`, has none, and `simulate_recovery()` stops
+with an error asking for `generator`. This article shows how to write
+one, what the rest of the loop needs from it, and how to score fits and
+estimates that did not come from the generate layer at all.
+
+The example is bmm's three-parameter mixture model, `mixture3p`, which
+has no adapter. The code was run once and its results saved, so this
+page was built without Stan.
+
+## What a generator is
+
+A generator is a function `function(pars, n_trials, model)` that
+returns the rows of **one subject** as a data frame, with the column
+names the model expects. `simulate_recovery()` calls it once per
+subject and adds the `id` column itself.
+
+- `pars` is a named list of that subject's parameter values on the
+  **natural scale**, fixed parameters included.
+- `n_trials` is the number of trials per subject, as given to
+  `simulate_recovery()` or in a grid row.
+- `model` is the model object, so the generator can read column names
+  or other settings from it.
+
+`simulate_recovery()` takes `pars` on the link scale, draws subject
+values there and converts them with `inverse_link()` using the model's
+link table before calling the generator. Check that table first:
+
+```{r model, eval = FALSE, code = shown("model", "vignettes/articles/precompute/own-model.R")}
+```
+
+```{r, echo = FALSE}
+res$links
+```
+
+`kappa` arrives in the generator as a precision, but `thetat` and
+`thetant` have an identity link: in `mixture3p` they are softmax weights
+against a guessing weight fixed at 0. The generator has to turn them
+into probabilities itself.
+
+## Writing the generator
+
+```{r generator, eval = FALSE, code = shown("generator", "vignettes/articles/precompute/own-model.R")}
+```
+
+The non-target locations are drawn inside the generator, so they are
+part of the simulated data. `simulate_recovery()` applies its `seed`
+around the generator too, so these draws are reproducible with the
+rest. The generator's output is checked against the model's response
+columns before anything is fitted.
+
+## Simulate, fit and score
+
+From here the loop is the same as for a model with an adapter:
+
+```{r simulate, eval = FALSE, code = shown("simulate", "vignettes/articles/precompute/own-model.R")}
+```
+
+```{r, echo = FALSE}
+res$data
+res$truth$subjects
+```
+
+`thetant` is in `pars` but not in `sds`, so it does not vary between
+subjects and has no rows in `truth$subjects`: a parameter that does not
+vary has nothing person-level to recover.
+
+```{r fit, eval = FALSE, code = shown("fit", "vignettes/articles/precompute/own-model.R")}
+```
+
+```{r, echo = FALSE}
+res$convergence
+```
+
+```{r score, eval = FALSE, code = shown("score", "vignettes/articles/precompute/own-model.R")}
+```
+
+```{r, echo = FALSE}
+res$population
+summary(res$subjects)
+```
+
+The same generator runs a whole design through `recovery_grid()`:
+
+```{r, eval = FALSE}
+recovery_grid(
+  model,
+  grid = expand.grid(n_subjects = c(30, 60), n_trials = c(50, 100)),
+  pars = c(kappa = log(8), thetat = 1.5, thetant = 0),
+  sds = c(kappa = 0.3, thetat = 0.5),
+  generator = generate_mixture3p,
+  dir = "fits/mixture3p", reps = 10, seed = 1
+)
+```
+
+## Scoring estimates you already have
+
+`recover()` and `recover_subjects()` accept an **estimates tibble** in
+place of a fit. That is how to score estimates from another fitting
+routine, from an older simulation, or from any pipeline where no fit
+object is at hand. No fitting package needs to be installed.
+
+The tibble needs the columns `term`, `estimate`, `ci_low`, `ci_high`,
+`ci_method`, `ci_level`, `rhat`, `ess_bulk`, `ess_tail`, `level` and
+`id`, and optionally `converged` and `replication`. Estimates and truth
+are on the link scale; `links` maps each term to its link so that
+scoring can happen on the natural scale:
+
+```{r}
+estimates <- tibble::tibble(
+  term = rep(c("kappa", "thetat"), times = 3),
+  estimate = c(2.10, 1.00, 1.70, 0.60, 2.45, 1.35),
+  ci_low = c(1.60, 0.40, 1.20, 0.05, 1.95, 0.80),
+  ci_high = c(2.60, 1.60, 2.20, 1.15, 2.95, 1.90),
+  ci_method = "eti", ci_level = 0.95,
+  rhat = 1, ess_bulk = 900, ess_tail = 900,
+  level = "population", id = NA_character_,
+  replication = rep(1:3, each = 2)
+)
+truth <- tibble::tibble(
+  term = rep(c("kappa", "thetat"), times = 3),
+  true_value = c(2.0, 1.1, 1.8, 0.5, 2.4, 1.4),
+  replication = rep(1:3, each = 2)
+)
+
+recovered <- recover(estimates, truth, links = c(kappa = "log", thetat = "logit"))
+summary(recovered)
+```
+
+`n_converged` is `NA` because the tibble carries no convergence verdict.
+When `truth` has a `replication` column it is used as a join key; without
+one, the same truth is scored against every replication.
+
+`extract_estimates()` produces this tibble from a fit, so a scoring
+pipeline can be written and tested on saved tibbles and pointed at fits
+later.
+
+## Scoring a brms fit
+
+Scoring dispatches on `brmsfit`, and a `bmmfit` is one, so a plain
+brms fit can be scored as well. Without bmm's link table, scoring falls
+back to the link scale and says so, unless `links` is given:
+
+```{r, eval = FALSE}
+recover(brms_fit, truth, links = c(kappa = "log", thetat = "logit"))
+```
+
+Term names are the coefficient names with the `b_` prefix and the
+coefficient suffix removed, so `b_kappa_Intercept` becomes `kappa`.
+`extract_estimates(brms_fit)$term` shows what `truth` has to match.
+A term in `truth` that the fit did not estimate is dropped with a
+warning that lists the available terms.
+
+## Limits of this version
+
+- Each parameter is scored through its intercept. A formula with
+  several coefficients for one parameter, say `kappa ~ 1 + setsize`,
+  maps them onto the same term, and scoring stops with an error rather
+  than join them wrongly. `recovery_formula()` writes intercept-only
+  formulas.
+- Group-level standard deviations are not extracted or scored yet.
+- `prior_check()` derives the floor and ceiling of the response only
+  for the models with an adapter; for your model, pass `range` or a
+  `summary` function of your own.
+
+## Contributing an adapter
+
+If your model is part of bmm and its generator fits the pattern above,
+an adapter in bmmtools saves every user from writing it. Adapters live
+in `R/adapters.R`: a function per model that maps one subject's
+natural-scale parameters onto the model's `r*()` function and names the
+output columns from the model object, plus an entry in the table that
+looks them up by class. A response range for `prior_check()` goes in
+`response_range()` in `R/prior-check.R`. Open an issue or a pull request
+on [GitHub](https://github.com/GidonFrischkorn/bmmtools).

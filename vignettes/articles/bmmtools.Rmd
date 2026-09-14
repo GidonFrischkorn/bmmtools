@@ -1,0 +1,197 @@
+---
+title: "Validating a new bmm model"
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 7,
+  fig.height = 3.5,
+  out.width = "100%"
+)
+options(width = 90)
+# paths relative to the package root, whether this renders from the
+# package root (pkgdown) or from vignettes/articles
+from_root <- function(path) {
+  if (dir.exists("vignettes")) path else file.path("..", "..", path)
+}
+# the code shown is read from the script that produced the results
+shown <- function(label, file) {
+  lines <- readLines(from_root(file))
+  markers <- grep("^## ---- ", lines)
+  start <- markers[lines[markers] == paste("## ----", label)]
+  end <- c(markers[markers > start], length(lines) + 1L)[[1L]] - 1L
+  code <- lines[(start + 1L):end]
+  while (length(code) > 0L && !nzchar(trimws(code[[length(code)]]))) {
+    code <- code[-length(code)]
+  }
+  code
+}
+library(bmmtools)
+res <- readRDS(from_root("vignettes/articles/assets/bmmtools.rds"))
+```
+
+This article walks once through the loop every bmmtools check is built
+on: simulate data from known parameters, fit the model, score the fit
+against the truth. It uses one model and one design, so that each step
+is visible. [Running a recovery study](recovery-grid.html) repeats the
+same loop over a design grid.
+
+The model is bmm's two-parameter mixture model, `mixture2p`, because an
+adapter for it ships with bmmtools. A model without one works the same
+way once you supply a generator; see
+[Validating a model without a built-in adapter](own-model.html).
+
+To run the code you need bmm, brms and a working
+[cmdstanr](https://mc-stan.org/cmdstanr/) installation. The output below
+was computed once with that code and saved, so the page itself was built
+without Stan.
+
+## The model and the truth
+
+```{r model, eval = FALSE, code = shown("model", "vignettes/articles/precompute/bmmtools.R")}
+```
+
+`pars` are the population values that generate the data. They are given
+**on the link scale** and under bmm's own parameter names, because that
+is the scale the model is estimated on: `kappa` has a log link and
+`thetat` a logit link, so `log(8)` is a precision of 8 and
+`qlogis(0.75)` a mixture weight of 0.75. `sds` are between-subject
+standard deviations on the same scale. A parameter not named in `sds`
+does not vary between subjects.
+
+## Simulate
+
+```{r simulate, eval = FALSE, code = shown("simulate", "vignettes/articles/precompute/bmmtools.R")}
+```
+
+```{r, echo = FALSE}
+res$data
+res$truth$population
+```
+
+`simulate_recovery()` draws one value per subject and parameter on the
+link scale, converts it with `inverse_link()` and hands it to the
+model's own generator, here `bmm::rmixture2p()`. It returns the data
+and the truth: `truth$population` holds the values in `pars`, and
+`truth$subjects` holds each subject's drawn values, both on the link
+scale. The seed makes the draw reproducible and is applied only around
+it, so the global random number state is left alone.
+
+## Fit once, reuse afterwards
+
+```{r fit, eval = FALSE, code = shown("fit", "vignettes/articles/precompute/bmmtools.R")}
+```
+
+`recovery_formula()` gives every free parameter of the model a random
+intercept over `id`, the column `simulate_recovery()` writes.
+`fit_cached()` fits with `bmm::bmm()` and saves the fit next to a key.
+Calling it again with the same arguments reads the fit back instead of
+sampling:
+
+```{r refit, eval = FALSE, code = shown("refit", "vignettes/articles/precompute/bmmtools.R")}
+```
+
+```{r, echo = FALSE}
+res$reused
+```
+
+The key covers the formula, data, model, prior, seed, chains,
+iterations, warmup, thinning, `control`, `init`, the backend and the
+installed versions of bmm, brms and the Stan toolchain. When one of
+them changes, the model is refitted and the message names what changed.
+
+## The convergence gate
+
+```{r convergence, eval = FALSE, code = shown("convergence", "vignettes/articles/precompute/bmmtools.R")}
+```
+
+```{r, echo = FALSE}
+res$convergence
+```
+
+`check_convergence()` returns the worst rhat, the smallest bulk and tail
+effective sample sizes, the divergent transitions and the tree-depth
+hits over all variables, and a verdict under thresholds that are
+arguments: rhat at most 1.05, bulk ESS at least 400 and at most ten
+divergent transitions by default. A fit that fails is still scored, and
+the verdict travels with the estimates as the `converged` column.
+
+## Score the population
+
+```{r recover, eval = FALSE, code = shown("recover", "vignettes/articles/precompute/bmmtools.R")}
+```
+
+```{r, echo = FALSE}
+res$population
+```
+
+`recover()` extracts the posterior median and a 95% equal-tailed
+credible interval per parameter, joins the truth, and scores. Scoring
+is on the natural scale by default: the estimate, its interval and the
+truth are converted with the links the `bmmfit` records, so `kappa` is
+a precision and `thetat` a probability.
+
+With a single fit there is one estimate per parameter, so bias and RMSE
+are that one error, coverage is 0 or 1, and the correlations are `NA`
+because a correlation needs at least three pairs. Population-level
+recovery needs many fits, which is what `recovery_grid()` produces.
+
+## Score the subjects
+
+```{r subjects, eval = FALSE, code = shown("subjects", "vignettes/articles/precompute/bmmtools.R")}
+```
+
+```{r, echo = FALSE}
+summary(res$subjects)
+```
+
+`recover_subjects()` does the same for each subject's estimate, which
+is the population intercept plus the subject's deviation, summed per
+posterior draw. One fit now gives 40 pairs per parameter, so the
+correlations are defined. `summary()` returns one row per parameter;
+[Recovery summary columns](metrics.html) defines every column.
+
+## Plot
+
+```{r plot, eval = FALSE, code = shown("plot", "vignettes/articles/precompute/bmmtools.R")}
+```
+
+```{r, echo = FALSE}
+plot_recovery(res$subjects)
+```
+
+The generating value is on the x axis, the posterior median on the y
+axis, each bar is a credible interval and the line marks equality.
+Panels are per parameter with free scales.
+
+## Checking the priors first
+
+A recovery study fits the model's priors many times, so it is worth
+seeing what they imply for the data before the first fit.
+`prior_check()` samples from the prior only and summarises the
+prior-predictive draws on the scale of the response:
+
+```{r, eval = FALSE}
+checked <- prior_check(model, recovery_formula(model), sim$data, seed = 1)
+summary(checked)
+plot_prior_check(checked)
+```
+
+[Prior predictive checks on the observable scale](prior-check.html)
+covers the summaries, custom statistics and comparing prior sets.
+
+## Which function does what
+
+| Step | Function | Returns |
+| --- | --- | --- |
+| simulate | `simulate_recovery()` | data and truth |
+| formula | `recovery_formula()` | a `bmmformula` with random intercepts |
+| fit | `fit_cached()` | the fit, reused while nothing changed |
+| gate | `check_convergence()` | one row of diagnostics and a verdict |
+| score | `recover()`, `recover_subjects()` | a `bmmtools_recovery` tibble |
+| summarise | `summary()` | one row per parameter (and condition) |
+| plot | `plot_recovery()`, `plot_prior_check()` | a ggplot |
+| loop | `recovery_grid()` | all of the above over a design grid |
+| priors | `prior_check()` | prior-predictive statistics |

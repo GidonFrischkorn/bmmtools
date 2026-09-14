@@ -1,0 +1,144 @@
+---
+title: "Recovery summary columns"
+bibliography: REFERENCES.bib
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>")
+options(width = 90)
+library(bmmtools)
+```
+
+This page defines every column `summary()` returns for a
+`bmmtools_recovery` object: what is computed, over which rows, and when
+the value is `NA`. It describes the computation only.
+
+```{r}
+summary(recovery_mixture2p)[1:4, ]
+```
+
+## Which rows each row summarises
+
+One summary row covers one parameter (`term`) at one `level`, and one
+`condition` when the object comes from `recovery_grid()`. Write
+$\hat\theta_i$ for the estimate in row $i$ (the posterior median),
+$\theta_i$ for the generating value, and $[l_i, u_i]$ for the credible
+interval, all on the scale in the `scale` column.
+
+At the **population** level the rows are the replications, one estimate
+per fit. At the **subject** level the rows are subjects within
+replications; the error metrics use all of them, and the correlation
+metrics are computed within each replication and then combined, as
+described below.
+
+Missing values are dropped pairwise before anything is counted, so `n`
+always reports the pairs a metric used.
+
+## Identification columns
+
+`term`, `level`, `scale`
+: The parameter, `"population"` or `"subject"`, and `"natural"` or
+  `"link"`.
+
+`n`
+: Complete estimate–truth pairs. At subject level, the mean number of
+  subjects per replication.
+
+`n_replications`
+: Distinct replications contributing to the row.
+
+`n_converged`
+: Replications whose fit passed `check_convergence()` with the
+  thresholds in force when the estimates were extracted. `NA`, not 0,
+  when no row carries a verdict, as with a hand-built estimates tibble.
+
+## Error metrics
+
+`bias`
+: The mean signed error, $\frac{1}{n}\sum_i (\hat\theta_i - \theta_i)$.
+
+`rmse`
+: The root mean squared error,
+  $\sqrt{\frac{1}{n}\sum_i (\hat\theta_i - \theta_i)^2}$.
+
+`coverage`
+: The share of intervals containing the generating value,
+  $\frac{1}{n}\sum_i \mathbb{1}[l_i \le \theta_i \le u_i]$. The interval
+  is closed, so a bound equal to the truth counts as covered. Its
+  nominal value is the `ci_level` of the estimates, 0.95 by default.
+
+`ci_width`
+: The mean interval width, $\frac{1}{n}\sum_i (u_i - l_i)$.
+
+These four are `NA` only when no complete pair exists.
+
+## Correlation metrics
+
+`r`, `r_low`, `r_high`
+: The Pearson correlation between estimates and truth with a 95%
+  confidence interval from Fisher's $z$ transformation,
+  $z = \operatorname{atanh}(r)$ with standard error $1/\sqrt{n-3}$,
+  transformed back with $\tanh$. The interval is always 95% and does not
+  follow `ci_level`, which is the mass of the posterior intervals.
+
+`rank_r`
+: The Spearman rank correlation.
+
+`ccc`
+: Lin's concordance correlation coefficient [@linConcordanceCorrelationCoefficient1989],
+  computed with population moments (dividing by $n$):
+  $$\rho_c = \frac{2 s_{\hat\theta\theta}}{s^2_{\hat\theta} + s^2_\theta + (\bar{\hat\theta} - \bar\theta)^2}.$$
+
+`ccc_scale_bias`
+: The ratio of standard deviations, $s_{\hat\theta} / s_\theta$.
+
+`ccc_location_bias`
+: The mean difference relative to the geometric mean of the two
+  standard deviations,
+  $(\bar{\hat\theta} - \bar\theta) / \sqrt{s_{\hat\theta}\, s_\theta}$.
+
+All correlation metrics are `NA`, never 0, when fewer than three
+complete pairs exist or when estimates or truth have no spread. This is
+why population-level correlations are `NA` in a grid whose replications
+share their population values. With exactly three pairs, `r` has a point
+estimate and no interval.
+
+### Subject level: within replication, then combined
+
+At subject level, each replication is correlated on its own. The
+Pearson and Spearman correlations are then combined on Fisher's $z$
+scale with weights $n_k - 3$, where $n_k$ is the number of subjects in
+replication $k$:
+
+$$\bar z = \frac{\sum_k (n_k - 3)\, z_k}{\sum_k (n_k - 3)}, \qquad \operatorname{SE}(\bar z) = \frac{1}{\sqrt{\sum_k (n_k - 3)}}.$$
+
+`r` is $\tanh(\bar z)$ and its interval is $\tanh(\bar z \pm 1.96\,
+\operatorname{SE})$. With one replication this is the ordinary Fisher
+interval. `rank_r` is combined the same way, without an interval.
+`ccc` and its two components are averaged across replications as they
+are, since they are not correlations on the $z$ scale.
+
+## The scale
+
+`recover()` and `recover_subjects()` score on the natural scale by
+default: estimates, interval bounds and truth are converted with
+`inverse_link()` before any metric is computed, and `scale = "link"`
+skips the conversion. Coverage does not depend on the choice, because
+a monotone transformation keeps a value inside its interval, but bias,
+RMSE, interval width and the correlations do.
+
+Two links need care at zero. Under the `sqrt` link, an interval that
+spans zero on the link scale becomes $[0, \max(l^2, u^2)]$. Under the
+`inverse` link, an interval that spans zero has no image on the natural
+scale, so its bounds and `covered` are `NA` and a warning names the
+term.
+
+## Column names
+
+The first nine columns of a recovery object (`term`, `estimate`,
+`ci_low`, `ci_high`, `ci_method`, `ci_level`, `rhat`, `ess_bulk`,
+`ess_tail`) follow the column contract of the
+[apabayes](https://github.com/GidonFrischkorn/apabayes) package, so
+recovery tables can be formatted there without renaming.
+
+## References

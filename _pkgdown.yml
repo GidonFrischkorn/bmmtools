@@ -1,0 +1,93 @@
+url: https://gidonfrischkorn.github.io/bmmtools/
+
+template:
+  bootstrap: 5
+  math-rendering: mathjax
+
+development:
+  mode: auto
+
+home:
+  links:
+  - text: The bmm package
+    href: https://venpopov.com/bmm/
+  - text: SBC, simulation-based calibration
+    href: https://hyunjimoon.github.io/SBC/
+
+navbar:
+  structure:
+    left: [intro, reference, articles, news]
+    right: [search, github]
+
+reference:
+- title: About bmmtools
+  contents:
+  - bmmtools-package
+
+- title: Simulate
+  desc: Data sets and the truth that produced them.
+  contents:
+  - simulate_recovery
+  - recovery_formula
+
+- title: Fit and run a study
+  desc: Cached fitting, the convergence gate and the design grid.
+  contents:
+  - fit_cached
+  - check_convergence
+  - recovery_grid
+
+- title: Score recovery
+  desc: Estimates against generating values, per fit and per parameter.
+  contents:
+  - recover
+  - summary.bmmtools_recovery
+  - extract_estimates
+  - inverse_link
+
+- title: Prior predictive checks
+  desc: What the priors imply on the observable scale.
+  contents:
+  - prior_check
+  - summary.bmmtools_prior_check
+
+- title: Plot
+  contents:
+  - plot_recovery
+  - plot_prior_check
+
+- title: Example objects
+  desc: Precomputed results, so examples run without Stan.
+  contents:
+  - recovery_mixture2p
+  - prior_check_sdt_yn
+
+- title: Object methods
+  desc: Printing, subsetting and dplyr support for the result classes.
+  contents:
+  - starts_with("format.")
+  - '`[.bmmtools_recovery`'
+  - '`[.bmmtools_prior_check`'
+  - starts_with("dplyr_reconstruct.")
+
+articles:
+- title: Start here
+  navbar: ~
+  contents:
+  - articles/bmmtools
+
+- title: Running studies
+  navbar: Running studies
+  contents:
+  - articles/recovery-grid
+  - articles/prior-check
+
+- title: For model developers
+  navbar: For model developers
+  contents:
+  - articles/own-model
+
+- title: Reference
+  navbar: Reference
+  contents:
+  - articles/metrics

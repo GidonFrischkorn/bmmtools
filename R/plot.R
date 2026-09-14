@@ -57,12 +57,17 @@ check_plot_column <- function(x, column, arg, call = rlang::caller_env()) {
 #'
 #' @return A `ggplot` object.
 #'
-#' @examples
-#' \dontrun{
-#' recovery <- recover(fits, truth)
-#' plot_recovery(recovery)
-#' plot_recovery(recovery, facet_by = NULL, color_by = "term")
-#' }
+#' @examplesIf rlang::is_installed("ggplot2")
+#' # subject-level recovery in one cell of the example grid
+#' cell <- dplyr::filter(
+#'   recovery_mixture2p,
+#'   level == "subject", condition == "row-4"
+#' )
+#' plot_recovery(cell)
+#'
+#' # population-level estimates, coloured by design cell
+#' population <- dplyr::filter(recovery_mixture2p, level == "population")
+#' plot_recovery(population, color_by = "condition")
 #'
 #' @export
 plot_recovery <- function(x,
@@ -200,12 +205,9 @@ prior_observed <- function(x) {
 #'
 #' @return A `ggplot` object.
 #'
-#' @examples
-#' \dontrun{
-#' checked <- prior_check(model, formula, data)
-#' plot_prior_check(checked)
-#' plot_prior_check(checked, type = "statistic")
-#' }
+#' @examplesIf rlang::is_installed("ggplot2")
+#' plot_prior_check(prior_check_sdt_yn, type = "histogram")
+#' plot_prior_check(prior_check_sdt_yn, type = "statistic")
 #'
 #' @export
 plot_prior_check <- function(x,

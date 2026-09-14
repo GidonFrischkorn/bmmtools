@@ -1,0 +1,176 @@
+---
+title: "Prior predictive checks on the observable scale"
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 7,
+  fig.height = 3.5,
+  out.width = "100%"
+)
+options(width = 90)
+# paths relative to the package root, whether this renders from the
+# package root (pkgdown) or from vignettes/articles
+from_root <- function(path) {
+  if (dir.exists("vignettes")) path else file.path("..", "..", path)
+}
+# the code shown is read from the script that produced the results
+shown <- function(label, file) {
+  lines <- readLines(from_root(file))
+  markers <- grep("^## ---- ", lines)
+  start <- markers[lines[markers] == paste("## ----", label)]
+  end <- c(markers[markers > start], length(lines) + 1L)[[1L]] - 1L
+  code <- lines[(start + 1L):end]
+  while (length(code) > 0L && !nzchar(trimws(code[[length(code)]]))) {
+    code <- code[-length(code)]
+  }
+  code
+}
+library(bmmtools)
+res <- readRDS(from_root("vignettes/articles/assets/prior-check.rds"))
+pct <- function(set, statistic) {
+  x <- prior_check_sdt_yn
+  value <- x$value[x$prior == set & x$statistic == statistic]
+  sprintf("%.1f%%", 100 * value)
+}
+```
+
+Priors of cognitive measurement models are set on the link scale, and
+what a `normal(0, 1)` there means for the data is rarely obvious.
+`prior_check()` answers that directly: it fits the model with
+`sample_prior = "only"`, draws from the prior predictive distribution
+and summarises the draws on the scale of the response. Because the
+draws come from bmm's own fit, the prior being checked is exactly the
+prior bmm fits with, defaults included.
+
+The fits go through `fit_cached()`, so each prior set compiles and
+samples once and later calls reuse it. Two checks are shown below: a
+signal detection model, whose count response has a floor and a ceiling,
+and a mixture model with a statistic of our own.
+
+## A count response: sdt_yn
+
+The first example is the check behind `prior_check_sdt_yn`, the prior
+check that ships with the package. It compares bmm's default priors with
+a set that narrows the priors on the between-subject SDs:
+
+```{r prior-check, eval = FALSE, code = shown("prior-check", "data-raw/example-objects.R")}
+```
+
+`prior` is either one prior (or `NULL` for bmm's defaults) or a **named
+list** of prior sets. Each set is fitted separately, its fit cached at
+`<file>-<set>`, and becomes one level of the `prior` column.
+
+```{r}
+prior_check_sdt_yn
+```
+
+The default summary has five statistics per response:
+
+- `floor_rate` and `ceiling_rate`: the share of all prior-predictive
+  values, over draws and observations, at or below the floor and at or
+  above the ceiling of the response;
+- `q50`, `q90` and `q95`: quantiles of the prior-predictive values.
+
+For `sdt_yn` and `sdt_mafc` the floor is 0 and the ceiling is the trial
+count of each row, read from the model's `n_trials` column. With
+exactly two prior sets, `summary()` adds a `difference` column, the
+second set minus the first. Here, `r pct("default", "floor_rate")` of
+the prior-predictive counts under bmm's defaults are at 0 and
+`r pct("default", "ceiling_rate")` at the ceiling; with the narrower SD
+priors the shares are `r pct("narrow_sd", "floor_rate")` and
+`r pct("narrow_sd", "ceiling_rate")`.
+
+```{r}
+summary(prior_check_sdt_yn)
+```
+
+For a discrete response, plot the draws as histograms:
+
+```{r}
+plot_prior_check(prior_check_sdt_yn, type = "histogram")
+```
+
+`type = "statistic"` plots the summary table instead, one point per
+statistic and prior set:
+
+```{r}
+plot_prior_check(prior_check_sdt_yn, type = "statistic")
+```
+
+## A continuous response and a statistic of your own
+
+For a continuous response, a value exactly at a bound has probability
+zero, so the two rates are only informative for counts. For the
+circular models `mixture2p` and `sdm` the range is set to `-pi` and
+`pi`, and the rates report mass outside it. The quantiles of a signed
+circular error are symmetric about zero, so a statistic on the absolute
+error says more. `summary` takes any function of `yrep`, the matrix of
+prior-predictive draws (draws in rows, observations in columns), and
+`data`, and returns a data frame with the columns `statistic` and
+`value`, plus `response` for a model with several responses:
+
+```{r mixture-check, eval = FALSE, code = shown("mixture-check", "vignettes/articles/precompute/prior-check.R")}
+```
+
+```{r, echo = FALSE}
+summary(res$mix_check)
+```
+
+The default plot draws one thin density line per prior-predictive draw,
+so the spread between draws stays visible, with the observed response
+from `data` on top:
+
+```{r mixture-plot, eval = FALSE, code = shown("mixture-plot", "vignettes/articles/precompute/prior-check.R")}
+```
+
+```{r, echo = FALSE}
+plot_prior_check(res$mix_check, draws = 30)
+```
+
+`observed = FALSE` removes the overlay. It is left out without comment
+when `data` has no response column, for example when the check runs
+over a design skeleton rather than simulated or real data.
+
+## Arguments worth knowing
+
+`range`
+: The floor and the ceiling of the response as two numbers. `NULL`
+  derives them for `sdt_yn`, `sdt_mafc`, `mixture2p` and `sdm`; for any
+  other model the two rates are `NA` and a message says so.
+
+`n_draws`
+: Prior-predictive draws kept per prior set. Asking for more than the
+  fit holds is capped with a message rather than refused.
+
+`seed`
+: Passed to the fitter, where it enters the cache key, and used around
+  the draw subsample, so the same seed keeps the same draws.
+
+`file`
+: Where the prior-only fits are cached. `NULL` uses a temporary file, so
+  the compiled model is reused within the session and nothing is left
+  on disk.
+
+`...`
+: Passed to `fit_cached()` and on to `bmm::bmm()`: `chains`, `iter`,
+  `backend`, `cores`. Giving `sample_prior` is an error, because the
+  check sets it.
+
+A population-level slope without a proper prior triggers a warning
+before fitting, because prior-only sampling has nothing to draw a flat
+prior from. bmm's defaults cover the intercepts and the group-level
+SDs, so the warning concerns slopes you added to the formula.
+
+## What the object carries
+
+Besides the summary rows, a `bmmtools_prior_check` keeps the draws, the
+`brms::prior_summary()` of each fit, the data, the model, the formula
+and the cache files as attributes. The prior summary records the prior
+that produced the draws, which is the one to report:
+
+```{r}
+attr(prior_check_sdt_yn, "priors")$narrow_sd
+```

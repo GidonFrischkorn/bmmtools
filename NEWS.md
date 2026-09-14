@@ -1,5 +1,17 @@
 # bmmtools 0.0.0.9000
 
+* A package website, <https://gidonfrischkorn.github.io/bmmtools/>, with
+  five articles: validating a new model end to end, running a recovery
+  grid, prior predictive checks, validating a model without a built-in
+  adapter, and the definitions of the recovery summary columns. The
+  articles render from saved results, so the site builds without Stan.
+* Two example objects ship with the package so that `summary()`,
+  `plot_recovery()` and `plot_prior_check()` can be tried without
+  compiling a model: `recovery_mixture2p`, a 2 × 2 grid with five
+  replications, and `prior_check_sdt_yn`, comparing bmm's default priors
+  with narrower between-subject SD priors. The reference examples now
+  run on them.
+
 * `prior_check()` shows what your priors say the data should look like.
   The draws come from `bmm(sample_prior = "only")` through
   `fit_cached()`, so the prior being checked is exactly the prior bmm

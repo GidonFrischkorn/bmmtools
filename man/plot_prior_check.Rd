@@ -44,10 +44,8 @@ misleading; \code{"statistic"} plots the summary table instead of the
 distribution.
 }
 \examples{
-\dontrun{
-checked <- prior_check(model, formula, data)
-plot_prior_check(checked)
-plot_prior_check(checked, type = "statistic")
-}
-
+\dontshow{if (rlang::is_installed("ggplot2")) withAutoprint(\{ # examplesIf}
+plot_prior_check(prior_check_sdt_yn, type = "histogram")
+plot_prior_check(prior_check_sdt_yn, type = "statistic")
+\dontshow{\}) # examplesIf}
 }

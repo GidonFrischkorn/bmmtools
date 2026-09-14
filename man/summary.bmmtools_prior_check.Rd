@@ -24,3 +24,7 @@ the first. Read it as an equivalence table: two priors are equivalent
 on the observable scale where the differences are negligible. With three or
 more sets there is no unambiguous contrast, so none is added.
 }
+\examples{
+summary(prior_check_sdt_yn)
+
+}
