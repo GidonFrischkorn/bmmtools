@@ -350,8 +350,21 @@ test_that("summary metrics equal the metric functions on the same columns", {
 
   ccc <- metric_ccc(rec$estimate, rec$true_value)
   expect_equal(out$ccc, ccc$ccc)
-  expect_equal(out$ccc_scale_bias, ccc$scale_bias)
-  expect_equal(out$ccc_location_bias, ccc$location_bias)
+  expect_equal(out$ccc_scale_shift, ccc$scale_shift)
+  expect_equal(out$ccc_location_shift, ccc$location_shift)
+  expect_equal(out$ccc_low, ccc$ccc_low)
+  expect_equal(out$ccc_high, ccc$ccc_high)
+  expect_equal(out$ccc_accuracy, ccc$accuracy)
+  expect_equal(out$calibration_slope, ccc$calibration_slope)
+  expect_equal(out$truth_sd, ccc$truth_sd)
+})
+
+test_that("an empty summary has the contract names", {
+  estimates <- fake_estimates("a", estimate = 1)
+  truth <- fake_truth("a", true_value = 1)
+  empty <- recover(estimates, truth, scale = "link")[0, ]
+  expect_named(summary(empty), recovery_summary_columns())
+  expect_named(empty_recovery_summary(), recovery_summary_columns())
 })
 
 test_that("n_converged is NA when no fit carried a convergence flag", {
@@ -521,6 +534,111 @@ test_that("pooling and Fisher-z averaging differ when they must", {
   out <- summary(recover_subjects(estimates, truth, scale = "link"))
   expect_equal(out$r, 1)
   expect_equal(out$n_replications, 2L)
+})
+
+# subject-level concordance --------------------------------------------
+
+# One term, replications with the given subject counts; the estimates
+# shrink and shift by a different amount in each replication so the
+# pooled components are not trivially equal to any one of them.
+subject_ccc_case <- function(n_per_rep, seed = 31) {
+  withr::local_seed(seed)
+  estimates <- list()
+  truth <- list()
+  for (rep in seq_along(n_per_rep)) {
+    n <- n_per_rep[[rep]]
+    ids <- as.character(seq_len(n))
+    true_value <- stats::rnorm(n, sd = 1 + rep / 4)
+    estimate <- true_value * (0.5 + rep / 5) + rep / 10 +
+      stats::rnorm(n, sd = 0.5)
+    estimates[[rep]] <- fake_estimates(rep("p", n),
+      estimate = estimate,
+      level = "subject", id = ids, replication = rep
+    )
+    truth[[rep]] <- tibble::tibble(
+      id = ids, term = "p", true_value = true_value, replication = rep
+    )
+  }
+  recover_subjects(
+    dplyr::bind_rows(estimates), dplyr::bind_rows(truth),
+    scale = "link"
+  )
+}
+
+per_replication_ccc <- function(rec) {
+  lapply(split(rec, rec$replication), function(sub) {
+    recovery_ccc(sub$estimate, sub$true_value)
+  })
+}
+
+test_that("one replication at subject level equals recovery_ccc()", {
+  rec <- subject_ccc_case(25L)
+  out <- summary(rec)
+  oracle <- recovery_ccc(rec$estimate, rec$true_value)
+  for (column in c(
+    "ccc", "ccc_low", "ccc_high", "ccc_accuracy", "ccc_scale_shift",
+    "ccc_location_shift", "calibration_slope"
+  )) {
+    expect_equal(out[[column]], oracle[[column]], tolerance = 1e-10)
+  }
+})
+
+test_that("subject-level ccc is pooled on Z with inverse-variance weights", {
+  # The oracle recovers each replication's standard error from its
+  # public interval rather than from a copy of Lin's variance.
+  rec <- subject_ccc_case(c(20L, 35L))
+  out <- summary(rec)
+  per <- per_replication_ccc(rec)
+
+  crit <- stats::qnorm(0.975)
+  z <- vapply(per, function(p) atanh(p$ccc), 0)
+  se <- vapply(per, function(p) (atanh(p$ccc_high) - atanh(p$ccc)) / crit, 0)
+  w <- 1 / se^2
+  z_bar <- sum(w * z) / sum(w)
+
+  expect_equal(out$ccc, tanh(z_bar), tolerance = 1e-8)
+  expect_equal(out$ccc_low, tanh(z_bar - crit / sqrt(sum(w))),
+    tolerance = 1e-8
+  )
+  expect_equal(out$ccc_high, tanh(z_bar + crit / sqrt(sum(w))),
+    tolerance = 1e-8
+  )
+  # and it is not the plain mean the first version reported
+  expect_false(isTRUE(all.equal(
+    out$ccc, mean(vapply(per, function(p) p$ccc, 0))
+  )))
+})
+
+test_that("subject-level components combine by their own rules", {
+  rec <- subject_ccc_case(c(20L, 35L, 28L))
+  out <- summary(rec)
+  per <- per_replication_ccc(rec)
+  pull <- function(name) vapply(per, function(p) p[[name]], 0)
+  truth_sd <- vapply(split(rec, rec$replication), function(sub) {
+    sqrt(mean((sub$true_value - mean(sub$true_value))^2))
+  }, 0)
+
+  expect_equal(out$ccc_scale_shift, exp(mean(log(pull("ccc_scale_shift")))))
+  expect_equal(
+    out$calibration_slope, exp(mean(log(pull("calibration_slope"))))
+  )
+  expect_equal(out$ccc_location_shift, mean(pull("ccc_location_shift")))
+  expect_equal(out$ccc_accuracy, mean(pull("ccc_accuracy")))
+  expect_equal(out$truth_sd, sqrt(mean(truth_sd^2)))
+})
+
+test_that("a replication without a Z variance drops the pooled interval", {
+  # All or nothing: the replication with three subjects has a ccc but no
+  # variance, so the point estimate is the unweighted Z mean and the
+  # interval is NA rather than an interval that silently ignores it.
+  rec <- subject_ccc_case(c(20L, 3L))
+  out <- summary(rec)
+  per <- per_replication_ccc(rec)
+  z <- vapply(per, function(p) atanh(p$ccc), 0)
+
+  expect_equal(out$ccc, tanh(mean(z)), tolerance = 1e-10)
+  expect_true(is.na(out$ccc_low))
+  expect_true(is.na(out$ccc_high))
 })
 
 test_that("subject-level coverage lies in the unit interval", {

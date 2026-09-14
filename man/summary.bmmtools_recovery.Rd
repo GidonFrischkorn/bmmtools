@@ -19,12 +19,18 @@
 A \code{bmmtools_recovery_summary} tibble with the columns \code{term},
 \code{level}, \code{scale}, \code{n}, \code{n_replications}, \code{n_converged}, \code{bias},
 \code{rmse}, \code{coverage}, \code{ci_width}, \code{r}, \code{r_low}, \code{r_high}, \code{rank_r},
-\code{ccc}, \code{ccc_scale_bias} and \code{ccc_location_bias}.
+\code{ccc}, \code{ccc_low}, \code{ccc_high}, \code{ccc_accuracy}, \code{ccc_scale_shift},
+\code{ccc_location_shift}, \code{calibration_slope} and \code{truth_sd}, the
+standard deviation of the generating values. \code{r} and \code{ccc} both grow
+with \code{truth_sd} at a fixed measurement error, so compare them only
+at a similar spread.
 }
 \description{
 One row per parameter and level, with these recovery metrics: bias,
-RMSE, coverage, mean interval width, the Pearson correlation with a Fisher-z interval, the Spearman
-correlation and Lin's concordance with its two components.
+RMSE, coverage, mean interval width, the Pearson correlation with a
+Fisher-z interval, the Spearman correlation, and Lin's concordance
+with its interval, its decomposition and a calibration slope (see
+\code{\link[=recovery_ccc]{recovery_ccc()}} for how to read them).
 }
 \details{
 Correlation metrics are \code{NA}, never \code{0}, when fewer than three
@@ -35,8 +41,15 @@ interval and does not follow \code{ci_level}, which is the mass of the
 posterior interval and a different quantity.
 
 Subject-level objects are summarised \strong{within replication and then
-combined} on Fisher's z scale. Pooling subjects across replications
-would mix between-subject with between-replication variance.
+combined}. Pooling subjects across replications would mix
+between-subject with between-replication variance. \code{r} and \code{rank_r}
+are combined on Fisher's z scale with weights \code{n - 3}; \code{ccc} on Lin's
+Z scale with weights from his asymptotic variance, and without an
+interval if any replication has no variance (three subjects, or a
+coefficient of exactly 0 or 1); \code{ccc_scale_shift} and
+\code{calibration_slope} as geometric means; \code{ccc_accuracy} and
+\code{ccc_location_shift} as means; \code{truth_sd} as the root mean variance.
+At this level \code{ccc = r * ccc_accuracy} holds only approximately.
 
 \code{n_converged} is the number of replications whose fit passed
 \code{\link[=check_convergence]{check_convergence()}}, read from the \code{converged} column that

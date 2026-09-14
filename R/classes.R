@@ -67,7 +67,8 @@ recovery_summary_columns <- function() {
     "term", "level", "scale", "n", "n_replications", "n_converged",
     "bias", "rmse", "coverage", "ci_width",
     "r", "r_low", "r_high", "rank_r",
-    "ccc", "ccc_scale_bias", "ccc_location_bias"
+    "ccc", "ccc_low", "ccc_high", "ccc_accuracy", "ccc_scale_shift",
+    "ccc_location_shift", "calibration_slope", "truth_sd"
   )
 }
 
@@ -270,6 +271,46 @@ fisher_z_combine <- function(r, n, ci_level = 0.95) {
   out
 }
 
+#' Combine concordance coefficients across replications on Lin's Z scale
+#'
+#' Each replication's `atanh(ccc)` is weighted by the inverse of Lin's
+#' asymptotic variance (Lin, 1989, p. 259), which depends on `r` and the
+#' location shift as well as on `n`, so `fisher_z_combine()`'s `n - 3`
+#' weights would be wrong for it.
+#'
+#' All or nothing: a replication with a coefficient but no variance
+#' (three subjects, `ccc` of exactly 0 or +/-1) is not given weight 0,
+#' because those are exactly the extreme values and dropping them biases
+#' the pooled value. The point estimate is then the unweighted Z mean
+#' and there is no interval.
+#'
+#' @noRd
+ccc_z_combine <- function(ccc, var_z, ci_level = 0.95) {
+  out <- list(ccc = NA_real_, ccc_low = NA_real_, ccc_high = NA_real_)
+  keep <- !is.na(ccc)
+  if (!any(keep)) {
+    return(out)
+  }
+  z <- atanh(ccc[keep])
+  var_z <- var_z[keep]
+
+  if (anyNA(var_z)) {
+    out$ccc <- tanh_or_na(mean(z))
+    return(out)
+  }
+
+  # every kept replication has a variance, so none has ccc = +/-1 and
+  # z_bar is finite
+  w <- 1 / var_z
+  z_bar <- sum(w * z) / sum(w)
+  out$ccc <- tanh(z_bar)
+  crit <- stats::qnorm(1 - (1 - ci_level) / 2)
+  se <- 1 / sqrt(sum(w))
+  out$ccc_low <- tanh(z_bar - crit * se)
+  out$ccc_high <- tanh(z_bar + crit * se)
+  out
+}
+
 #' Replications whose fit passed the convergence gate
 #'
 #' `NA` when no row carries a verdict, never `0`: an unknown is not a
@@ -288,6 +329,18 @@ count_converged <- function(rows) {
 mean_or_na <- function(x) {
   x <- x[!is.na(x)]
   if (length(x) == 0L) NA_real_ else mean(x)
+}
+
+#' Geometric mean of the values that are not missing
+#'
+#' For ratios, where `v` and `1/v` are equal departures from 1. `NA` when
+#' nothing remains or any value is not positive: a negative calibration
+#' slope has no geometric mean, and a plain mean would hide the sign.
+#'
+#' @noRd
+geomean_or_na <- function(x) {
+  x <- x[!is.na(x)]
+  if (length(x) == 0L || any(x <= 0)) NA_real_ else exp(mean(log(x)))
 }
 
 #' Metrics that do not depend on how rows are grouped
@@ -318,8 +371,13 @@ summarise_population <- function(rows) {
       r_high = r$r_high,
       rank_r = metric_rank_r(rows$estimate, rows$true_value),
       ccc = ccc$ccc,
-      ccc_scale_bias = ccc$scale_bias,
-      ccc_location_bias = ccc$location_bias
+      ccc_low = ccc$ccc_low,
+      ccc_high = ccc$ccc_high,
+      ccc_accuracy = ccc$accuracy,
+      ccc_scale_shift = ccc$scale_shift,
+      ccc_location_shift = ccc$location_shift,
+      calibration_slope = ccc$calibration_slope,
+      truth_sd = ccc$truth_sd
     )
   )
 }
@@ -335,8 +393,12 @@ summarise_subject <- function(rows) {
       n = r$n,
       rank_r = metric_rank_r(sub$estimate, sub$true_value),
       ccc = ccc$ccc,
-      ccc_scale_bias = ccc$scale_bias,
-      ccc_location_bias = ccc$location_bias
+      var_z = ccc$var_z,
+      ccc_accuracy = ccc$accuracy,
+      ccc_scale_shift = ccc$scale_shift,
+      ccc_location_shift = ccc$location_shift,
+      calibration_slope = ccc$calibration_slope,
+      truth_sd = ccc$truth_sd
     )
   })
   pull <- function(name) vapply(per, function(p) as.double(p[[name]]), 0)
@@ -344,6 +406,7 @@ summarise_subject <- function(rows) {
   n <- pull("n")
   combined <- fisher_z_combine(pull("r"), n)
   ranks <- fisher_z_combine(pull("rank_r"), n)
+  concordance <- ccc_z_combine(pull("ccc"), pull("var_z"))
 
   c(
     list(
@@ -358,11 +421,17 @@ summarise_subject <- function(rows) {
       r_low = combined$r_low,
       r_high = combined$r_high,
       rank_r = ranks$r,
-      # concordance is not a correlation on Fisher's z scale, so the
-      # within-replication values are averaged as they are
-      ccc = mean_or_na(pull("ccc")),
-      ccc_scale_bias = mean_or_na(pull("ccc_scale_bias")),
-      ccc_location_bias = mean_or_na(pull("ccc_location_bias"))
+      # Lin's Z, weighted by the inverse of his asymptotic variance;
+      # the ratios combine on the log scale, where v and 1/v are
+      # equally far from 1
+      ccc = concordance$ccc,
+      ccc_low = concordance$ccc_low,
+      ccc_high = concordance$ccc_high,
+      ccc_accuracy = mean_or_na(pull("ccc_accuracy")),
+      ccc_scale_shift = geomean_or_na(pull("ccc_scale_shift")),
+      ccc_location_shift = mean_or_na(pull("ccc_location_shift")),
+      calibration_slope = geomean_or_na(pull("calibration_slope")),
+      truth_sd = sqrt(mean_or_na(pull("truth_sd")^2))
     )
   )
 }
@@ -370,8 +439,10 @@ summarise_subject <- function(rows) {
 #' Summarise a recovery object into per-parameter metrics
 #'
 #' One row per parameter and level, with these recovery metrics: bias,
-#' RMSE, coverage, mean interval width, the Pearson correlation with a Fisher-z interval, the Spearman
-#' correlation and Lin's concordance with its two components.
+#' RMSE, coverage, mean interval width, the Pearson correlation with a
+#' Fisher-z interval, the Spearman correlation, and Lin's concordance
+#' with its interval, its decomposition and a calibration slope (see
+#' [recovery_ccc()] for how to read them).
 #'
 #' Correlation metrics are `NA`, never `0`, when fewer than three
 #' complete pairs are available or when either side has no spread: `0`
@@ -381,8 +452,15 @@ summarise_subject <- function(rows) {
 #' posterior interval and a different quantity.
 #'
 #' Subject-level objects are summarised **within replication and then
-#' combined** on Fisher's z scale. Pooling subjects across replications
-#' would mix between-subject with between-replication variance.
+#' combined**. Pooling subjects across replications would mix
+#' between-subject with between-replication variance. `r` and `rank_r`
+#' are combined on Fisher's z scale with weights `n - 3`; `ccc` on Lin's
+#' Z scale with weights from his asymptotic variance, and without an
+#' interval if any replication has no variance (three subjects, or a
+#' coefficient of exactly 0 or 1); `ccc_scale_shift` and
+#' `calibration_slope` as geometric means; `ccc_accuracy` and
+#' `ccc_location_shift` as means; `truth_sd` as the root mean variance.
+#' At this level `ccc = r * ccc_accuracy` holds only approximately.
 #'
 #' @param object A `bmmtools_recovery` object from [recover()] or
 #'   [recover_subjects()].
@@ -391,7 +469,11 @@ summarise_subject <- function(rows) {
 #' @return A `bmmtools_recovery_summary` tibble with the columns `term`,
 #'   `level`, `scale`, `n`, `n_replications`, `n_converged`, `bias`,
 #'   `rmse`, `coverage`, `ci_width`, `r`, `r_low`, `r_high`, `rank_r`,
-#'   `ccc`, `ccc_scale_bias` and `ccc_location_bias`.
+#'   `ccc`, `ccc_low`, `ccc_high`, `ccc_accuracy`, `ccc_scale_shift`,
+#'   `ccc_location_shift`, `calibration_slope` and `truth_sd`, the
+#'   standard deviation of the generating values. `r` and `ccc` both grow
+#'   with `truth_sd` at a fixed measurement error, so compare them only
+#'   at a similar spread.
 #'
 #' @details
 #' `n_converged` is the number of replications whose fit passed
@@ -452,7 +534,9 @@ empty_recovery_summary <- function() {
     bias = "double", rmse = "double", coverage = "double",
     ci_width = "double", r = "double", r_low = "double",
     r_high = "double", rank_r = "double", ccc = "double",
-    ccc_scale_bias = "double", ccc_location_bias = "double"
+    ccc_low = "double", ccc_high = "double", ccc_accuracy = "double",
+    ccc_scale_shift = "double", ccc_location_shift = "double",
+    calibration_slope = "double", truth_sd = "double"
   )
   tibble::as_tibble(lapply(types, function(type) vector(type, 0L)))
 }

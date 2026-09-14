@@ -11,6 +11,7 @@ plot_recovery(
   intervals = TRUE,
   identity_line = TRUE,
   scales = "free",
+  annotate = FALSE,
   ...
 )
 }
@@ -31,6 +32,11 @@ generating value.}
 
 \item{scales}{Passed to \code{\link[ggplot2:facet_wrap]{ggplot2::facet_wrap()}}. \code{"free"} by default,
 for the same reason \code{facet_by} is.}
+
+\item{annotate}{Label each panel with the Pearson correlation and
+Lin's concordance from \link[=summary.bmmtools_recovery]{summary()} of
+the rows in that panel. Each panel must then hold a single term,
+level and condition; filter the object first if it does not.}
 
 \item{...}{Not used.}
 }
@@ -53,6 +59,7 @@ cell <- dplyr::filter(
   level == "subject", condition == "row-4"
 )
 plot_recovery(cell)
+plot_recovery(cell, annotate = TRUE)
 
 # population-level estimates, coloured by design cell
 population <- dplyr::filter(recovery_mixture2p, level == "population")

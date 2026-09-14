@@ -42,6 +42,7 @@ reference:
   contents:
   - recover
   - summary.bmmtools_recovery
+  - recovery_ccc
   - extract_estimates
   - inverse_link
 

@@ -33,6 +33,70 @@ check_plot_column <- function(x, column, arg, call = rlang::caller_env()) {
   invisible(NULL)
 }
 
+#' Format a metric for a plot label: two decimals, no leading zero
+#' @noRd
+format_metric <- function(x) {
+  if (is.na(x)) {
+    return("NA")
+  }
+  # a negative value that rounds to zero would print as "-.00"
+  if (round(x, 2L) == 0) x <- 0
+  sub("^(-?)0\\.", "\\1.", sprintf("%.2f", x))
+}
+
+#' One label per panel, from summary() of that panel's rows
+#'
+#' Each panel must correspond to exactly one summary row; otherwise the
+#' label would show a number for a group the panel does not isolate.
+#'
+#' @noRd
+recovery_panel_labels <- function(x, facet_by, call = rlang::caller_env()) {
+  # facet_wrap() draws NA as a panel of its own, so NA is kept as a group
+  groups <- if (is.null(facet_by)) {
+    list(seq_len(nrow(x)))
+  } else {
+    # split(drop = TRUE) would also drop a level that is entirely NA
+    by_value <- split(
+      seq_len(nrow(x)),
+      addNA(factor(x[[facet_by]]), ifany = TRUE)
+    )
+    by_value[lengths(by_value) > 0L]
+  }
+  labels <- lapply(groups, function(rows) {
+    piece <- x[rows, ]
+    summarised <- summary(piece)
+    if (nrow(summarised) != 1L) {
+      problem <- if (is.null(facet_by)) {
+        "The plot mixes terms, levels or conditions."
+      } else {
+        cli::format_inline(
+          "Panel {.val {piece[[facet_by]][[1L]]}} mixes levels or conditions."
+        )
+      }
+      cli::cli_abort(
+        c(
+          "Cannot annotate a panel that holds {nrow(summarised)} summary rows.",
+          x = problem,
+          i = "Use {.fn dplyr::filter} on {.field level} or \\
+               {.field condition} first, or facet by another column."
+        ),
+        call = call
+      )
+    }
+    out <- tibble::tibble(
+      label = paste0(
+        # the leading spaces inset both lines by the same amount; a
+        # fractional hjust would shift each line by its own width
+        " r = ", format_metric(summarised$r), "\n",
+        " CCC = ", format_metric(summarised$ccc)
+      )
+    )
+    if (!is.null(facet_by)) out[[facet_by]] <- piece[[facet_by]][[1L]]
+    out
+  })
+  dplyr::bind_rows(labels)
+}
+
 #' Plot recovered estimates against their generating values
 #'
 #' The picture a recovery table is read through: the generating value on
@@ -53,6 +117,10 @@ check_plot_column <- function(x, column, arg, call = rlang::caller_env()) {
 #'   generating value.
 #' @param scales Passed to [ggplot2::facet_wrap()]. `"free"` by default,
 #'   for the same reason `facet_by` is.
+#' @param annotate Label each panel with the Pearson correlation and
+#'   Lin's concordance from [summary()][summary.bmmtools_recovery()] of
+#'   the rows in that panel. Each panel must then hold a single term,
+#'   level and condition; filter the object first if it does not.
 #' @param ... Not used.
 #'
 #' @return A `ggplot` object.
@@ -64,6 +132,7 @@ check_plot_column <- function(x, column, arg, call = rlang::caller_env()) {
 #'   level == "subject", condition == "row-4"
 #' )
 #' plot_recovery(cell)
+#' plot_recovery(cell, annotate = TRUE)
 #'
 #' # population-level estimates, coloured by design cell
 #' population <- dplyr::filter(recovery_mixture2p, level == "population")
@@ -76,6 +145,7 @@ plot_recovery <- function(x,
                           intervals = TRUE,
                           identity_line = TRUE,
                           scales = "free",
+                          annotate = FALSE,
                           ...) {
   rlang::check_dots_empty()
   rlang::check_installed("ggplot2", "to plot a recovery object.")
@@ -89,6 +159,12 @@ plot_recovery <- function(x,
   check_recovery_contract(x)
   check_plot_column(x, facet_by, "facet_by")
   check_plot_column(x, color_by, "color_by")
+  if (!rlang::is_bool(annotate)) {
+    cli::cli_abort(
+      "{.arg annotate} must be {.code TRUE} or {.code FALSE}, \\
+       not {.obj_type_friendly {annotate}}."
+    )
+  }
 
   scale <- attr(x, "scale")
   if (is.null(scale)) scale <- unique(x$scale)
@@ -117,6 +193,15 @@ plot_recovery <- function(x,
     )
   }
   p <- p + ggplot2::geom_point()
+
+  if (annotate) {
+    p <- p + ggplot2::geom_text(
+      data = recovery_panel_labels(x, facet_by),
+      mapping = ggplot2::aes(label = .data$label),
+      x = -Inf, y = Inf, hjust = 0, vjust = 1.2,
+      size = 3.2, lineheight = 0.9, inherit.aes = FALSE
+    )
+  }
 
   if (!is.null(facet_by)) {
     p <- p + ggplot2::facet_wrap(facet_by, scales = scales)
@@ -264,7 +349,8 @@ plot_prior_distribution <- function(x, type, observed, draws) {
     )
   } else {
     p + ggplot2::geom_density(
-      ggplot2::aes(group = .data$draw), alpha = 0.3, linewidth = 0.2
+      ggplot2::aes(group = .data$draw),
+      alpha = 0.3, linewidth = 0.2
     )
   }
 

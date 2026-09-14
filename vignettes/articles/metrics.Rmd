@@ -14,7 +14,9 @@ This page defines every column `summary()` returns for a
 the value is `NA`. It describes the computation only.
 
 ```{r}
-summary(recovery_mixture2p)[1:4, ]
+s <- summary(recovery_mixture2p)
+s[1:4, 1:14]
+s[1:4, c(1:3, 15:23)]
 ```
 
 ## Which rows each row summarises
@@ -87,15 +89,44 @@ These four are `NA` only when no complete pair exists.
 `ccc`
 : Lin's concordance correlation coefficient [@linConcordanceCorrelationCoefficient1989],
   computed with population moments (dividing by $n$):
-  $$\rho_c = \frac{2 s_{\hat\theta\theta}}{s^2_{\hat\theta} + s^2_\theta + (\bar{\hat\theta} - \bar\theta)^2}.$$
+  $$\rho_c = \frac{2 s_{\hat\theta\theta}}{s^2_{\hat\theta} + s^2_\theta + (\bar{\hat\theta} - \bar\theta)^2}
+  = 1 - \frac{\frac{1}{n}\sum_i (\hat\theta_i - \theta_i)^2}{s^2_{\hat\theta} + s^2_\theta + (\bar{\hat\theta} - \bar\theta)^2}.$$
+  The second form shows it as a rescaled mean squared deviation from
+  the identity line.
 
-`ccc_scale_bias`
-: The ratio of standard deviations, $s_{\hat\theta} / s_\theta$.
+`ccc_low`, `ccc_high`
+: A 95% confidence interval from Lin's $Z$ transformation,
+  $Z = \operatorname{atanh}(\rho_c)$, with Lin's asymptotic variance
+  for random bivariate normal pairs, which depends on $n$, $r$,
+  $\rho_c$ and the location shift
+  [@linConcordanceCorrelationCoefficient1989, p. 259, Eq. 2, as corrected
+  in @CorrectionNoteConcordance2000, p. 325]. `NA` with three or fewer pairs, at
+  $\rho_c = \pm 1$, and when $r = 0$. When the generating values are
+  fixed by a design grid rather than drawn, the interval is an
+  approximation.
 
-`ccc_location_bias`
+`ccc_accuracy`
+: Lin's bias-correction factor
+  $C_b = 2 / (v + 1/v + u^2)$, so that $\rho_c = r \cdot C_b$:
+  Pearson's $r$ measures precision and $C_b$ accuracy, the distance of
+  the best-fitting line from the identity line.
+
+`ccc_scale_shift`
+: The ratio of standard deviations, $v = s_{\hat\theta} / s_\theta$.
+
+`ccc_location_shift`
 : The mean difference relative to the geometric mean of the two
   standard deviations,
-  $(\bar{\hat\theta} - \bar\theta) / \sqrt{s_{\hat\theta}\, s_\theta}$.
+  $u = (\bar{\hat\theta} - \bar\theta) / \sqrt{s_{\hat\theta}\, s_\theta}$.
+
+`calibration_slope`
+: The slope of the generating value regressed on the estimate,
+  $s_{\hat\theta\theta} / s^2_{\hat\theta} = r / v$. See
+  [Reading the concordance](#reading-the-concordance).
+
+`truth_sd`
+: The standard deviation of the generating values, $s_\theta$
+  (population moments).
 
 All correlation metrics are `NA`, never 0, when fewer than three
 complete pairs exist or when estimates or truth have no spread. This is
@@ -115,8 +146,88 @@ $$\bar z = \frac{\sum_k (n_k - 3)\, z_k}{\sum_k (n_k - 3)}, \qquad \operatorname
 `r` is $\tanh(\bar z)$ and its interval is $\tanh(\bar z \pm 1.96\,
 \operatorname{SE})$. With one replication this is the ordinary Fisher
 interval. `rank_r` is combined the same way, without an interval.
-`ccc` and its two components are averaged across replications as they
-are, since they are not correlations on the $z$ scale.
+
+`ccc` is combined on Lin's $Z$ scale, which approaches normality much
+faster than $\rho_c$ itself [@linConcordanceCorrelationCoefficient1989,
+pp. 259, 268]. The weights are the inverse of each replication's
+asymptotic variance $\sigma^2_{Z,k}$ rather than $n_k - 3$, because that
+variance also depends on $r$ and the location shift:
+
+$$\bar Z = \frac{\sum_k Z_k / \sigma^2_{Z,k}}{\sum_k 1 / \sigma^2_{Z,k}}, \qquad \operatorname{SE}(\bar Z) = \frac{1}{\sqrt{\sum_k 1/\sigma^2_{Z,k}}}.$$
+
+If any replication has a coefficient but no variance (three subjects,
+or a coefficient of exactly 0 or 1), `ccc` is the unweighted mean on
+the $Z$ scale and the interval is `NA`. Dropping those replications
+would drop exactly the extreme values.
+
+The pooled interval is slightly too narrow when many small replications
+are combined. Each replication's $Z$ is a little biased towards zero,
+pooling keeps that bias while the standard error shrinks, and in a
+simulation of calibrated posterior means with 30 subjects per
+replication its coverage was .936 with 5 replications and .928 with 20
+(500 studies each).
+
+`ccc_scale_shift` and `calibration_slope` are ratios and are combined
+as geometric means, so that $v$ and $1/v$ count as equal departures
+from 1. `ccc_accuracy` and `ccc_location_shift` are plain means, and
+`truth_sd` is the square root of the mean variance. At subject level
+$\rho_c = r \cdot C_b$ therefore holds only approximately.
+
+## Reading the concordance
+
+$r$ asks whether the estimates order the generating values correctly.
+$\rho_c$ asks whether they reproduce the values themselves. Which one
+matters depends on the question: for individual differences the rank
+order is what carries over to correlations with other measures, while
+absolute values matter when a parameter is compared across studies or
+against a fixed criterion
+[@katahiraDoesReliabilityComputational2024, p. 2477].
+
+Hierarchical models complicate the second reading. A posterior mean is
+shrunk towards the population mean, and when the model is calibrated
+the shrinkage is exactly as large as the data warrant. The error
+$\theta - \hat\theta$ is then uncorrelated with $\hat\theta$, so
+$\operatorname{cov}(\hat\theta, \theta) = \operatorname{var}(\hat\theta)$, and
+three things follow:
+
+- $v = r$: the scale shift equals the recovery correlation, not 1;
+- `calibration_slope` $= r / v = 1$;
+- with no location shift, $\rho_c = 2r^2 / (1 + r^2)$, a function of
+  $r$ alone.
+
+A scale shift below 1 is therefore not a defect by itself.
+`calibration_slope` is the column to read against 1: above 1 the
+estimates are shrunk more than the data warrant, below 1 less.
+
+<!-- Numbers from local/dev/sim/ccc_shrinkage.R (not shipped), output
+     ccc_shrinkage.out, 2026-09-14; slope column is b(truth|est). -->
+
+The table shows this for a normal model with exact posterior means,
+50 subjects and 2000 replications per row. The unpooled estimate is the
+per-subject maximum likelihood estimate.
+
+| generating model and prior | estimator | $r$ | $\rho_c$ | $v$ | slope | $u$ | RMSE |
+|---|---|---|---|---|---|---|---|
+| calibrated, reliability .50 | unpooled | .704 | .657 | 1.420 | 0.50 | −.002 | .997 |
+| calibrated, reliability .50 | posterior mean | .704 | .657 | 0.710 | 1.00 | −.005 | .706 |
+| prior SD too small | posterior mean | .705 | .365 | 0.284 | 2.50 | .014 | .820 |
+| prior SD too large | posterior mean | .704 | .691 | 1.137 | 0.63 | .000 | .819 |
+| prior mean off by 0.5 | posterior mean | .703 | .629 | 0.712 | 1.00 | .306 | .748 |
+
+Because $C_b$ treats $v$ and $1/v$ alike, $\rho_c$ cannot tell
+calibrated shrinkage from no shrinkage (.657 in both rows), and it
+*rewards* too little shrinkage (.691 against .657) although the RMSE
+is worse. It does detect too much shrinkage and a shifted location.
+Read `ccc` together with `rmse` and `calibration_slope`, and use `r`
+when only the rank order of subjects matters.
+
+Two caveats. The identities above assume that the generating values
+are drawn from the population the model estimates; with generating
+values from a hand-picked uniform range they hold only roughly. And
+$\rho_c$, like $r$, grows with the spread of the generating values at a
+fixed measurement error: in the same simulation, doubling `truth_sd`
+raised $\rho_c$ for the calibrated posterior mean from .657 to .885.
+Compare either coefficient only between rows with similar `truth_sd`.
 
 ## The scale
 

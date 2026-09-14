@@ -148,18 +148,18 @@ test_that("metric_ccc matches a hand-computed value", {
   estimate <- c(2, 3, 4, 5)
   out <- metric_ccc(estimate, truth)
   expect_equal(out$ccc, 5 / 7)
-  # scale_bias is the estimates' SD over truth's, here equal
-  expect_equal(out$scale_bias, 1)
-  # location_bias is Lin's u = (mean_y - mean_x) / sqrt(sd_x * sd_y),
+  # scale_shift is the estimates' SD over truth's, here equal
+  expect_equal(out$scale_shift, 1)
+  # location_shift is Lin's u = (mean_y - mean_x) / sqrt(sd_x * sd_y),
   # so 1 / sqrt(1.25) = 0.8944272, NOT 1 / 1.25. The denominator is the
   # geometric mean of the two standard deviations, not of the variances;
   # the decomposition test below is what pins this down.
-  expect_equal(out$location_bias, 1 / sqrt(1.25))
+  expect_equal(out$location_shift, 1 / sqrt(1.25))
 })
 
 test_that("ccc decomposes as r times Lin's bias-correction factor", {
-  # ccc = r * C_b with C_b = 2 / (v + 1/v + u^2), v = scale_bias,
-  # u = location_bias. This identity holds only for Lin's definitions of
+  # ccc = r * C_b with C_b = 2 / (v + 1/v + u^2), v = scale_shift,
+  # u = location_shift. This identity holds only for Lin's definitions of
   # u and v, so it is what fixes them: no reference implementation is
   # installed, and a hand-typed constant would only restate the code.
   withr::local_seed(11)
@@ -170,11 +170,15 @@ test_that("ccc decomposes as r times Lin's bias-correction factor", {
 
     out <- metric_ccc(estimate, truth)
     r <- metric_r(estimate, truth)$r
-    v <- out$scale_bias
-    u <- out$location_bias
+    v <- out$scale_shift
+    u <- out$location_shift
     c_b <- 2 / (v + 1 / v + u^2)
 
     expect_equal(out$ccc, r * c_b, tolerance = 1e-10)
+    expect_equal(out$accuracy, c_b, tolerance = 1e-10)
+    expect_equal(out$ccc, stats::cor(estimate, truth) * out$accuracy,
+      tolerance = 1e-10
+    )
   }
 })
 
@@ -197,12 +201,187 @@ test_that("ccc penalises a scale error that r does not see", {
   stretched <- truth * 3
   expect_equal(metric_r(stretched, truth)$r, 1)
   expect_lt(metric_ccc(stretched, truth)$ccc, 1)
-  expect_equal(metric_ccc(stretched, truth)$scale_bias, 3)
+  expect_equal(metric_ccc(stretched, truth)$scale_shift, 3)
 })
 
 test_that("ccc is negative for a reversed relationship", {
   truth <- c(1, 2, 3, 4)
   expect_lt(metric_ccc(-truth, truth)$ccc, 0)
+})
+
+# concordance: interval and calibration ----------------------------------
+
+# Population (divide-by-n) standardisation, so that two vectors share a
+# mean and an SD exactly as metric_ccc() measures them.
+pop_standardise <- function(x) {
+  centred <- x - mean(x)
+  centred / sqrt(mean(centred^2))
+}
+
+test_that("with equal moments ccc is r and its Z variance is 1/(n - 2)", {
+  # With u = 0 and v = 1, C_b = 1 so ccc = r, and every term of Lin's
+  # variance but the first vanishes: (1 - r^2) r^2 / ((1 - r^2) r^2),
+  # divided by n - 2. The oracle needs no copy of the formula.
+  withr::local_seed(101)
+  n <- 30L
+  truth <- stats::rnorm(n)
+  estimate <- truth + stats::rnorm(n, sd = 0.6)
+  truth <- pop_standardise(truth)
+  estimate <- pop_standardise(estimate)
+
+  out <- metric_ccc(estimate, truth)
+  expect_equal(out$ccc, stats::cor(estimate, truth), tolerance = 1e-12)
+  expect_equal(out$var_z, 1 / (n - 2), tolerance = 1e-12)
+  crit <- stats::qnorm(0.975)
+  expect_equal(out$ccc_low, tanh(atanh(out$ccc) - crit / sqrt(n - 2)),
+    tolerance = 1e-12
+  )
+  expect_equal(out$ccc_high, tanh(atanh(out$ccc) + crit / sqrt(n - 2)),
+    tolerance = 1e-12
+  )
+})
+
+test_that("with no location shift the Z variance keeps only its first term", {
+  withr::local_seed(102)
+  n <- 40L
+  truth <- pop_standardise(stats::rnorm(n))
+  estimate <- 0.5 * pop_standardise(truth + stats::rnorm(n, sd = 0.8))
+
+  out <- metric_ccc(estimate, truth)
+  expect_equal(out$location_shift, 0, tolerance = 1e-12)
+  r <- out$r
+  p <- out$ccc
+  expect_equal(out$var_z, (1 - r^2) * p^2 / ((1 - p^2) * r^2) / (n - 2),
+    tolerance = 1e-10
+  )
+})
+
+test_that("a location shift up or down gives the same interval", {
+  # u enters the variance only as u^2 and u^4.
+  withr::local_seed(103)
+  truth <- stats::rnorm(25)
+  estimate <- truth * 0.8 + stats::rnorm(25, sd = 0.5)
+  estimate <- estimate - mean(estimate) + mean(truth)
+
+  up <- metric_ccc(estimate + 0.7, truth)
+  down <- metric_ccc(estimate - 0.7, truth)
+  expect_equal(up$location_shift, -down$location_shift)
+  expect_equal(up$ccc_low, down$ccc_low, tolerance = 1e-12)
+  expect_equal(up$ccc_high, down$ccc_high, tolerance = 1e-12)
+  expect_lt(up$ccc_low, up$ccc)
+  expect_gt(up$ccc_high, up$ccc)
+})
+
+test_that("calibration_slope is the slope of truth regressed on estimate", {
+  withr::local_seed(104)
+  truth <- stats::rnorm(30)
+  estimate <- 0.6 * truth + 0.3 + stats::rnorm(30, sd = 0.4)
+  out <- metric_ccc(estimate, truth)
+  oracle <- unname(stats::coef(stats::lm(truth ~ estimate))[[2L]])
+  expect_equal(out$calibration_slope, oracle, tolerance = 1e-10)
+  expect_equal(out$calibration_slope, out$r / out$scale_shift,
+    tolerance = 1e-10
+  )
+})
+
+test_that("swapping estimate and truth mirrors the components", {
+  withr::local_seed(105)
+  truth <- stats::rnorm(30)
+  estimate <- 1.4 * truth - 0.2 + stats::rnorm(30, sd = 0.5)
+  fwd <- metric_ccc(estimate, truth)
+  rev <- metric_ccc(truth, estimate)
+
+  expect_equal(rev$ccc, fwd$ccc)
+  expect_equal(rev$ccc_low, fwd$ccc_low)
+  expect_equal(rev$ccc_high, fwd$ccc_high)
+  expect_equal(rev$accuracy, fwd$accuracy)
+  expect_equal(rev$scale_shift, 1 / fwd$scale_shift)
+  expect_equal(rev$location_shift, -fwd$location_shift)
+  expect_equal(
+    rev$calibration_slope,
+    unname(stats::coef(stats::lm(estimate ~ truth))[[2L]]),
+    tolerance = 1e-10
+  )
+})
+
+test_that("truth_sd uses population moments and pairs with scale_shift", {
+  truth <- c(1, 2, 3, 4, 10)
+  estimate <- c(2, 2, 5, 3, 8)
+  out <- metric_ccc(estimate, truth)
+  expect_equal(out$truth_sd, sqrt(mean((truth - mean(truth))^2)))
+  expect_equal(
+    out$truth_sd * out$scale_shift,
+    sqrt(mean((estimate - mean(estimate))^2))
+  )
+})
+
+test_that("three pairs give a concordance but no interval", {
+  out <- metric_ccc(c(1, 3, 2), c(1, 2, 3))
+  expect_false(is.na(out$ccc))
+  expect_false(is.na(out$accuracy))
+  expect_true(is.na(out$ccc_low))
+  expect_true(is.na(out$ccc_high))
+  expect_true(is.na(out$var_z))
+})
+
+test_that("perfect agreement gives ccc 1 and no interval", {
+  x <- c(2, 4, 6, 9, 11)
+  out <- metric_ccc(x, x)
+  expect_equal(out$ccc, 1)
+  expect_true(is.na(out$ccc_low))
+  expect_true(is.na(out$ccc_high))
+  expect_equal(out$calibration_slope, 1)
+})
+
+test_that("zero covariance gives ccc 0, slope 0 and no interval", {
+  # deviations of truth: -1.5, -.5, .5, 1.5; estimate: 1, -1, -1, 1;
+  # their products sum to zero, so r = 0 and Lin's variance divides by 0
+  out <- metric_ccc(c(1, -1, -1, 1), c(1, 2, 3, 4))
+  expect_equal(out$ccc, 0)
+  expect_equal(out$calibration_slope, 0)
+  expect_true(is.na(out$ccc_low))
+  expect_true(is.na(out$ccc_high))
+})
+
+test_that("the Z variance is NA rather than negative for impossible input", {
+  # r = .9, ccc = .8, u = 3 cannot come from one data set (C_b would be
+  # far below .8 / .9); the u^4 term then drives the sum negative.
+  expect_true(is.na(ccc_z_variance(ccc = 0.8, r = 0.9, u = 3, n = 50)))
+  expect_true(is.na(ccc_z_variance(ccc = 0.5, r = 0.6, u = 0, n = 3)))
+  expect_true(is.na(ccc_z_variance(ccc = 1, r = 1, u = 0, n = 10)))
+  expect_true(is.na(ccc_z_variance(ccc = 0, r = 0, u = 0.2, n = 10)))
+})
+
+test_that("no complete pair gives NA everywhere, truth_sd included", {
+  out <- metric_ccc(c(NA, 1), c(2, NA))
+  expect_identical(out$n, 0L)
+  expect_true(all(is.na(unlist(out[setdiff(names(out), "n")]))))
+})
+
+test_that("the interval guards do not warn", {
+  expect_silent(metric_ccc(c(1, 3, 2), c(1, 2, 3)))
+  expect_silent(metric_ccc(c(1, -1, -1, 1), c(1, 2, 3, 4)))
+  expect_silent(metric_ccc(1:5, 1:5))
+  expect_silent(ccc_z_variance(ccc = 0.8, r = 0.9, u = 3, n = 50))
+})
+
+test_that("Lin's interval covers the population concordance", {
+  # truth ~ N(0, 1), estimate = a + b * truth + N(0, s^2), so
+  # ccc = 2b / (1 + b^2 + s^2 + a^2). 400 data sets of 50 pairs; the
+  # band is the binomial 99% range around .95.
+  withr::local_seed(106)
+  a <- 0.4
+  b <- 0.7
+  s <- 0.5
+  target <- 2 * b / (1 + b^2 + s^2 + a^2)
+  hits <- vapply(seq_len(400), function(i) {
+    truth <- stats::rnorm(50)
+    estimate <- a + b * truth + stats::rnorm(50, sd = s)
+    out <- metric_ccc(estimate, truth)
+    out$ccc_low <= target && target <= out$ccc_high
+  }, logical(1))
+  expect_gte(mean(hits), 0.917)
+  expect_lte(mean(hits), 0.983)
 })
 
 # guards -----------------------------------------------------------------

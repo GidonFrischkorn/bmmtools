@@ -120,6 +120,102 @@ test_that("an unknown facet or colour column is an error naming it", {
   expect_error(plot_recovery(x, color_by = "nonexistent"), "nonexistent")
 })
 
+# annotation -------------------------------------------------------------
+
+text_layers <- function(p) which(geom_classes(p) == "GeomText")
+
+test_that("the default plot carries no annotation", {
+  skip_if_not_installed("ggplot2")
+  p <- plot_recovery(plot_example())
+  expect_length(text_layers(p), 0L)
+})
+
+test_that("annotate = TRUE labels each panel with r and CCC", {
+  skip_if_not_installed("ggplot2")
+  x <- plot_example()
+  p <- plot_recovery(x, annotate = TRUE)
+  layer <- text_layers(p)
+  expect_length(layer, 1L)
+
+  labels <- ggplot2::layer_data(p, layer)$label
+  expect_length(labels, 2L)
+  summarised <- summary(x)
+  for (term in summarised$term) {
+    row <- summarised[summarised$term == term, ]
+    ccc <- sub("^(-?)0\\.", "\\1.", sprintf("%.2f", row$ccc))
+    expect_true(any(grepl(paste0("CCC = ", ccc), labels, fixed = TRUE)))
+  }
+})
+
+test_that("annotate works with a colour mapping", {
+  skip_if_not_installed("ggplot2")
+  p <- plot_recovery(plot_example(), color_by = "term", annotate = TRUE)
+  expect_s3_class(ggplot2::ggplot_build(p), "ggplot_built")
+})
+
+test_that("a single panel is annotated when facet_by is NULL", {
+  skip_if_not_installed("ggplot2")
+  x <- dplyr::filter(plot_example(), term == "kappa")
+  p <- plot_recovery(x, facet_by = NULL, annotate = TRUE)
+  labels <- ggplot2::layer_data(p, text_layers(p))$label
+  expect_length(labels, 1L)
+
+  # two terms in one panel are two summary rows
+  expect_error(
+    plot_recovery(plot_example(), facet_by = NULL, annotate = TRUE),
+    "mixes terms"
+  )
+})
+
+test_that("a metric that is not estimable is labelled NA", {
+  skip_if_not_installed("ggplot2")
+  # two replications: too few pairs for r or CCC
+  p <- plot_recovery(plot_example(n_replications = 2L), annotate = TRUE)
+  labels <- ggplot2::layer_data(p, text_layers(p))$label
+  expect_true(all(grepl("r = NA", labels, fixed = TRUE)))
+  expect_true(all(grepl("CCC = NA", labels, fixed = TRUE)))
+})
+
+test_that("a panel whose facet value is NA gets its label too", {
+  skip_if_not_installed("ggplot2")
+  # condition is NA for every row of a recovery that is not a grid
+  x <- plot_example()
+  p <- plot_recovery(dplyr::filter(x, term == "kappa"),
+    facet_by = "condition", annotate = TRUE
+  )
+  expect_length(ggplot2::layer_data(p, text_layers(p))$label, 1L)
+
+  # and when only some rows are NA, every drawn panel is labelled
+  x$condition <- rep(c("a", NA), length.out = nrow(x))
+  p <- plot_recovery(dplyr::filter(x, term == "kappa"),
+    facet_by = "condition", annotate = TRUE
+  )
+  panels <- unique(ggplot2::layer_data(p, 3L)$PANEL)
+  labelled <- unique(ggplot2::layer_data(p, text_layers(p))$PANEL)
+  expect_setequal(labelled, panels)
+})
+
+test_that("a value that rounds to zero is labelled without a sign", {
+  expect_identical(format_metric(-0.001), ".00")
+  expect_identical(format_metric(-0.25), "-.25")
+  expect_identical(format_metric(1), "1.00")
+})
+
+test_that("a panel spanning several summary rows cannot be annotated", {
+  skip_if_not_installed("ggplot2")
+  expect_error(
+    plot_recovery(recovery_mixture2p, annotate = TRUE),
+    "filter"
+  )
+})
+
+test_that("annotate must be TRUE or FALSE", {
+  skip_if_not_installed("ggplot2")
+  message <- "annotate. must be"
+  expect_error(plot_recovery(plot_example(), annotate = "yes"), message)
+  expect_error(plot_recovery(plot_example(), annotate = NA), message)
+})
+
 test_that("plot_recovery rejects anything that is not a recovery object", {
   skip_if_not_installed("ggplot2")
   expect_error(plot_recovery(tibble::tibble(a = 1)), "bmmtools_recovery")

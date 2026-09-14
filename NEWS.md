@@ -9,8 +9,9 @@ First release: tools to validate cognitive measurement models fitted with bmm.
 * `check_convergence()` summarises rhat, ESS, divergences and tree-depth hits into a pass verdict.
 * `extract_estimates()` returns population- and subject-level estimates of a fit as a tibble.
 * `recover()` and `recover_subjects()` score estimates against the generating values.
-* `summary()` of a recovery object reports bias, RMSE, coverage, interval width and correlations.
-* `plot_recovery()` plots estimates against generating values.
+* `summary()` of a recovery object reports bias, RMSE, coverage, interval width and correlations, including Lin's concordance with a 95% interval, its accuracy factor, the scale and location shifts, a calibration slope and the spread of the generating values. At subject level the concordance is pooled across replications on Lin's Z scale; the geometric-mean pooling of the scale shift and slope has not been checked by simulation.
+* `recovery_ccc()` computes the same concordance columns for any pair of vectors, such as recovered correlations or effects.
+* `plot_recovery()` plots estimates against generating values and, with `annotate = TRUE`, labels each panel with r and the concordance.
 * `prior_check()` summarises the prior predictive distribution on the scale of the response.
 * `plot_prior_check()` plots prior predictive draws against the observed data.
 * `inverse_link()` transforms values from the link scale for the twelve links bmm uses.
