@@ -13,13 +13,16 @@ subject_table(
 )
 }
 \arguments{
-\item{x}{A \code{bmmtools_simulation}, together with \code{fit}; or the result of
-\code{\link[=recovery_grid]{recovery_grid()}}, whose attribute \code{subject_means} carries the
-posterior means, medians and true values of every cell.}
+\item{x}{A \code{bmmtools_simulation}, together with \code{fit}; a
+\code{bmmtools_simulation_set} from \code{\link[=simulate_components]{simulate_components()}}, together with
+its fits; or the result of \code{\link[=recovery_grid]{recovery_grid()}}, whose attribute
+\code{subject_means} carries the posterior means, medians and true values of
+every cell.}
 
 \item{fit}{The fit of \code{x} when \code{x} is a simulation: a \code{brmsfit}, or any
-object with an \code{\link[=extract_subject_draws]{extract_subject_draws()}} method. Not used with a grid
-result.}
+object with an \code{\link[=extract_subject_draws]{extract_subject_draws()}} method. For a simulation set,
+the fits from \code{\link[=fit_components]{fit_components()}}, one per component, whose terms appear
+prefixed with the component name. Not used with a grid result.}
 
 \item{point}{The point estimate: the posterior \code{"mean"} or \code{"median"}
 of each subject's value.}

@@ -34,9 +34,13 @@ recovery_grid(
 \arguments{
 \item{model}{A \code{bmmodel}, or a function of one grid row (a one-row
 data frame) returning one, for models whose constructor depends on
-the design.}
+the design. Or a list of \code{\link[=recovery_component]{recovery_component()}}s, or a function of the
+row returning such a list, to simulate several models for the same
+people and fit each on its own; see the section "Components".}
 
-\item{grid}{A data frame with the columns \code{n_subjects} and \code{n_trials}.
+\item{grid}{A data frame with the columns \code{n_subjects} and \code{n_trials}
+(with components, \code{n_subjects} only; see "Components" for their
+columns).
 A column named after a parameter gives that cell's population value
 on the link scale, overriding \code{pars}; a column \verb{sd_<parameter>}
 overrides \code{sds}; a column \verb{cor_<a>__<b>} sets the correlation of two
@@ -68,7 +72,8 @@ cell's model; or a \verb{function(row)} of the one-row grid data frame
 returning a \code{bmmformula}, called once per row, for designs whose
 formula depends on the row.}
 
-\item{prior}{Passed to \code{\link[=fit_cached]{fit_cached()}}.}
+\item{prior}{Passed to \code{\link[=fit_cached]{fit_cached()}}; with components, \code{NULL} or a list
+with a prior per component.}
 
 \item{generator}{As in \code{\link[=simulate_recovery]{simulate_recovery()}}.}
 
@@ -164,6 +169,62 @@ requested level and estimator, so the fit files may be deleted once a
 grid has run. Otherwise the cell goes through \code{\link[=fit_cached]{fit_cached()}} again,
 which reuses a cached fit, and the sidecar is rewritten.
 }
+\section{Components}{
+
+With \code{model} a list of \code{\link[=recovery_component]{recovery_component()}}s (or a \verb{function(row)}
+returning one, the same components by name in every row), each cell
+simulates one set with \code{\link[=simulate_components]{simulate_components()}} under the cell's seed
+and fits every component on its own through \code{\link[=fit_cached]{fit_cached()}}. \code{pars},
+\code{sds}, \code{generator}, \code{tasks}, \code{task_col}, \code{re_cor} and \code{formula} belong to
+the components and are errors here; \code{cors}, \code{covariates}, \code{seed},
+\code{reps}, \code{scale}, \code{levels}, \code{correlations}, \code{cor_scale}, \code{smoke},
+\code{preflight} and \code{...} keep their meaning, and \code{prior} is \code{NULL} or a
+list by component, as in \code{\link[=fit_components]{fit_components()}}. \code{subjects = "fixed"} is not
+supported for components yet. A component cannot be named \code{sim}, \code{est},
+\code{cor} or \code{sd}.
+
+Grid columns: \code{n_subjects}; \verb{n_trials_<comp>} for a component's number
+of trials (a plain \code{n_trials} column is an error); \verb{<comp>_<par>} or
+\verb{<comp>_<par>_<task_col><level>} for population values, a bare parameter
+setting every task and a full term overriding it; \verb{sd_<comp>_<par>} for
+SDs; \verb{cor_<a>__<b>} with prefixed terms or covariates, in either order.
+They apply to numeric \code{pars} and \code{sds} of a component and to the result
+of a function-valued one. A missing value (\code{NA}) leaves the component's
+value, so a column may name a task that only some rows have. A column
+whose component or term is unknown is an error; so is a column whose
+prefix is no component but whose remainder is a term of one, such as a
+misspelt component name. Other columns are left for \code{model} and \code{cors}
+functions.
+
+Files per cell: \verb{cell-<row>-rep-<rep>-sim.rds} holds the set;
+\verb{cell-<row>-rep-<rep>-<comp>.rds} (with its \code{.key}) each fit; a sidecar
+\verb{cell-<row>-rep-<rep>-<comp>-est.rds} per component holds its estimates
+and, with \code{"model"} requested, its model correlations; and
+\verb{cell-<row>-rep-<rep>-cor.rds} holds what needs every fit, the
+correlations of \code{\link[=extract_correlations]{extract_correlations()}} on the set of fits (covariates
+included) and the subject means, with the components' keys. A resume in
+which every sidecar matches reads no fit; otherwise the fits are obtained
+through \code{\link[=fit_cached]{fit_cached()}}, which reuses cached ones, and the stale sidecars
+are rewritten. The preflight fits every component of the first cell
+into \verb{<dir>/preflight-<comp>}, and is skipped when each of them has a
+cached fit or a usable sidecar.
+
+The result is one \code{bmmtools_recovery} with prefixed terms (\code{a_kappa},
+\code{b_c_task1}); \code{converged} is that component fit's verdict, and
+\code{scale = "natural"} uses every component's links. The \code{cells} attribute
+has one row per cell and component, with a \code{component} column; the
+\code{correlations} and \code{subject_means} attributes use prefixed terms, so
+\code{\link[=subject_table]{subject_table()}} works on the result. A component whose fit fails is
+recorded as \code{"error"} for that cell, the cell's other components are
+still scored, its correlations and subject means are skipped, and the
+grid goes on.
+
+Correlations between parameters of separately fitted components are
+attenuated by the reliabilities of both estimates; see "Separate fits"
+in \code{\link[=extract_correlations]{extract_correlations()}}. The \code{"model"} estimator works within one
+fit only and needs a component \code{formula} with correlated terms.
+}
+
 \examples{
 \dontrun{
 out <- recovery_grid(

@@ -19,7 +19,9 @@ extract_correlations(
 }
 \arguments{
 \item{fit}{A \code{brmsfit} (so also a \code{bmmfit}), or any object with an
-\code{\link[=extract_subject_draws]{extract_subject_draws()}} method.}
+\code{\link[=extract_subject_draws]{extract_subject_draws()}} method. Or a set of separate fits, one per
+component: the result of \code{\link[=fit_components]{fit_components()}}, or a list of fits named
+by component; see "Separate fits" below.}
 
 \item{estimator}{One or more of \code{"model"}, \code{"draws"} and \code{"point"}. All
 three by default.}
@@ -98,6 +100,25 @@ three subjects or when one side has no spread across subjects. For
 \code{draws} that is decided per draw, and the summary uses the draws that
 remain.
 }
+\section{Separate fits}{
+
+With a set of fits, the subject draws of every fit are bound under
+prefixed terms (\code{m3_c_task1}), subject by subject. Draws are paired by
+iteration and chain, cut to the smallest counts among the fits with a
+message. \code{model} rows exist only within a fit; \code{converged} of a pair is
+whether every fit it involves converged, and may be given as a logical
+named by component. \code{covariates} must be a data frame, because the
+components' data carry none.
+
+No fit knows about the correlation between its parameters and another
+model's, so correlations across fits are attenuated by the reliabilities
+\code{rel_a} and \code{rel_b} of the two subject estimates: \code{point} is roughly
+\code{rho * sqrt(rel_a * rel_b)} and \code{draws} roughly \code{rho * rel_a * rel_b}.
+Neither recovers \code{rho}. A structural equation model of true against
+estimated values, from \code{\link[=subject_table]{subject_table()}}, does; so would a joint
+multivariate fit, which bmmtools does not support yet.
+}
+
 \examples{
 \dontrun{
 fit <- bmm::bmm(recovery_formula(model, re_cor = "all"), data, model)

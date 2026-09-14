@@ -178,7 +178,9 @@ check_subject_draws <- function(x, call = rlang::caller_env()) {
 #' truth.
 #'
 #' @param fit A `brmsfit` (so also a `bmmfit`), or any object with an
-#'   [extract_subject_draws()] method.
+#'   [extract_subject_draws()] method. Or a set of separate fits, one per
+#'   component: the result of [fit_components()], or a list of fits named
+#'   by component; see "Separate fits" below.
 #' @param estimator One or more of `"model"`, `"draws"` and `"point"`. All
 #'   three by default.
 #' @param pairs `NULL` for every pair of subject terms and covariates, or
@@ -225,6 +227,23 @@ check_subject_draws <- function(x, call = rlang::caller_env()) {
 #' `draws` that is decided per draw, and the summary uses the draws that
 #' remain.
 #'
+#' @section Separate fits:
+#' With a set of fits, the subject draws of every fit are bound under
+#' prefixed terms (`m3_c_task1`), subject by subject. Draws are paired by
+#' iteration and chain, cut to the smallest counts among the fits with a
+#' message. `model` rows exist only within a fit; `converged` of a pair is
+#' whether every fit it involves converged, and may be given as a logical
+#' named by component. `covariates` must be a data frame, because the
+#' components' data carry none.
+#'
+#' No fit knows about the correlation between its parameters and another
+#' model's, so correlations across fits are attenuated by the reliabilities
+#' `rel_a` and `rel_b` of the two subject estimates: `point` is roughly
+#' `rho * sqrt(rel_a * rel_b)` and `draws` roughly `rho * rel_a * rel_b`.
+#' Neither recovers `rho`. A structural equation model of true against
+#' estimated values, from [subject_table()], does; so would a joint
+#' multivariate fit, which bmmtools does not support yet.
+#'
 #' @examples
 #' \dontrun{
 #' fit <- bmm::bmm(recovery_formula(model, re_cor = "all"), data, model)
@@ -251,33 +270,72 @@ extract_correlations <- function(fit,
   )
   scale <- rlang::arg_match(scale)
   check_ci_level(ci_level, call = error_call)
+  if (is_fit_set(fit, call = error_call)) {
+    return(set_correlations(
+      fit, estimator, pairs, covariates, group, scale, links, ci_level,
+      converged,
+      call = error_call
+    ))
+  }
   if (!is.null(converged)) check_converged(converged, call = error_call)
   resolved <- resolve_links(fit, links, scale, call = error_call)
 
+  parts <- fit_correlation_parts(
+    fit, estimator, resolved$scale, group, ci_level, converged,
+    call = error_call
+  )
+  if (is.character(covariates)) {
+    covariates <- covariates_from_data(
+      covariates, fit$data, parts$group,
+      call = error_call
+    )
+  }
+
+  correlations_from_parts(
+    parts$subject_draws, parts$cor_estimates, covariates,
+    estimator = estimator, pairs = pairs,
+    scale = resolved$scale, links = resolved$links,
+    ci_level = ci_level, converged = parts$converged,
+    n_subjects = parts$n_subjects, group = parts$group,
+    call = error_call
+  )
+}
+
+#' Read what the three estimators need from one fit
+#'
+#' A `brmsfit` is read once, as a draws array; any other class goes through
+#' the `extract_subject_draws()` and `extract_estimates()` generics.
+#'
+#' @return A list with `subject_draws` and `cor_estimates` (each `NULL` when
+#'   no requested estimator needs it), `converged`, `n_subjects` (counted in
+#'   a brmsfit's data, else `NULL`) and `group`, the grouping column.
+#' @noRd
+fit_correlation_parts <- function(fit, estimator, scale, group, ci_level,
+                                  converged, call = rlang::caller_env()) {
   is_brms <- inherits(fit, "brmsfit")
   draws <- NULL
   if (is_brms) {
     rlang::check_installed("brms", "to extract correlations from a fit.")
     draws <- posterior::as_draws_array(fit)
-    group <- resolve_group(group, fit_groups(fit), call = error_call)
+    group <- resolve_group(group, fit_groups(fit), call = call)
   }
 
   subject_draws <- NULL
   if (any(c("draws", "point") %in% estimator)) {
     subject_draws <- if (is_brms) {
-      subject_draws_from_draws(draws, fit_groups(fit), group, call = error_call)
+      subject_draws_from_draws(draws, fit_groups(fit), group, call = call)
     } else {
       extract_subject_draws(fit, group = group)
     }
   }
 
   cor_estimates <- NULL
-  if ("model" %in% estimator && identical(resolved$scale, "link")) {
+  if ("model" %in% estimator && identical(scale, "link")) {
     cor_estimates <- if (is_brms) {
       estimates_from_draws(
         draws, fit_groups(fit),
         level = "cor", group = group, ci_level = ci_level,
-        converged = NA, ranef = fit$ranef, call = error_call
+        converged = NA, ranef = fit$ranef, call = call
       )
     } else {
       extract_estimates(
@@ -291,25 +349,257 @@ extract_correlations <- function(fit,
     converged <- if (is_brms) fit_converged(fit, draws) else NA
   }
   group_column <- group %||% attr(subject_draws, "group") %||% "id"
-  if (is.character(covariates)) {
-    covariates <- covariates_from_data(
-      covariates, fit$data, group_column,
-      call = error_call
-    )
-  }
   n_subjects <- NULL
   if (is_brms && is.data.frame(fit$data) && group_column %in% names(fit$data)) {
     n_subjects <- length(unique(fit$data[[group_column]]))
   }
+  list(
+    subject_draws = subject_draws, cor_estimates = cor_estimates,
+    converged = converged, n_subjects = n_subjects, group = group_column
+  )
+}
 
-  correlations_from_parts(
+# fit sets (spec 5, section 5.5a) -------------------------------------------
+
+#' Is `x` a set of separate fits, one per component?
+#'
+#' A `bmmtools_fit_set`, or a plain list of fits whose names are component
+#' names. A plain list of fits with names that are not valid component names
+#' is an error rather than a single fit, so that a typo does not end in a
+#' message about the class of `fit`; an unnamed list is not a set.
+#'
+#' @noRd
+is_fit_set <- function(x, call = rlang::caller_env()) {
+  is_plain <- is.list(x) && !is.object(x) && length(x) > 0L &&
+    all(vapply(x, is_one_fit, logical(1)))
+  if (!inherits(x, "bmmtools_fit_set") && (!is_plain || is.null(names(x)))) {
+    return(FALSE)
+  }
+  nms <- names(x)
+  valid <- !is.null(nms) && anyDuplicated(nms) == 0L &&
+    all(vapply(nms, valid_component_name, logical(1)))
+  if (!valid) {
+    cli::cli_abort(
+      c(
+        "A set of fits must be named by its component names, each unique, \\
+         syntactic and without {.code _} or {.code .}.",
+        i = "The names are {.val {nms}}."
+      ),
+      call = call
+    )
+  }
+  TRUE
+}
+
+#' Every fit's bmm link table, under prefixed names, or `NULL`
+#' @noRd
+set_model_links <- function(fits) {
+  tables <- lapply(names(fits), function(nm) {
+    links <- model_links_of(fits[[nm]])
+    if (is.null(links)) {
+      return(NULL)
+    }
+    stats::setNames(as.character(links), prefix_terms(names(links), nm))
+  })
+  unlist(tables)
+}
+
+#' Prefix both names of pair terms (`kappa__thetat` to `a_kappa__a_thetat`)
+#' @noRd
+prefix_pair_terms <- function(terms, name) {
+  vapply(strsplit(as.character(terms), "__", fixed = TRUE), function(p) {
+    paste(prefix_terms(p, name), collapse = "__")
+  }, character(1))
+}
+
+#' Validate `converged` for a set: a named logical per component, or `NULL`
+#' @noRd
+check_set_converged <- function(converged, components,
+                                call = rlang::caller_env()) {
+  if (is.null(converged)) {
+    return(NULL)
+  }
+  nms <- names(converged)
+  if (is.logical(converged) && length(converged) == 1L && is.null(nms)) {
+    return(stats::setNames(rep(converged, length(components)), components))
+  }
+  by_component <- is.logical(converged) && !is.null(nms) &&
+    length(converged) == length(components) && anyDuplicated(nms) == 0L &&
+    setequal(nms, components)
+  if (!by_component) {
+    cli::cli_abort(
+      c(
+        "{.arg converged} must be {.code NULL}, a single logical, or a \\
+         logical named by component.",
+        i = "The components are {.val {components}}."
+      ),
+      call = call
+    )
+  }
+  converged[components]
+}
+
+#' Bind the subject draws of separate fits along the term dimension
+#'
+#' Terms are prefixed with the component name. Subjects are put in the
+#' first fit's order, and iterations and chains are cut to the smallest
+#' counts, since draws of independent fits can be paired in any order.
+#'
+#' @param arrays A named list of subject-draws arrays, one per component.
+#' @noRd
+bind_subject_draws <- function(arrays, call = rlang::caller_env()) {
+  nms <- names(arrays)
+  arrays <- lapply(arrays, check_subject_draws, call = call)
+  ids <- dimnames(arrays[[1L]])[[3L]]
+  for (nm in nms[-1L]) {
+    other <- dimnames(arrays[[nm]])[[3L]]
+    if (length(other) != length(ids) || !setequal(other, ids)) {
+      cli::cli_abort(
+        c(
+          "The fits of components {.val {nms[[1L]]}} and {.val {nm}} have \\
+           different subjects.",
+          i = "Separate fits are correlated subject by subject, so they \\
+               must hold the same subjects."
+        ),
+        call = call
+      )
+    }
+  }
+  n_iter <- vapply(arrays, function(x) dim(x)[[1L]], integer(1))
+  n_chain <- vapply(arrays, function(x) dim(x)[[2L]], integer(1))
+  keep_iter <- min(n_iter)
+  keep_chain <- min(n_chain)
+  larger <- nms[n_iter > keep_iter | n_chain > keep_chain]
+  if (length(larger) > 0L) {
+    cli::cli_inform(c(
+      "Kept {keep_iter} iterations and {keep_chain} chains per fit.",
+      i = "Those are the smallest counts among the fits; {.val {larger}} \\
+           had more. Draws of separate fits are paired by iteration and \\
+           chain."
+    ))
+  }
+
+  terms <- lapply(stats::setNames(nm = nms), function(nm) {
+    prefix_terms(dimnames(arrays[[nm]])[[4L]], nm)
+  })
+  out <- array(
+    NA_real_,
+    dim = c(keep_iter, keep_chain, length(ids), length(unlist(terms))),
+    dimnames = list(
+      iteration = as.character(seq_len(keep_iter)),
+      chain = as.character(seq_len(keep_chain)),
+      id = ids,
+      term = unname(unlist(terms))
+    )
+  )
+  for (nm in nms) {
+    if (length(terms[[nm]]) == 0L) next
+    out[, , , terms[[nm]]] <- arrays[[nm]][
+      seq_len(keep_iter), seq_len(keep_chain), ids, ,
+      drop = FALSE
+    ]
+  }
+  structure(out, group = attr(arrays[[1L]], "group"))
+}
+
+#' The subject draws of a set of fits, bound
+#' @noRd
+set_subject_draws <- function(fits, group = NULL, call = rlang::caller_env()) {
+  arrays <- lapply(stats::setNames(nm = names(fits)), function(nm) {
+    extract_subject_draws(fits[[nm]], group = group)
+  })
+  bind_subject_draws(arrays, call = call)
+}
+
+#' Whether each pair's fits converged
+#'
+#' A pair takes `all()` of the verdicts of the fits it involves; a pair of
+#' two covariates involves none and takes every fit's.
+#'
+#' @noRd
+pair_converged <- function(var1, var2, verdicts) {
+  owner <- function(term) {
+    prefix <- sub("_.*$", "", term)
+    ifelse(
+      grepl("_", term, fixed = TRUE) & prefix %in% names(verdicts),
+      prefix, NA_character_
+    )
+  }
+  first <- owner(var1)
+  second <- owner(var2)
+  vapply(seq_along(var1), function(k) {
+    involved <- unique(c(first[[k]], second[[k]]))
+    involved <- involved[!is.na(involved)]
+    if (length(involved) == 0L) all(verdicts) else all(verdicts[involved])
+  }, logical(1))
+}
+
+#' extract_correlations() for a set of separate fits
+#' @noRd
+set_correlations <- function(fits, estimator, pairs, covariates, group, scale,
+                             links, ci_level, converged, call) {
+  components <- names(fits)
+  converged <- check_set_converged(converged, components, call = call)
+  if (!is.null(covariates) && !is.data.frame(covariates)) {
+    cli::cli_abort(
+      c(
+        "With a set of fits, {.arg covariates} must be a data frame with the \\
+         grouping column and one numeric column per covariate.",
+        i = "The components' data carry no covariates; a simulation set \\
+             keeps them in {.field covariate_data}."
+      ),
+      call = call
+    )
+  }
+  resolved <- resolve_links(
+    NULL, links %||% set_model_links(fits), scale,
+    call = call
+  )
+
+  parts <- lapply(stats::setNames(nm = components), function(nm) {
+    fit_correlation_parts(
+      fits[[nm]], estimator, resolved$scale, group, ci_level,
+      converged[[nm]],
+      call = call
+    )
+  })
+
+  subject_draws <- NULL
+  if (any(c("draws", "point") %in% estimator)) {
+    subject_draws <- bind_subject_draws(
+      lapply(parts, `[[`, "subject_draws"),
+      call = call
+    )
+  }
+  # model correlations exist within a fit only
+  model_rows <- lapply(components, function(nm) {
+    rows <- parts[[nm]]$cor_estimates
+    if (is.null(rows) || nrow(rows) == 0L) {
+      return(NULL)
+    }
+    rows <- tibble::as_tibble(rows)
+    if ("level" %in% names(rows)) rows <- rows[rows$level %in% "cor", ]
+    rows$term <- prefix_pair_terms(rows$term, nm)
+    rows[setdiff(names(rows), c("var1", "var2", "level"))]
+  })
+  cor_estimates <- NULL
+  if (!all(vapply(model_rows, is.null, logical(1)))) {
+    cor_estimates <- dplyr::bind_rows(model_rows)
+  }
+  n_subjects <- NULL
+  for (p in parts) n_subjects <- n_subjects %||% p$n_subjects
+
+  out <- correlations_from_parts(
     subject_draws, cor_estimates, covariates,
     estimator = estimator, pairs = pairs,
     scale = resolved$scale, links = resolved$links,
-    ci_level = ci_level, converged = converged,
-    n_subjects = n_subjects, group = group_column,
-    call = error_call
+    ci_level = ci_level, converged = NA,
+    n_subjects = n_subjects, group = parts[[1L]]$group,
+    call = call
   )
+  verdicts <- vapply(parts, function(p) as.logical(p$converged), logical(1))
+  out$converged <- pair_converged(out$var1, out$var2, verdicts)
+  out
 }
 
 #' Validate `ci_level`: one number strictly between 0 and 1
@@ -799,9 +1089,13 @@ point_estimator_rows <- function(subject_draws, cov, pair_table, scale,
 #' @param fits A fit (a `brmsfit`, or any object with an
 #'   [extract_subject_draws()] method), a list of fits with one element
 #'   per replication, or a tibble from [extract_correlations()] that may
-#'   carry `replication` and `condition` columns.
-#' @param truth A `bmmtools_simulation`; a list of them, parallel to
-#'   `fits`; or a list with the tibbles `cor` (`term`, `true_value`),
+#'   carry `replication` and `condition` columns. With a simulation set as
+#'   `truth`, a set of fits from [fit_components()] (or a list of fits
+#'   named by component), or an unnamed list of such sets, one per
+#'   replication.
+#' @param truth A `bmmtools_simulation`; a `bmmtools_simulation_set` from
+#'   [simulate_components()]; a list of either, parallel to `fits`; or a
+#'   list with the tibbles `cor` (`term`, `true_value`),
 #'   `subjects` (`id`, `term`, `true_value`) and optionally `covariates`
 #'   (`id`, `term`, `true_value`), all on the link scale and each of them
 #'   optionally carrying `replication` or `condition`. Without a
@@ -844,6 +1138,12 @@ point_estimator_rows <- function(subject_draws, cov, pair_table, scale,
 #'
 #' A truth pair no estimate matches produces a warning and is dropped;
 #' every pair unmatched is an error.
+#'
+#' **Separate fits.** A correlation between parameters of two separately
+#' fitted models is attenuated by the reliabilities of both subject
+#' estimates, so `bias` against `true_value` is expected even when every
+#' fit is sound; see the section "Separate fits" of
+#' [extract_correlations()].
 #'
 #' @examples
 #' extracted <- tibble::tibble(
@@ -889,7 +1189,11 @@ recover_correlations <- function(fits,
   scale <- rlang::arg_match(scale)
   check_ci_level(ci_level, call = error_call)
 
-  kind <- cor_fits_kind(fits, call = error_call)
+  kind <- if (is_simulation_set_truth(truth)) {
+    cor_set_fits_kind(fits, call = error_call)
+  } else {
+    cor_fits_kind(fits, call = error_call)
+  }
   truths <- cor_truth_input(truth, fits, kind, call = error_call)
   if (identical(kind, "tibble")) {
     fits <- check_extracted_correlations(fits, call = error_call)
@@ -902,15 +1206,22 @@ recover_correlations <- function(fits,
     )), call = error_call)$term
   }
 
-  model_links <- NULL
-  if (!identical(kind, "tibble")) model_links <- model_links_of(fits)
+  model_links <- switch(kind,
+    fit = ,
+    list = model_links_of(fits),
+    set = set_model_links(fits),
+    sets = set_model_links(fits[[1L]]),
+    NULL
+  )
   if (is.null(links) && is.null(model_links) && length(truths$links) > 0L) {
     links <- unlist(truths$links)
   }
-  resolved <- resolve_links(
-    if (identical(kind, "tibble")) NULL else fits, links, scale,
-    call = error_call
-  )
+  # a set's tables are prefixed here, so they reach resolve_links() as
+  # `links`; model_links_of() would read one fit's unprefixed table
+  link_source <- NULL
+  if (kind %in% c("fit", "list")) link_source <- fits
+  if (kind %in% c("set", "sets")) links <- links %||% model_links
+  resolved <- resolve_links(link_source, links, scale, call = error_call)
 
   estimates <- if (identical(kind, "tibble")) {
     tibble_cor_estimates(fits, estimator, resolved$scale, pairs, error_call)
@@ -1007,6 +1318,16 @@ cor_fits_kind <- function(fits, call = rlang::caller_env()) {
   if (is.data.frame(fits)) {
     return("tibble")
   }
+  if (inherits(fits, "bmmtools_fit_set")) {
+    cli::cli_abort(
+      c(
+        "A set of fits needs a {.cls bmmtools_simulation_set} as \\
+         {.arg truth}.",
+        i = "Pass the result of {.fn simulate_components} as {.arg truth}."
+      ),
+      call = call
+    )
+  }
   if (is_one_fit(fits)) {
     return("fit")
   }
@@ -1024,10 +1345,74 @@ cor_fits_kind <- function(fits, call = rlang::caller_env()) {
   )
 }
 
+#' Is `truth` a simulation set, or a list of them?
+#' @noRd
+is_simulation_set_truth <- function(truth) {
+  if (inherits(truth, "bmmtools_simulation_set")) {
+    return(TRUE)
+  }
+  is.list(truth) && !is.object(truth) && length(truth) > 0L &&
+    all(vapply(truth, inherits, logical(1), what = "bmmtools_simulation_set"))
+}
+
+#' Is this one set of fits, a list of sets or an extracted tibble?
+#'
+#' Used when `truth` is a simulation set, so that a plain named list of fits
+#' is read as one set rather than as replications named by the list.
+#'
+#' @noRd
+cor_set_fits_kind <- function(fits, call = rlang::caller_env()) {
+  if (is.data.frame(fits)) {
+    return("tibble")
+  }
+  if (is_fit_set(fits, call = call)) {
+    return("set")
+  }
+  is_set_list <- is.list(fits) && !is.object(fits) && length(fits) > 0L &&
+    is.null(names(fits)) &&
+    all(vapply(fits, function(f) {
+      inherits(f, "bmmtools_fit_set") || (is.list(f) && !is.object(f))
+    }, logical(1)))
+  if (is_set_list && all(vapply(fits, is_fit_set, logical(1), call = call))) {
+    return("sets")
+  }
+  cli::cli_abort(
+    c(
+      "With a simulation set as {.arg truth}, {.arg fits} must be a set of \\
+       fits, a list of sets, or a tibble from {.fn extract_correlations}, \\
+       not {.obj_type_friendly {fits}}.",
+      i = "A set of fits comes from {.fn fit_components}, or is a list of \\
+           fits named by component."
+    ),
+    call = call
+  )
+}
+
+#' Check that each set of fits has the simulation set's components
+#' @noRd
+check_set_components <- function(sim_set, fit_sets, call) {
+  expected <- names(sim_set$components)
+  for (fits in fit_sets) {
+    if (!setequal(names(fits), expected)) {
+      cli::cli_abort(
+        c(
+          "The fits must be named by the simulation set's components.",
+          i = "Fits: {.val {names(fits)}}; components: {.val {expected}}."
+        ),
+        call = call
+      )
+    }
+  }
+  invisible(NULL)
+}
+
 #' @noRd
 is_one_fit <- function(x) {
-  is.object(x) && !is.data.frame(x) &&
-    !inherits(x, "bmmtools_simulation")
+  set_classes <- c(
+    "bmmtools_simulation", "bmmtools_simulation_set", "bmmtools_fit_set",
+    "bmmtools_component"
+  )
+  is.object(x) && !is.data.frame(x) && !inherits(x, set_classes)
 }
 
 #' Validate an extracted correlation tibble
@@ -1092,7 +1477,7 @@ fit_cor_estimates <- function(fits, kind, truths, estimator, resolved,
     out$replication <- rep(label, nrow(out))
     out
   }
-  if (identical(kind, "fit")) {
+  if (kind %in% c("fit", "set")) {
     return(one(fits, 1L))
   }
   labels <- names(fits) %||% seq_along(fits)
@@ -1150,18 +1535,36 @@ cor_truth_input <- function(truth, fits, kind, call = rlang::caller_env()) {
     )
   }
 
-  if (inherits(truth, "bmmtools_simulation")) {
+  # a simulation set carries prefixed truth tables and a prefixed link
+  # table; otherwise it is read as a simulation is
+  links_of <- function(sim) {
+    if (inherits(sim, "bmmtools_simulation_set")) sim$links else sim$model$links
+  }
+  fit_sets <- switch(kind,
+    set = list(fits),
+    sets = fits,
+    list()
+  )
+
+  if (inherits(truth, c("bmmtools_simulation", "bmmtools_simulation_set"))) {
+    if (inherits(truth, "bmmtools_simulation_set")) {
+      check_set_components(truth, fit_sets, call)
+    }
     parts <- sim_parts(truth)
-    parts$links <- truth$model$links
+    parts$links <- links_of(truth)
     return(normalise_cor_truth(parts, call))
   }
 
+  sim_class <- "bmmtools_simulation"
+  if (is_simulation_set_truth(truth)) sim_class <- "bmmtools_simulation_set"
   is_sim_list <- is.list(truth) && !is.object(truth) && length(truth) > 0L &&
-    all(vapply(truth, inherits, logical(1), what = "bmmtools_simulation"))
+    all(vapply(truth, inherits, logical(1), what = sim_class))
   if (is_sim_list) {
     n_fits <- switch(kind,
-      fit = 1L,
-      list = length(fits),
+      fit = ,
+      set = 1L,
+      list = ,
+      sets = length(fits),
       NA_integer_
     )
     if (!is.na(n_fits) && length(truth) != n_fits) {
@@ -1171,10 +1574,19 @@ cor_truth_input <- function(truth, fits, kind, call = rlang::caller_env()) {
         call = call
       )
     }
-    labels <- if (identical(kind, "list")) {
+    labels <- if (kind %in% c("list", "sets")) {
       names(fits) %||% seq_along(fits)
     } else {
       names(truth) %||% seq_along(truth)
+    }
+    if (identical(sim_class, "bmmtools_simulation_set")) {
+      for (i in seq_along(truth)) {
+        check_set_components(
+          truth[[i]],
+          if (identical(kind, "sets")) fit_sets[i] else fit_sets,
+          call
+        )
+      }
     }
     pieces <- lapply(seq_along(truth), function(i) {
       parts <- sim_parts(truth[[i]])
@@ -1187,7 +1599,7 @@ cor_truth_input <- function(truth, fits, kind, call = rlang::caller_env()) {
       dplyr::bind_rows(lapply(pieces, `[[`, name))
     })
     parts <- stats::setNames(bound, c("cor", "subjects", "covariates"))
-    parts$links <- truth[[1L]]$model$links
+    parts$links <- links_of(truth[[1L]])
     return(normalise_cor_truth(parts, call))
   }
 

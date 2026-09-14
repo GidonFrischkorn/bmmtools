@@ -20,10 +20,14 @@ recover_correlations(
 \item{fits}{A fit (a \code{brmsfit}, or any object with an
 \code{\link[=extract_subject_draws]{extract_subject_draws()}} method), a list of fits with one element
 per replication, or a tibble from \code{\link[=extract_correlations]{extract_correlations()}} that may
-carry \code{replication} and \code{condition} columns.}
+carry \code{replication} and \code{condition} columns. With a simulation set as
+\code{truth}, a set of fits from \code{\link[=fit_components]{fit_components()}} (or a list of fits
+named by component), or an unnamed list of such sets, one per
+replication.}
 
-\item{truth}{A \code{bmmtools_simulation}; a list of them, parallel to
-\code{fits}; or a list with the tibbles \code{cor} (\code{term}, \code{true_value}),
+\item{truth}{A \code{bmmtools_simulation}; a \code{bmmtools_simulation_set} from
+\code{\link[=simulate_components]{simulate_components()}}; a list of either, parallel to \code{fits}; or a
+list with the tibbles \code{cor} (\code{term}, \code{true_value}),
 \code{subjects} (\code{id}, \code{term}, \code{true_value}) and optionally \code{covariates}
 (\code{id}, \code{term}, \code{true_value}), all on the link scale and each of them
 optionally carrying \code{replication} or \code{condition}. Without a
@@ -85,6 +89,12 @@ it is dropped with a message.
 
 A truth pair no estimate matches produces a warning and is dropped;
 every pair unmatched is an error.
+
+\strong{Separate fits.} A correlation between parameters of two separately
+fitted models is attenuated by the reliabilities of both subject
+estimates, so \code{bias} against \code{true_value} is expected even when every
+fit is sound; see the section "Separate fits" of
+\code{\link[=extract_correlations]{extract_correlations()}}.
 }
 \examples{
 extracted <- tibble::tibble(

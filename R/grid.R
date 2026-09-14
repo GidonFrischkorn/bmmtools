@@ -34,15 +34,24 @@ cell_paths <- function(dir, row, rep) {
   )
 }
 
+#' The cells of a grid with their seeds
 #' @noRd
-check_grid <- function(grid, call = rlang::caller_env()) {
+grid_cell_table <- function(n_rows, reps, seed) {
+  cells <- grid_cells(n_rows, reps)
+  cells$seed <- cell_seed(seed, cells$row, cells$rep)
+  cells
+}
+
+#' @noRd
+check_grid <- function(grid, required = c("n_subjects", "n_trials"),
+                       call = rlang::caller_env()) {
   if (!is.data.frame(grid)) {
     cli::cli_abort(
       "{.arg grid} must be a data frame, not {.obj_type_friendly {grid}}.",
       call = call
     )
   }
-  missing <- setdiff(c("n_subjects", "n_trials"), names(grid))
+  missing <- setdiff(required, names(grid))
   if (length(missing) > 0L) {
     cli::cli_abort(
       "{.arg grid} is missing the column{?s} {.val {missing}}.",
@@ -53,6 +62,47 @@ check_grid <- function(grid, call = rlang::caller_env()) {
     cli::cli_abort("{.arg grid} has no rows.", call = call)
   }
   invisible(grid)
+}
+
+#' Check `reps`, `smoke` and `preflight`, apply smoke mode, create `dir`
+#'
+#' Shared by both forms of recovery_grid().
+#'
+#' @return A list with `grid`, `reps` and `dir` as run.
+#' @noRd
+grid_run_setup <- function(grid, reps, dir, smoke, preflight,
+                           call = rlang::caller_env()) {
+  reps <- check_count(reps, "reps", call = call)
+  if (!rlang::is_bool(smoke) || !rlang::is_bool(preflight)) {
+    cli::cli_abort(
+      "{.arg smoke} and {.arg preflight} must be {.code TRUE} or \\
+       {.code FALSE}.",
+      call = call
+    )
+  }
+  if (isTRUE(smoke)) {
+    grid <- grid[seq_len(min(2L, nrow(grid))), , drop = FALSE]
+    reps <- min(reps, 2L)
+    dir <- file.path(dir, "smoke")
+  }
+  dir.create(dir, recursive = TRUE, showWarnings = FALSE)
+  list(grid = grid, reps = reps, dir = dir)
+}
+
+#' Warn at the end of a grid about the cells that failed to fit
+#' @param labels One label per failed cell (or cell and component).
+#' @param message The first failure's message.
+#' @noRd
+warn_failed_cells <- function(labels, message, what = "cell") {
+  if (length(labels) == 0L) {
+    return(invisible(NULL))
+  }
+  # the noun is pluralised here: a string inside cli would set the quantity
+  noun <- if (length(labels) == 1L) what else paste0(what, "s")
+  cli::cli_warn(c(
+    paste(length(labels), noun, "failed to fit: {.val {labels}}."),
+    i = "The first message: {message}"
+  ))
 }
 
 #' Apply a row's parameter columns
@@ -276,13 +326,13 @@ cell_simulation <- function(paths, model, values, row, seed, subjects,
 #' The preflight: one short fit of the first cell before the loop
 #' @noRd
 run_preflight <- function(sim, model, formula, prior, dir, dots, fitter,
-                          call = rlang::caller_env()) {
+                          file = "preflight", call = rlang::caller_env()) {
   short <- utils::modifyList(dots, list(chains = 1, iter = 200))
   if (!is.null(short$warmup) && short$warmup >= 200) short$warmup <- 100
   cache_args <- c(
     list(
       formula = formula, data = sim$data, model = model,
-      file = file.path(dir, "preflight"), prior = prior,
+      file = file.path(dir, file), prior = prior,
       refit = "always", .fitter = fitter
     ),
     short
@@ -380,9 +430,12 @@ check_extraction_args <- function(levels, correlations, cor_scale,
 #' request is dropped, so that the result is what a fresh extraction
 #' would give. An unreadable file counts as no sidecar.
 #'
+#' The set-level sidecar of the component form stores its keys, one per
+#' component, under `keys` and no estimates; `key_field` names the field.
+#'
 #' @return The trimmed sidecar, or `NULL`.
 #' @noRd
-read_sidecar <- function(path, key, request) {
+read_sidecar <- function(path, key, request, key_field = "key") {
   if (!file.exists(path)) {
     return(NULL)
   }
@@ -390,7 +443,7 @@ read_sidecar <- function(path, key, request) {
   scale_ok <- is.null(request$correlations) ||
     identical(stored$cor_scale, request$cor_scale)
   matches <- is.list(stored) &&
-    identical(stored$key, key) &&
+    identical(stored[[key_field]], key) &&
     identical(stored$bmmtools_version, bmmtools_version()) &&
     all(request$levels %in% stored$levels) &&
     all(request$correlations %in% stored$correlations) &&
@@ -399,10 +452,12 @@ read_sidecar <- function(path, key, request) {
     return(NULL)
   }
   estimates <- stored$estimates
-  stored$estimates <- estimates[estimates$level %in% request$levels, ]
+  if (!is.null(estimates)) {
+    stored$estimates <- estimates[estimates$level %in% request$levels, ]
+  }
   if (is.null(request$correlations)) {
     stored["cor_estimates"] <- list(NULL)
-  } else {
+  } else if (!is.null(stored$cor_estimates)) {
     cors <- stored$cor_estimates
     cors <- cors[cors$estimator %in% request$correlations, ]
     stored$cor_estimates <- cors[
@@ -411,6 +466,27 @@ read_sidecar <- function(path, key, request) {
     ]
   }
   stored
+}
+
+#' Write a sidecar: its key(s), what it was extracted with, the extraction
+#'
+#' @param keys A named list, `list(key = )` for a cell or a component,
+#'   `list(keys = )` for the set-level sidecar.
+#' @param levels Whether to record the requested levels (the set-level
+#'   sidecar holds no estimates and records none).
+#' @noRd
+write_sidecar <- function(path, keys, request, extracted, levels = TRUE) {
+  sidecar <- c(
+    keys,
+    list(bmmtools_version = bmmtools_version()),
+    if (levels) list(levels = request$levels),
+    list(
+      correlations = request$correlations,
+      cor_scale = request$cor_scale
+    ),
+    extracted
+  )
+  write_atomic(path, function(tmp) saveRDS(sidecar, tmp))
 }
 
 #' Everything the grid keeps from one fit, while it is in memory
@@ -470,17 +546,7 @@ run_cell <- function(sim, model, formula, prior, paths, seed, dots, fitter,
       if (is.null(extracted)) {
         fit <- rlang::exec(fit_cached, !!!cache_args)
         extracted <- extract_cell(fit, sim, request)
-        sidecar <- c(
-          list(
-            key = key,
-            bmmtools_version = bmmtools_version(),
-            levels = request$levels,
-            correlations = request$correlations,
-            cor_scale = request$cor_scale
-          ),
-          extracted
-        )
-        write_atomic(paths$est, function(tmp) saveRDS(sidecar, tmp))
+        write_sidecar(paths$est, list(key = key), request, extracted)
       }
       list(
         status = "ok", message = NA_character_,
@@ -646,6 +712,27 @@ check_model_correlations <- function(correlations, formula, re_cor, tasks,
   invisible(NULL)
 }
 
+#' The model of grid row 1, evaluated when `model` is a function
+#'
+#' Evaluated once, before anything else, because its form decides which
+#' form of the grid runs. A grid that is not a data frame with rows is left
+#' to `check_grid()`.
+#'
+#' @noRd
+grid_first_model <- function(model, grid) {
+  if (!is.function(model) || !is.data.frame(grid) || nrow(grid) == 0L) {
+    return(model)
+  }
+  model(grid[1L, , drop = FALSE])
+}
+
+#' Is `x` a non-empty plain list of components?
+#' @noRd
+is_component_list <- function(x) {
+  is.list(x) && !is.object(x) && length(x) > 0L &&
+    all(vapply(x, inherits, logical(1), what = "bmmtools_component"))
+}
+
 #' The formula of one grid row
 #'
 #' `formula` is `NULL` (the default formula of the row's model), a
@@ -683,8 +770,12 @@ grid_formula <- function(formula, row, i, model, re_cor, task_col,
 #'
 #' @param model A `bmmodel`, or a function of one grid row (a one-row
 #'   data frame) returning one, for models whose constructor depends on
-#'   the design.
-#' @param grid A data frame with the columns `n_subjects` and `n_trials`.
+#'   the design. Or a list of [recovery_component()]s, or a function of the
+#'   row returning such a list, to simulate several models for the same
+#'   people and fit each on its own; see the section "Components".
+#' @param grid A data frame with the columns `n_subjects` and `n_trials`
+#'   (with components, `n_subjects` only; see "Components" for their
+#'   columns).
 #'   A column named after a parameter gives that cell's population value
 #'   on the link scale, overriding `pars`; a column `sd_<parameter>`
 #'   overrides `sds`; a column `cor_<a>__<b>` sets the correlation of two
@@ -709,7 +800,8 @@ grid_formula <- function(formula, row, i, model, re_cor, task_col,
 #'   cell's model; or a `function(row)` of the one-row grid data frame
 #'   returning a `bmmformula`, called once per row, for designs whose
 #'   formula depends on the row.
-#' @param prior Passed to [fit_cached()].
+#' @param prior Passed to [fit_cached()]; with components, `NULL` or a list
+#'   with a prior per component.
 #' @param generator As in [simulate_recovery()].
 #' @param seed Master seed. Each cell derives its own from it and the
 #'   cell's row and replication, so a cell is reproducible on its own.
@@ -781,6 +873,60 @@ grid_formula <- function(formula, row, i, model, re_cor, task_col,
 #' grid has run. Otherwise the cell goes through [fit_cached()] again,
 #' which reuses a cached fit, and the sidecar is rewritten.
 #'
+#' @section Components:
+#' With `model` a list of [recovery_component()]s (or a `function(row)`
+#' returning one, the same components by name in every row), each cell
+#' simulates one set with [simulate_components()] under the cell's seed
+#' and fits every component on its own through [fit_cached()]. `pars`,
+#' `sds`, `generator`, `tasks`, `task_col`, `re_cor` and `formula` belong to
+#' the components and are errors here; `cors`, `covariates`, `seed`,
+#' `reps`, `scale`, `levels`, `correlations`, `cor_scale`, `smoke`,
+#' `preflight` and `...` keep their meaning, and `prior` is `NULL` or a
+#' list by component, as in [fit_components()]. `subjects = "fixed"` is not
+#' supported for components yet. A component cannot be named `sim`, `est`,
+#' `cor` or `sd`.
+#'
+#' Grid columns: `n_subjects`; `n_trials_<comp>` for a component's number
+#' of trials (a plain `n_trials` column is an error); `<comp>_<par>` or
+#' `<comp>_<par>_<task_col><level>` for population values, a bare parameter
+#' setting every task and a full term overriding it; `sd_<comp>_<par>` for
+#' SDs; `cor_<a>__<b>` with prefixed terms or covariates, in either order.
+#' They apply to numeric `pars` and `sds` of a component and to the result
+#' of a function-valued one. A missing value (`NA`) leaves the component's
+#' value, so a column may name a task that only some rows have. A column
+#' whose component or term is unknown is an error; so is a column whose
+#' prefix is no component but whose remainder is a term of one, such as a
+#' misspelt component name. Other columns are left for `model` and `cors`
+#' functions.
+#'
+#' Files per cell: `cell-<row>-rep-<rep>-sim.rds` holds the set;
+#' `cell-<row>-rep-<rep>-<comp>.rds` (with its `.key`) each fit; a sidecar
+#' `cell-<row>-rep-<rep>-<comp>-est.rds` per component holds its estimates
+#' and, with `"model"` requested, its model correlations; and
+#' `cell-<row>-rep-<rep>-cor.rds` holds what needs every fit, the
+#' correlations of [extract_correlations()] on the set of fits (covariates
+#' included) and the subject means, with the components' keys. A resume in
+#' which every sidecar matches reads no fit; otherwise the fits are obtained
+#' through [fit_cached()], which reuses cached ones, and the stale sidecars
+#' are rewritten. The preflight fits every component of the first cell
+#' into `<dir>/preflight-<comp>`, and is skipped when each of them has a
+#' cached fit or a usable sidecar.
+#'
+#' The result is one `bmmtools_recovery` with prefixed terms (`a_kappa`,
+#' `b_c_task1`); `converged` is that component fit's verdict, and
+#' `scale = "natural"` uses every component's links. The `cells` attribute
+#' has one row per cell and component, with a `component` column; the
+#' `correlations` and `subject_means` attributes use prefixed terms, so
+#' [subject_table()] works on the result. A component whose fit fails is
+#' recorded as `"error"` for that cell, the cell's other components are
+#' still scored, its correlations and subject means are skipped, and the
+#' grid goes on.
+#'
+#' Correlations between parameters of separately fitted components are
+#' attenuated by the reliabilities of both estimates; see "Separate fits"
+#' in [extract_correlations()]. The `"model"` estimator works within one
+#' fit only and needs a component `formula` with correlated terms.
+#'
 #' @examples
 #' \dontrun{
 #' out <- recovery_grid(
@@ -819,34 +965,51 @@ recovery_grid <- function(model,
                           preflight = TRUE,
                           ...,
                           .fitter = NULL) {
+  first_model <- grid_first_model(model, grid)
+  if (is_component_list(first_model)) {
+    given <- c(
+      pars = !missing(pars), sds = !missing(sds),
+      tasks = !missing(tasks), task_col = !missing(task_col),
+      formula = !missing(formula), generator = !missing(generator),
+      re_cor = !missing(re_cor)
+    )
+    return(recovery_grid_components(
+      model, first_model, grid,
+      dir = dir, reps = reps, cors = cors, covariates = covariates,
+      prior = prior, seed = seed, subjects = subjects, scale = scale,
+      levels = levels, correlations = correlations, cor_scale = cor_scale,
+      smoke = smoke, preflight = preflight, dots = rlang::list2(...),
+      fitter = .fitter, given = names(given)[given]
+    ))
+  }
   subjects <- rlang::arg_match(subjects)
   re_cor <- rlang::arg_match(re_cor)
   scale <- rlang::arg_match(scale)
   extraction <- check_extraction_args(levels, correlations, cor_scale)
   check_model_correlations(extraction$correlations, formula, re_cor, tasks)
   check_grid(grid)
-  reps <- check_count(reps, "reps")
   dots <- rlang::list2(...)
-  if (!rlang::is_bool(smoke) || !rlang::is_bool(preflight)) {
-    cli::cli_abort(
-      "{.arg smoke} and {.arg preflight} must be {.code TRUE} or \\
-       {.code FALSE}."
-    )
-  }
-  if (isTRUE(smoke)) {
-    grid <- grid[seq_len(min(2L, nrow(grid))), , drop = FALSE]
-    reps <- min(reps, 2L)
-    dir <- file.path(dir, "smoke")
-  }
-  dir.create(dir, recursive = TRUE, showWarnings = FALSE)
+  setup <- grid_run_setup(grid, reps, dir, smoke, preflight)
+  grid <- setup$grid
+  reps <- setup$reps
+  dir <- setup$dir
 
   models <- vector("list", nrow(grid))
   model_for <- function(i) {
     if (is.null(models[[i]])) {
-      models[[i]] <<- if (is.function(model)) {
-        model(grid[i, , drop = FALSE])
-      } else {
+      models[[i]] <<- if (!is.function(model)) {
         model
+      } else if (i == 1L) {
+        first_model
+      } else {
+        model(grid[i, , drop = FALSE])
+      }
+      if (is_component_list(models[[i]])) {
+        cli::cli_abort(c(
+          "The model of grid row {i} is a list of components, but row 1's \\
+           is a single model.",
+          i = "Every row's {.arg model} must be of the same form."
+        ))
       }
       check_model(models[[i]])
     }
@@ -868,8 +1031,7 @@ recovery_grid <- function(model,
     grid, model_for(1L), covariates, design$tasks, design$task_col
   )
 
-  cells <- grid_cells(nrow(grid), reps)
-  cells$seed <- cell_seed(seed, cells$row, cells$rep)
+  cells <- grid_cell_table(nrow(grid), reps, seed)
   sims <- vector("list", nrow(cells))
   runs <- vector("list", nrow(cells))
   first_rep <- vector("list", nrow(grid))
@@ -940,14 +1102,10 @@ recovery_grid <- function(model,
 
   status <- vapply(runs, function(r) r$status, character(1))
   failed <- which(status == "error")
-  if (length(failed) > 0L) {
-    # nolint next: object_usage_linter. Used by cli's glue interpolation.
-    labels <- sprintf("row-%d rep %d", cells$row[failed], cells$rep[failed])
-    cli::cli_warn(c(
-      "{length(failed)} cell{?s} failed to fit: {.val {labels}}.",
-      i = "The first message: {runs[[failed[[1L]]]]$message}"
-    ))
-  }
+  warn_failed_cells(
+    sprintf("row-%d rep %d", cells$row[failed], cells$rep[failed]),
+    if (length(failed) > 0L) runs[[failed[[1L]]]]$message
+  )
 
   out <- score_cells(runs, sims, cells, unlist(links), scale, request)
   attr(out, "cells") <- tibble::tibble(

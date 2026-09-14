@@ -30,11 +30,14 @@ reference:
   - simulate_recovery
   - cors_from_factors
   - recovery_formula
+  - recovery_component
+  - simulate_components
 
 - title: Fit and run a study
   desc: Cached fitting, the convergence gate and the design grid.
   contents:
   - fit_cached
+  - fit_components
   - check_convergence
   - recovery_grid
 

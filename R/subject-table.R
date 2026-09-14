@@ -97,12 +97,15 @@ label_subject_means <- function(means, truth, covariate_names, condition,
 #' [extract_correlations()]). bmmtools does not fit that model itself and
 #' does not depend on lavaan.
 #'
-#' @param x A `bmmtools_simulation`, together with `fit`; or the result of
-#'   [recovery_grid()], whose attribute `subject_means` carries the
-#'   posterior means, medians and true values of every cell.
+#' @param x A `bmmtools_simulation`, together with `fit`; a
+#'   `bmmtools_simulation_set` from [simulate_components()], together with
+#'   its fits; or the result of [recovery_grid()], whose attribute
+#'   `subject_means` carries the posterior means, medians and true values of
+#'   every cell.
 #' @param fit The fit of `x` when `x` is a simulation: a `brmsfit`, or any
-#'   object with an [extract_subject_draws()] method. Not used with a grid
-#'   result.
+#'   object with an [extract_subject_draws()] method. For a simulation set,
+#'   the fits from [fit_components()], one per component, whose terms appear
+#'   prefixed with the component name. Not used with a grid result.
 #' @param point The point estimate: the posterior `"mean"` or `"median"`
 #'   of each subject's value.
 #' @param scale `"link"` or `"natural"`. On the natural scale the true
@@ -171,6 +174,28 @@ subject_table <- function(x,
       condition = NA_character_, replication = 1L
     )
     model_links <- x$model$links
+  } else if (inherits(x, "bmmtools_simulation_set")) {
+    # separate fits, bound subject by subject under prefixed terms
+    is_set <- !is.null(fit) && is_fit_set(fit, call = error_call)
+    if (!is_set) {
+      cli::cli_abort(
+        c(
+          "A simulation set needs its fits in {.arg fit}, one per component.",
+          i = "They come from {.fn fit_components}."
+        ),
+        call = error_call
+      )
+    }
+    check_set_components(x, list(fit), call = error_call)
+    means <- subject_means_from_draws(
+      set_subject_draws(fit, call = error_call), x$truth$covariates,
+      call = error_call
+    )
+    long <- label_subject_means(
+      means, x$truth, names(x$covariates),
+      condition = NA_character_, replication = 1L
+    )
+    model_links <- x$links
   } else if (!is.null(attr(x, "subject_means"))) {
     if (!is.null(fit)) {
       cli::cli_abort(
