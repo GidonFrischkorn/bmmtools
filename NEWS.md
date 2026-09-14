@@ -1,6 +1,6 @@
 # bmmtools 0.0.0.9000
 
-* A package website, <https://gidonfrischkorn.github.io/bmmtools/>, with
+* A package website, <https://www.gfrischkorn.org/bmmtools/>, with
   five articles: validating a new model end to end, running a recovery
   grid, prior predictive checks, validating a model without a built-in
   adapter, and the definitions of the recovery summary columns. The

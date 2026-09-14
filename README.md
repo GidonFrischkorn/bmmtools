@@ -65,8 +65,7 @@ recover_subjects(fit, sim$truth$subjects) |> plot_recovery()
 replications, with one file per cell and a resume, and `prior_check()`
 shows what the priors imply for the data before any model is fitted to
 them. The articles on the [package
-website](https://gidonfrischkorn.github.io/bmmtools/) walk through each
-step.
+website](https://www.gfrischkorn.org/bmmtools/) walk through each step.
 
 ## What bmmtools is not
 

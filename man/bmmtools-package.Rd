@@ -34,24 +34,24 @@ gives bias, RMSE, coverage, interval width and the correlations.
 scale. \code{\link[=plot_recovery]{plot_recovery()}} and \code{\link[=plot_prior_check]{plot_prior_check()}} draw both.
 
 The articles on the package website walk through each step:
-\url{https://gidonfrischkorn.github.io/bmmtools/}.
+\url{https://www.gfrischkorn.org/bmmtools/}.
 }
 
 \seealso{
 Useful links:
 \itemize{
   \item \url{https://github.com/GidonFrischkorn/bmmtools}
-  \item \url{https://gidonfrischkorn.github.io/bmmtools/}
+  \item \url{https://www.gfrischkorn.org/bmmtools/}
   \item Report bugs at \url{https://github.com/GidonFrischkorn/bmmtools/issues}
 }
 
 }
 \author{
-\strong{Maintainer}: Gidon T. Frischkorn \email{gidon.frischkorn@psychologie.uzh.ch} (\href{https://orcid.org/0000-0002-5055-9764}{ORCID}) [copyright holder]
+\strong{Maintainer}: Gidon T. Frischkorn \email{gfrischkorn@icloud.com} (\href{https://orcid.org/0000-0002-5055-9764}{ORCID}) [copyright holder]
 
 Authors:
 \itemize{
-  \item Gidon T. Frischkorn \email{gidon.frischkorn@psychologie.uzh.ch} (\href{https://orcid.org/0000-0002-5055-9764}{ORCID}) [copyright holder]
+  \item Gidon T. Frischkorn \email{gfrischkorn@icloud.com} (\href{https://orcid.org/0000-0002-5055-9764}{ORCID}) [copyright holder]
 }
 
 }

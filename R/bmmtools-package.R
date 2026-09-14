@@ -23,7 +23,7 @@
 #' scale. [plot_recovery()] and [plot_prior_check()] draw both.
 #'
 #' The articles on the package website walk through each step:
-#' <https://gidonfrischkorn.github.io/bmmtools/>.
+#' <https://www.gfrischkorn.org/bmmtools/>.
 #'
 #' @keywords internal
 "_PACKAGE"
