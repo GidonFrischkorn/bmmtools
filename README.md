@@ -19,6 +19,7 @@ and only the scorer changes:
 |----|----|----|----|
 | `recover()` | a fixed grid of generating values | posterior vs. truth: correlation with CI, RMSE, bias, CrI coverage | can this model be estimated from data of this size |
 | `prior_check()` | the prior | the observable scale: floor and ceiling rates, quantile profile | are these priors sane on the scale a reader understands |
+| `recover_correlations()` | correlated generating values, or a factor model | between-subject correlations three ways (the model’s own, per draw, of posterior means) against the generating and the in-sample correlation | can this model measure individual differences and their correlates |
 | `sbc()` (*planned*) | the prior | posterior rank of the truth (a thin adapter over the SBC package) | is the implementation correct |
 | `cross_check()` (*planned*) | a fixed grid, or real data | a closed-form estimator, another implementation, or published values | does the new model agree with what is already known |
 
@@ -27,8 +28,10 @@ other package does. Scoring dispatches on `brmsfit`, so a plain brms fit
 can be scored too; the model-aware generate layer needs bmm.
 
 The package is under construction: `recover()`, `recover_subjects()`,
-`prior_check()` and the simulation grid are built, `sbc()` and
-`cross_check()` are not yet.
+`prior_check()`, the simulation grid and correlation recovery
+(`recover_correlations()`, `subject_table()`, and several models fitted
+to the same simulated people) are built; `sbc()` and `cross_check()` are
+not yet.
 
 ## Who it is for
 

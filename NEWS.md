@@ -32,4 +32,5 @@ First release: tools to validate cognitive measurement models fitted with bmm.
 * `inverse_link()` transforms values from the link scale for the twelve links bmm uses.
 * `recovery_mixture2p` and `prior_check_sdt_yn` are example results that need no Stan.
 * A pkgdown website with five articles: <https://www.gfrischkorn.org/bmmtools/>.
+* A hex logo, `man/figures/logo.png`.
 * Licensed under GPL (>= 2), compatible with bmm's GPL-2.
