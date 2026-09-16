@@ -216,3 +216,166 @@ test_that("opposite perfect correlations give NA, not NaN", {
   # a perfect correlation on its own is still 1, not NA
   expect_equal(fisher_z_combine(r = c(1, 1), n = c(20, 20))$r, 1)
 })
+
+# the cross-check class --------------------------------------------------
+
+# One fit, several subjects: the shape summary() needs to have three or
+# more complete pairs per term, so the NA guards can be tested on both
+# sides of the boundary.
+cross_check_example <- function(n_subjects = 6L,
+                                terms = c("kappa", "thetat"),
+                                intervals = TRUE) {
+  ids <- as.character(seq_len(n_subjects))
+  fit <- structure(
+    list(parameters = terms, ids = ids), class = "mockfit"
+  )
+  reference <- tibble::tibble(
+    term = rep(terms, each = n_subjects),
+    estimate = rep(seq_len(n_subjects) / 10, times = length(terms)),
+    id = rep(ids, times = length(terms))
+  )
+  if (intervals) {
+    reference$ci_low <- reference$estimate - 0.05
+    reference$ci_high <- reference$estimate + 0.05
+  }
+  cross_check(fit, reference, scale = "link", level = "subject")
+}
+
+test_that("the cross-check constructor names the first missing column", {
+  x <- cross_check_example()
+  incomplete <- tibble::as_tibble(x)[setdiff(names(x), "overlap")]
+
+  err <- expect_error(
+    new_bmmtools_cross_check(incomplete, scale = "link", ci_level = 0.95)
+  )
+  expect_match(conditionMessage(err), "overlap")
+})
+
+test_that("the cross-check constructor rejects a column of the wrong type", {
+  x <- tibble::as_tibble(cross_check_example())
+  x$covered <- as.character(x$covered)
+
+  err <- expect_error(
+    new_bmmtools_cross_check(x, scale = "link", ci_level = 0.95)
+  )
+  expect_match(conditionMessage(err), "covered")
+})
+
+test_that("a cross-check keeps its class through filter, not select", {
+  x <- cross_check_example()
+
+  kept <- dplyr::filter(x, .data$term == "kappa")
+  expect_s3_class(kept, "bmmtools_cross_check")
+
+  dropped <- dplyr::select(x, "term", "estimate")
+  expect_false(inherits(dropped, "bmmtools_cross_check"))
+  expect_s3_class(dropped, "tbl_df")
+
+  # `reference` is a contract column, so dropping it demotes
+  without_reference <- x[setdiff(names(x), "reference")]
+  expect_false(inherits(without_reference, "bmmtools_cross_check"))
+})
+
+test_that("row subsetting a cross-check keeps the class", {
+  x <- cross_check_example()
+  expect_s3_class(x[1:3, ], "bmmtools_cross_check")
+})
+
+test_that("summary of a cross-check returns the documented columns", {
+  s <- summary(cross_check_example())
+  expect_equal(names(s), cross_check_summary_columns())
+  expect_s3_class(s, "bmmtools_cross_check_summary")
+  expect_equal(nrow(s), 2L)
+  expect_setequal(s$term, c("kappa", "thetat"))
+  expect_equal(unique(s$level), "subject")
+  expect_equal(unique(s$scale), "link")
+  expect_equal(s$n, c(6, 6))
+  # the mock reports a converged fit on every row
+  expect_equal(s$n_converged, c(6L, 6L))
+})
+
+test_that("summary of a cross-check is NA below three pairs", {
+  s <- summary(cross_check_example(n_subjects = 2L))
+  expect_true(all(is.na(s$r)))
+  expect_true(all(is.na(s$ccc)))
+  # the errors are still defined with two pairs
+  expect_false(anyNA(s$bias))
+  expect_false(anyNA(s$rmse))
+})
+
+test_that("share_overlap is NA without reference intervals", {
+  with_intervals <- summary(cross_check_example())
+  expect_false(anyNA(with_intervals$share_overlap))
+
+  without <- summary(cross_check_example(intervals = FALSE))
+  expect_true(all(is.na(without$share_overlap)))
+})
+
+test_that("summary of a cross-check summary is itself", {
+  s <- summary(cross_check_example())
+  expect_identical(summary(s), s)
+})
+
+test_that("an empty cross-check summarises to the empty contract", {
+  x <- cross_check_example()
+  empty <- x[integer(0), ]
+  s <- summary(empty)
+  expect_equal(names(s), cross_check_summary_columns())
+  expect_equal(nrow(s), 0L)
+})
+
+test_that("printing a cross-check names the scale and the reference", {
+  x <- cross_check_example()
+  out <- format(x)
+  expect_match(out[[1L]], "bmmtools_cross_check")
+  expect_true(any(grepl("link scale", out)))
+  expect_true(any(grepl("reference", out)))
+  expect_output(print(x), "bmmtools_cross_check")
+})
+
+test_that("printing an empty cross-check says so", {
+  x <- cross_check_example()
+  expect_true(any(grepl("No parameters", format(x[integer(0), ]))))
+})
+
+test_that("a cross-check whose contract was broken by hand is refused", {
+  x <- cross_check_example()
+  broken <- structure(
+    tibble::as_tibble(x)[setdiff(names(x), "covered")],
+    class = class(x)
+  )
+  expect_error(summary(broken), "covered")
+  expect_error(format(broken), "covered")
+})
+
+test_that("the cross-check constructor refuses a non-data-frame", {
+  expect_error(
+    new_bmmtools_cross_check(1:3, scale = "link", ci_level = 0.95),
+    "data frame"
+  )
+})
+
+test_that("a cross-check without a verdict counts n_converged as NA", {
+  x <- cross_check_example()
+  bare <- tibble::as_tibble(x)[setdiff(names(x), "converged")]
+  rebuilt <- new_bmmtools_cross_check(bare, scale = "link", ci_level = 0.95)
+
+  expect_true(all(is.na(rebuilt$converged)))
+  expect_identical(unique(summary(rebuilt)$n_converged), NA_integer_)
+})
+
+test_that("a verb that rebuilds a cross-check without the contract demotes", {
+  x <- cross_check_example()
+  reduced <- dplyr::summarise(x, m = mean(.data$bias))
+  expect_false(inherits(reduced, "bmmtools_cross_check"))
+  expect_s3_class(reduced, "tbl_df")
+})
+
+test_that("dplyr_reconstruct on a cross-check demotes a broken contract", {
+  # `[` intercepts every column-dropping verb, so this branch is the
+  # belt to that method's braces and is reached directly
+  x <- cross_check_example()
+  out <- dplyr::dplyr_reconstruct(tibble::tibble(term = "kappa"), x)
+  expect_false(inherits(out, "bmmtools_cross_check"))
+  expect_s3_class(out, "tbl_df")
+})

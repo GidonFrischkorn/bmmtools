@@ -5,6 +5,7 @@
 \alias{plot_recovery.default}
 \alias{plot_recovery.bmmtools_recovery}
 \alias{plot_recovery.bmmtools_cor_recovery}
+\alias{plot_recovery.bmmtools_cross_check}
 \title{Plot recovered estimates against their generating values}
 \usage{
 plot_recovery(x, ...)
@@ -31,11 +32,22 @@ plot_recovery(x, ...)
   identity_line = TRUE,
   ...
 )
+
+\method{plot_recovery}{bmmtools_cross_check}(
+  x,
+  facet_by = "term",
+  color_by = NULL,
+  intervals = TRUE,
+  identity_line = TRUE,
+  scales = "free",
+  ...
+)
 }
 \arguments{
 \item{x}{A \code{bmmtools_recovery} object from \code{\link[=recover]{recover()}} or
-\code{\link[=recover_subjects]{recover_subjects()}}, or a \code{bmmtools_cor_recovery} object from
-\code{\link[=recover_correlations]{recover_correlations()}}.}
+\code{\link[=recover_subjects]{recover_subjects()}}, a \code{bmmtools_cor_recovery} object from
+\code{\link[=recover_correlations]{recover_correlations()}}, or a \code{bmmtools_cross_check} object from
+\code{\link[=cross_check]{cross_check()}}.}
 
 \item{...}{Not used.}
 
@@ -80,6 +92,12 @@ distinguish them puts them on a cloud.
 For a correlation recovery from \code{\link[=recover_correlations]{recover_correlations()}} the x axis is
 the in-sample correlation of the simulated subjects (\code{truth = "sample"}) or the generating correlation (\code{truth = "true"}), and the
 points are coloured by estimator.
+
+For a cross-check from \code{\link[=cross_check]{cross_check()}} the x axis is the reference,
+the fit's interval runs vertically and the reference's own interval,
+where it has one, runs horizontally. Panels default to one per term at
+the subject level and to a single panel at the population level, where
+each term contributes one point; \code{facet_by} overrides either.
 }
 \examples{
 \dontshow{if (rlang::is_installed("ggplot2")) withAutoprint(\{ # examplesIf}

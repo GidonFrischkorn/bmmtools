@@ -221,3 +221,115 @@ test_that("plot_recovery rejects anything that is not a recovery object", {
   expect_error(plot_recovery(tibble::tibble(a = 1)), "bmmtools_recovery")
   expect_error(plot_recovery(1:10), "bmmtools_recovery")
 })
+
+# the cross-check method -------------------------------------------------
+
+cross_check_plot_example <- function(level = "subject",
+                                     n_subjects = 6L,
+                                     intervals = TRUE) {
+  ids <- as.character(seq_len(n_subjects))
+  fit <- structure(
+    list(parameters = c("kappa", "thetat"), ids = ids), class = "mockfit"
+  )
+  reference <- if (identical(level, "subject")) {
+    tibble::tibble(
+      term = rep(c("kappa", "thetat"), each = n_subjects),
+      estimate = rep(seq_len(n_subjects) / 10, times = 2L),
+      id = rep(ids, times = 2L)
+    )
+  } else {
+    tibble::tibble(term = c("kappa", "thetat"), estimate = c(0.5, 1.5))
+  }
+  if (intervals) {
+    reference$ci_low <- reference$estimate - 0.05
+    reference$ci_high <- reference$estimate + 0.05
+  }
+  cross_check(fit, reference, scale = "link", level = level)
+}
+
+test_that("plot_recovery on a cross-check returns a ggplot", {
+  skip_if_not_installed("ggplot2")
+  expect_s3_class(plot_recovery(cross_check_plot_example()), "ggplot")
+})
+
+test_that("the reference is on x and the estimate on y", {
+  skip_if_not_installed("ggplot2")
+  x <- cross_check_plot_example()
+  built <- ggplot2::ggplot_build(plot_recovery(x))
+  point_layer <- which(geom_classes(plot_recovery(x)) == "GeomPoint")
+
+  expect_setequal(built$data[[point_layer]]$x, x$reference)
+  expect_setequal(built$data[[point_layer]]$y, x$estimate)
+})
+
+test_that("both interval layers are drawn when the reference has intervals", {
+  skip_if_not_installed("ggplot2")
+  p <- plot_recovery(cross_check_plot_example())
+  expect_equal(sum(geom_classes(p) == "GeomLinerange"), 2L)
+  expect_true("GeomAbline" %in% geom_classes(p))
+})
+
+test_that("the horizontal layer is left out without reference intervals", {
+  skip_if_not_installed("ggplot2")
+  p <- plot_recovery(cross_check_plot_example(intervals = FALSE))
+  expect_equal(sum(geom_classes(p) == "GeomLinerange"), 1L)
+})
+
+test_that("intervals = FALSE removes both interval layers", {
+  skip_if_not_installed("ggplot2")
+  p <- plot_recovery(cross_check_plot_example(), intervals = FALSE)
+  expect_false("GeomLinerange" %in% geom_classes(p))
+})
+
+test_that("identity_line = FALSE removes the identity layer", {
+  skip_if_not_installed("ggplot2")
+  p <- plot_recovery(cross_check_plot_example(), identity_line = FALSE)
+  expect_false("GeomAbline" %in% geom_classes(p))
+})
+
+test_that("subject level panels by term, population level does not", {
+  skip_if_not_installed("ggplot2")
+  subject <- plot_recovery(cross_check_plot_example("subject"))
+  expect_s3_class(subject$facet, "FacetWrap")
+
+  population <- plot_recovery(cross_check_plot_example("population"))
+  expect_s3_class(population$facet, "FacetNull")
+
+  # asking for panels overrides the level-dependent default
+  asked <- plot_recovery(
+    cross_check_plot_example("population"),
+    facet_by = "term"
+  )
+  expect_s3_class(asked$facet, "FacetWrap")
+})
+
+test_that("the axes name the scale the comparison was made on", {
+  skip_if_not_installed("ggplot2")
+  p <- plot_recovery(cross_check_plot_example())
+  expect_match(p$labels$x, "Reference")
+  expect_match(p$labels$x, "link scale")
+  expect_match(p$labels$y, "link scale")
+})
+
+test_that("a column that is not there is an error", {
+  skip_if_not_installed("ggplot2")
+  x <- cross_check_plot_example()
+  expect_error(plot_recovery(x, facet_by = "nope"), "nope")
+  expect_error(plot_recovery(x, color_by = "nope"), "nope")
+})
+
+test_that("colouring a cross-check by a column works", {
+  skip_if_not_installed("ggplot2")
+  p <- plot_recovery(cross_check_plot_example(), color_by = "source")
+  expect_s3_class(p, "ggplot")
+})
+
+test_that("a cross-check with a broken contract is refused by the plot", {
+  skip_if_not_installed("ggplot2")
+  x <- cross_check_plot_example()
+  broken <- structure(
+    tibble::as_tibble(x)[setdiff(names(x), "reference")],
+    class = class(x)
+  )
+  expect_error(plot_recovery(broken), "reference")
+})

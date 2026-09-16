@@ -111,9 +111,16 @@ recovery_panel_labels <- function(x, facet_by, call = rlang::caller_env()) {
 #' "sample"`) or the generating correlation (`truth = "true"`), and the
 #' points are coloured by estimator.
 #'
+#' For a cross-check from [cross_check()] the x axis is the reference,
+#' the fit's interval runs vertically and the reference's own interval,
+#' where it has one, runs horizontally. Panels default to one per term at
+#' the subject level and to a single panel at the population level, where
+#' each term contributes one point; `facet_by` overrides either.
+#'
 #' @param x A `bmmtools_recovery` object from [recover()] or
-#'   [recover_subjects()], or a `bmmtools_cor_recovery` object from
-#'   [recover_correlations()].
+#'   [recover_subjects()], a `bmmtools_cor_recovery` object from
+#'   [recover_correlations()], or a `bmmtools_cross_check` object from
+#'   [cross_check()].
 #' @param facet_by A column name to make panels from, or `NULL` for a
 #'   single panel. Defaults to `"term"`: parameters usually live on
 #'   scales too different to share an axis.
@@ -304,6 +311,73 @@ plot_recovery.bmmtools_cor_recovery <- function(x,
     ggplot2::labs(
       x = scale_label(scale, x_label),
       y = scale_label(scale, "Estimated correlation"),
+      colour = color_by
+    ) +
+    ggplot2::theme_bw()
+}
+
+#' @rdname plot_recovery
+#' @export
+plot_recovery.bmmtools_cross_check <- function(x,
+                                               facet_by = "term",
+                                               color_by = NULL,
+                                               intervals = TRUE,
+                                               identity_line = TRUE,
+                                               scales = "free",
+                                               ...) {
+  rlang::check_dots_empty()
+  rlang::check_installed("ggplot2", "to plot a cross-check.")
+  check_cross_check_contract(x)
+  # At the population level each term is a single point, and a panel per
+  # point says less than one panel holding the whole comparison. Asking
+  # for `facet_by` overrides this; `missing()` is what tells the two
+  # apart, as in extract_estimates().
+  if (missing(facet_by) && !any(x$level == "subject")) facet_by <- NULL
+  check_plot_column(x, facet_by, "facet_by")
+  check_plot_column(x, color_by, "color_by")
+
+  scale <- attr(x, "scale") %||% unique(x$scale)
+  data <- tibble::as_tibble(x)
+
+  mapping <- if (is.null(color_by)) {
+    ggplot2::aes(x = .data$reference, y = .data$estimate)
+  } else {
+    ggplot2::aes(
+      x = .data$reference, y = .data$estimate, colour = .data[[color_by]]
+    )
+  }
+
+  p <- ggplot2::ggplot(data, mapping)
+  if (isTRUE(identity_line)) {
+    p <- p + ggplot2::geom_abline(
+      slope = 1, intercept = 0, linetype = "dashed", colour = "grey40"
+    )
+  }
+  if (isTRUE(intervals)) {
+    p <- p + ggplot2::geom_linerange(
+      ggplot2::aes(ymin = .data$ci_low, ymax = .data$ci_high),
+      alpha = 0.5
+    )
+    # the reference's own interval runs along x, and only where it exists:
+    # a layer over all-NA bounds would draw nothing and warn about it
+    if (any(!is.na(data$ref_low) & !is.na(data$ref_high))) {
+      p <- p + ggplot2::geom_linerange(
+        data = data[!is.na(data$ref_low) & !is.na(data$ref_high), ],
+        mapping = ggplot2::aes(xmin = .data$ref_low, xmax = .data$ref_high),
+        alpha = 0.5
+      )
+    }
+  }
+  p <- p + ggplot2::geom_point()
+
+  if (!is.null(facet_by)) {
+    p <- p + ggplot2::facet_wrap(facet_by, scales = scales)
+  }
+
+  p +
+    ggplot2::labs(
+      x = scale_label(scale, "Reference"),
+      y = scale_label(scale, "Posterior median"),
       colour = color_by
     ) +
     ggplot2::theme_bw()

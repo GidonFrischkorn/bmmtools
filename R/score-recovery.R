@@ -162,9 +162,20 @@ model_links_of <- function(fits) {
 #' an error, because it almost always means a naming mismatch and a
 #' zero-row result would hide it until a plot came out blank.
 #'
+#' `cross_check()` joins its reference the same way, so `values`, `arg`
+#' and `hint` carry the other side's column names and vocabulary. The
+#' defaults are `recover()`'s, so its behaviour is unchanged.
+#'
+#' @param values The columns of `truth` the join carries over.
+#' @param arg The name this side goes by in the messages.
+#' @param hint The closing line of the nothing-matched error.
 #' @noRd
-join_truth <- function(estimates, truth, keys, call = rlang::caller_env()) {
-  truth <- tibble::as_tibble(truth)[unique(c(keys, "true_value"))]
+join_truth <- function(estimates, truth, keys,
+                       values = "true_value",
+                       arg = "truth",
+                       hint = "Generating values use bmm's parameter names.",
+                       call = rlang::caller_env()) {
+  truth <- tibble::as_tibble(truth)[unique(c(keys, values))]
 
   unmatched <- dplyr::anti_join(
     dplyr::distinct(truth[keys]), estimates[keys],
@@ -178,10 +189,10 @@ join_truth <- function(estimates, truth, keys, call = rlang::caller_env()) {
   if (nrow(joined) == 0L) {
     cli::cli_abort(
       c(
-        "No term in {.arg truth} matches an estimated parameter.",
+        "No term in {.arg {arg}} matches an estimated parameter.",
         i = "Estimated: {.val {unique(estimates$term)}}.",
-        i = "In {.arg truth}: {.val {unique(truth$term)}}.",
-        i = "Generating values use bmm's own parameter names."
+        i = "In {.arg {arg}}: {.val {unique(truth$term)}}.",
+        i = hint
       ),
       call = call
     )
@@ -195,7 +206,7 @@ join_truth <- function(estimates, truth, keys, call = rlang::caller_env()) {
       unmatched$term
     }
     cli::cli_warn(c(
-      "{nrow(unmatched)} row{?s} of {.arg truth} had no matching \\
+      "{nrow(unmatched)} row{?s} of {.arg {arg}} had no matching \\
        estimate and {?was/were} dropped.",
       x = "Not found: {.val {labels}}.",
       i = "Estimated: {.val {unique(estimates$term)}}."
@@ -210,6 +221,11 @@ join_truth <- function(estimates, truth, keys, call = rlang::caller_env()) {
 #' All four quantities go through the same inverse link, so that both
 #' sides of the comparison are on one scale and `bias` and `covered` are
 #' computed after the transform rather than before it.
+#'
+#' `values` names the point columns to transform; the interval bounds are
+#' always transformed. `cross_check()` passes `"estimate"` alone, because
+#' its reference arrives on the comparison scale already and must not be
+#' transformed a second time.
 #'
 #' The bounds are reordered afterwards. Two links in the vocabulary are
 #' decreasing (`inverse` and `loglog`), so the transform of the lower
@@ -226,7 +242,8 @@ join_truth <- function(estimates, truth, keys, call = rlang::caller_env()) {
 #' would silently deflate coverage.
 #'
 #' @noRd
-to_natural_scale <- function(x, links, call = rlang::caller_env()) {
+to_natural_scale <- function(x, links, values = c("estimate", "true_value"),
+                             call = rlang::caller_env()) {
   unbounded <- character()
   for (term in unique(x$term)) {
     link <- link_of(term, links)
@@ -244,8 +261,9 @@ to_natural_scale <- function(x, links, call = rlang::caller_env()) {
       high[spans_zero] <- NA_real_
       unbounded <- c(unbounded, term)
     }
-    x$estimate[rows] <- inverse_link(x$estimate[rows], link)
-    x$true_value[rows] <- inverse_link(x$true_value[rows], link)
+    for (value in values) {
+      x[[value]][rows] <- inverse_link(x[[value]][rows], link)
+    }
     x$ci_low[rows] <- pmin(low, high)
     x$ci_high[rows] <- pmax(low, high)
   }

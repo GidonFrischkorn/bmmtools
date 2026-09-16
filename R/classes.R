@@ -967,6 +967,326 @@ print.bmmtools_cor_recovery_summary <- function(x, ...) {
   invisible(x)
 }
 
+# the cross-check --------------------------------------------------------
+
+#' The cross-check contract
+#'
+#' The apabayes `parameters` columns first, then the reference and the
+#' comparison (local/ARCHITECTURE.md decision 14). There is no
+#' `replication` column: `cross_check()` takes one fit, and a list of
+#' them is `recover()`'s shape (spec, decision (a)).
+#'
+#' @noRd
+cross_check_contract <- function() {
+  c(
+    term = "character",
+    estimate = "double",
+    ci_low = "double",
+    ci_high = "double",
+    ci_method = "character",
+    ci_level = "double",
+    rhat = "double",
+    ess_bulk = "double",
+    ess_tail = "double",
+    reference = "double",
+    ref_low = "double",
+    ref_high = "double",
+    source = "character",
+    bias = "double",
+    covered = "logical",
+    overlap = "logical",
+    scale = "character",
+    level = "character",
+    id = "character",
+    converged = "logical"
+  )
+}
+
+#' The columns `summary()` of a cross-check returns
+#'
+#' `bias`, `rmse` and `coverage` are `summary.bmmtools_recovery()`'s
+#' words for the same quantities (decision N3), so the three scorers read
+#' with one vocabulary. `share_overlap` has no analogue there and keeps
+#' its own name.
+#'
+#' @noRd
+cross_check_summary_columns <- function() {
+  c(
+    "term", "level", "scale", "n", "n_converged",
+    "bias", "rmse", "coverage", "share_overlap",
+    "r", "r_low", "r_high", "ccc", "ccc_low", "ccc_high"
+  )
+}
+
+#' Construct a cross-check object
+#' @noRd
+new_bmmtools_cross_check <- function(x,
+                                     scale,
+                                     ci_level,
+                                     call = NULL,
+                                     error_call = rlang::caller_env()) {
+  if (!is.data.frame(x)) {
+    cli::cli_abort(
+      "{.arg x} must be a data frame, not {.obj_type_friendly {x}}.",
+      call = error_call
+    )
+  }
+  # a hand-built estimates tibble carries no verdict; an unknown is not a
+  # failure, as for the recovery classes
+  if (!"converged" %in% names(x)) x$converged <- rep(NA, nrow(x))
+
+  contract <- cross_check_contract()
+  missing <- setdiff(names(contract), names(x))
+  if (length(missing) > 0L) {
+    cli::cli_abort(
+      c(
+        "A cross-check object is missing the column{?s} {.val {missing}}.",
+        i = "The contract is {.val {names(contract)}}."
+      ),
+      call = error_call
+    )
+  }
+  for (column in names(contract)) {
+    if (!identical(typeof(x[[column]]), contract[[column]])) {
+      cli::cli_abort(
+        "Column {.val {column}} must be {.cls {contract[[column]]}}, \\
+         not {.cls {typeof(x[[column]])}}.",
+        call = error_call
+      )
+    }
+  }
+
+  x <- tibble::as_tibble(x)[names(contract)]
+  structure(
+    x,
+    class = c("bmmtools_cross_check", class(x)),
+    scale = scale,
+    ci_level = ci_level,
+    call = call
+  )
+}
+
+#' @noRd
+check_cross_check_contract <- function(x, call = rlang::caller_env()) {
+  missing <- setdiff(names(cross_check_contract()), names(x))
+  if (length(missing) > 0L) {
+    cli::cli_abort(
+      c(
+        "This {.cls bmmtools_cross_check} is missing the column{?s} \\
+         {.val {missing}}.",
+        i = "It was built by hand or altered in place; {.fn cross_check} \\
+             and the {.pkg dplyr} verbs keep the contract or drop the \\
+             class."
+      ),
+      call = call
+    )
+  }
+  invisible(x)
+}
+
+#' @noRd
+#' @importFrom dplyr dplyr_reconstruct
+#' @exportS3Method dplyr::dplyr_reconstruct
+dplyr_reconstruct.bmmtools_cross_check <- function(data, template) {
+  if (!all(names(cross_check_contract()) %in% names(data))) {
+    return(tibble::as_tibble(data))
+  }
+  NextMethod()
+}
+
+#' Subset a cross-check object
+#'
+#' As for [`[.bmmtools_recovery`]: `dplyr::select()` on a tibble subclass
+#' subsets through `[` and never reaches `dplyr_reconstruct()`, so this
+#' method is what drops the class once a contract column is gone.
+#'
+#' @param x A `bmmtools_cross_check` object.
+#' @param ... Passed to the tibble method.
+#' @return A cross-check object while the contract holds, a plain tibble
+#'   once it does not.
+#' @export
+`[.bmmtools_cross_check` <- function(x, ...) {
+  demote_if_incomplete(NextMethod(), names(cross_check_contract()))
+}
+
+#' Rows whose fit passed the convergence gate
+#'
+#' `count_converged()` counts replications, which a cross-check does not
+#' have: it compares one fit. Counting rows keeps `n_converged` on the
+#' same footing as `n`. `NA` when no row carries a verdict, never `0`.
+#'
+#' @noRd
+count_converged_rows <- function(converged) {
+  if (all(is.na(converged))) {
+    return(NA_integer_)
+  }
+  sum(converged %in% TRUE)
+}
+
+#' @noRd
+empty_cross_check_summary <- function() {
+  columns <- cross_check_summary_columns()
+  types <- stats::setNames(rep("double", length(columns)), columns)
+  types[c("term", "level", "scale")] <- "character"
+  types[["n_converged"]] <- "integer"
+  tibble::as_tibble(lapply(types, function(type) vector(type, 0L)))
+}
+
+#' @noRd
+new_cross_check_summary <- function(x) {
+  x <- tibble::as_tibble(x)[cross_check_summary_columns()]
+  structure(x, class = c("bmmtools_cross_check_summary", class(x)))
+}
+
+#' Summarise a cross-check into per-parameter metrics
+#'
+#' One row per term and level: the mean and root mean square of
+#' `estimate - reference`, the share of fit intervals covering the
+#' reference, the share of rows whose intervals overlap, and the
+#' correlation and Lin's concordance between the two sides.
+#'
+#' `bias` here is a difference from a comparison value, not from a known
+#' truth; see [cross_check()].
+#'
+#' @param object A `bmmtools_cross_check` object from [cross_check()].
+#' @param ... Not used.
+#'
+#' @return A `bmmtools_cross_check_summary` tibble with the columns
+#'   `term`, `level`, `scale`, `n`, `n_converged`, `bias`, `rmse`,
+#'   `coverage`, `share_overlap`, `r`, `r_low`, `r_high`, `ccc`,
+#'   `ccc_low` and `ccc_high`.
+#'
+#' @details
+#' `r` and `ccc` come from the pairs of `estimate` and `reference` in the
+#' group and are `NA`, never `0`, below three complete pairs or without
+#' spread on either side. At the population level with one fit each term
+#' contributes a single pair, so both are `NA` and the table is the
+#' per-term difference and coverage; at the subject level they are the
+#' comparison across subjects. `share_overlap` is `NA` for a reference
+#' without intervals. `n_converged` counts the rows whose fit passed
+#' [check_convergence()] and is `NA` when no row carries a verdict.
+#'
+#' @export
+summary.bmmtools_cross_check <- function(object, ...) {
+  check_cross_check_contract(object)
+  if (nrow(object) == 0L) {
+    return(new_cross_check_summary(empty_cross_check_summary()))
+  }
+
+  keys <- paste(object$level, object$term, sep = "\r")
+  groups <- split(seq_len(nrow(object)), factor(keys, levels = unique(keys)))
+  pieces <- lapply(groups, function(i) {
+    rows <- object[i, ]
+    r <- metric_r(rows$estimate, rows$reference)
+    ccc <- metric_ccc(rows$estimate, rows$reference)
+    tibble::as_tibble(list(
+      term = rows$term[[1L]],
+      level = rows$level[[1L]],
+      scale = rows$scale[[1L]],
+      n = as.double(r$n),
+      n_converged = count_converged_rows(rows$converged),
+      bias = metric_bias(rows$estimate, rows$reference),
+      rmse = metric_rmse(rows$estimate, rows$reference),
+      coverage = metric_coverage(rows$reference, rows$ci_low, rows$ci_high),
+      share_overlap = mean_or_na(as.double(rows$overlap)),
+      r = r$r,
+      r_low = r$r_low,
+      r_high = r$r_high,
+      ccc = ccc$ccc,
+      ccc_low = ccc$ccc_low,
+      ccc_high = ccc$ccc_high
+    ))
+  })
+
+  new_cross_check_summary(dplyr::bind_rows(pieces))
+}
+
+#' @rdname summary.bmmtools_cross_check
+#' @export
+summary.bmmtools_cross_check_summary <- function(object, ...) {
+  object
+}
+
+#' Format and print a cross-check
+#'
+#' The header names the scale and where the reference came from, and says
+#' that the reference is a comparison rather than a truth, because a
+#' column called `bias` invites the other reading.
+#'
+#' @param x A `bmmtools_cross_check` object.
+#' @param ... Not used.
+#'
+#' @return `format()` returns a character vector; `print()` returns `x`
+#'   invisibly.
+#'
+#' @export
+format.bmmtools_cross_check <- function(x, ...) {
+  check_cross_check_contract(x)
+  if (nrow(x) == 0L) {
+    return(c("<bmmtools_cross_check>", "No parameters compared."))
+  }
+  scale <- attr(x, "scale") %||% unique(x$scale)
+  terms <- unique(x$term)
+  levels <- unique(x$level)
+  sources <- unique(x$source)
+  summarised <- summary(x)
+
+  header <- c(
+    "<bmmtools_cross_check>",
+    paste0("Compared on the ", paste(scale, collapse = ", "), " scale."),
+    paste0(
+      length(terms), " parameter", if (length(terms) != 1L) "s",
+      ": ", paste(terms, collapse = ", "), "."
+    ),
+    paste0(
+      "Level", if (length(levels) != 1L) "s", ": ",
+      paste(levels, collapse = ", "), "."
+    ),
+    paste0(
+      "Reference source", if (length(sources) != 1L) "s", ": ",
+      paste(sources, collapse = ", "), "."
+    ),
+    paste0(
+      "The reference is a comparison, not a truth: bias is the signed ",
+      "difference from it."
+    ),
+    ""
+  )
+
+  note <- character(0)
+  if (anyNA(summarised$r)) {
+    note <- c(
+      "",
+      paste0(
+        "r and ccc are NA where they are not estimable: they need at ",
+        "least 3 complete pairs and spread on both sides."
+      )
+    )
+  }
+
+  c(header, utils::capture.output(print(summarised)), note)
+}
+
+#' @rdname format.bmmtools_cross_check
+#' @export
+print.bmmtools_cross_check <- function(x, ...) {
+  cat(format(x, ...), sep = "\n")
+  invisible(x)
+}
+
+#' @rdname format.bmmtools_cross_check
+#' @export
+format.bmmtools_cross_check_summary <- function(x, ...) {
+  utils::capture.output(print(tibble::as_tibble(x), n = Inf, width = Inf))
+}
+
+#' @rdname format.bmmtools_cross_check
+#' @export
+print.bmmtools_cross_check_summary <- function(x, ...) {
+  cat(format(x, ...), sep = "\n")
+  invisible(x)
+}
+
 # the prior check --------------------------------------------------------
 
 #' The prior-check contract

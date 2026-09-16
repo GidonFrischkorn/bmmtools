@@ -61,6 +61,12 @@ reference:
   - prior_check
   - summary.bmmtools_prior_check
 
+- title: Correctness
+  desc: Estimates against what is already known.
+  contents:
+  - cross_check
+  - summary.bmmtools_cross_check
+
 - title: Plot
   contents:
   - plot_recovery
@@ -78,6 +84,7 @@ reference:
   - starts_with("format.")
   - '`[.bmmtools_recovery`'
   - '`[.bmmtools_cor_recovery`'
+  - '`[.bmmtools_cross_check`'
   - '`[.bmmtools_prior_check`'
   - starts_with("dplyr_reconstruct.")
 

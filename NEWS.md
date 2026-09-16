@@ -27,6 +27,8 @@ First release: tools to validate cognitive measurement models fitted with bmm.
 * `plot_recovery()` is now a generic and also plots a correlation recovery, coloured by estimator.
 * `recovery_ccc()` computes the same concordance columns for any pair of vectors, such as recovered correlations or effects.
 * `plot_recovery()` plots estimates against generating values and, with `annotate = TRUE`, labels each panel with r and the concordance.
+* `cross_check()` compares a fit's estimates with a reference — a closed form such as `bmm::sdt_d()`, another implementation, or published values — and returns `bias`, whether the fit's interval covers the reference and whether the two intervals overlap, in the same tibble shape the other scorers return. The reference is a comparison, not a truth, and the documentation says so. Its `summary()` adds RMSE, coverage, the share of overlapping intervals, r and Lin's concordance.
+* `plot_recovery()` also plots a cross-check: the reference on x, the fit's interval vertical and the reference's horizontal.
 * `prior_check()` summarises the prior predictive distribution on the scale of the response.
 * `plot_prior_check()` plots prior predictive draws against the observed data.
 * `inverse_link()` transforms values from the link scale for the twelve links bmm uses.
