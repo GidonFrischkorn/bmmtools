@@ -108,3 +108,12 @@ bmmtools is not on CRAN yet.
 # install.packages("pak")
 pak::pak("GidonFrischkorn/bmmtools")
 ```
+
+`sbc()` needs the [SBC](https://hyunjimoon.github.io/SBC/) package,
+which is not on CRAN either. `pak` resolves it from the `Remotes:` line
+in DESCRIPTION, but CRAN strips that field, so install it directly if
+you took bmmtools from anywhere else:
+
+``` r
+pak::pak("hyunjimoon/SBC")
+```
