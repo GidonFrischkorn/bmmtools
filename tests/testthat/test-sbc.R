@@ -698,9 +698,10 @@ test_that("the attribute records what bmmtools decided", {
     info,
     c(
       "model", "n_sims", "level", "variables", "seed", "prior", "layout",
-      "diagnostics"
+      "diagnostics", "generator"
     )
   )
+  expect_identical(info$generator, "simulate_recovery")
   expect_identical(info$model, "mixture2p")
   expect_identical(info$n_sims, 5L)
   expect_identical(info$level, c("population", "sd"))
@@ -1498,4 +1499,413 @@ test_that("the subject level is ranked but never drawn from the prior row", {
   expect_setequal(
     names(sets$take), union(names(sets$draw), names(sets$rank))
   )
+})
+
+# the user generator (6.4, spec (d) under open question (i) = A) --------
+#
+# With a `generator`, bmmtools never interprets the prior draw row: the
+# generator receives every b_, sd_, cor_ and r_ draw of the prior fit
+# under the fit's own names and returns the data frame to fit, so any
+# formula works and the truth names equal the draw names by
+# construction. Each level then means every draw of that class for the
+# model's free parameters, resolved against the prior fit's names
+# rather than built from the formula --- which is what makes a
+# cell-means formula's `b_kappa_task1` rankable.
+
+#' Draws a fit of `kappa ~ 0 + task + (1 | id), thetat ~ 1 + (1 | id)`
+#' would carry, plus two names that must never be handed over or ranked:
+#' a fixed parameter's constant and the log density.
+task_draws <- function(n = 60L, subjects = c("1", "2", "3")) {
+  k <- seq_len(n)
+  values <- cbind(
+    b_kappa_task1 = log(4) + 0.01 * k,
+    b_kappa_task2 = log(5) + 0.01 * k,
+    b_thetat_Intercept = stats::qlogis(0.7) + 0.005 * k,
+    b_mu1_Intercept = 0,
+    sd_id__kappa_Intercept = 0.2 + 0.002 * k,
+    sd_id__thetat_Intercept = 0.3 + 0.002 * k,
+    lp__ = -k
+  )
+  for (i in subjects) {
+    values <- cbind(values, 0.1 * sin(k + as.integer(i)))
+    colnames(values)[ncol(values)] <- paste0("r_id__kappa[", i, ",Intercept]")
+  }
+  posterior::as_draws_matrix(values)
+}
+
+task_formula <- function() {
+  bmm::bmf(kappa ~ 0 + task + (1 | id), thetat ~ 1 + (1 | id))
+}
+
+task_data <- function() {
+  out <- sbc_data(n_subjects = 3L, n_trials = 4L)
+  out$task <- rep(c("task1", "task2"), length.out = nrow(out))
+  out
+}
+
+#' A proper prior on the cell means, which brms's default leaves flat and
+#' `check_improper_priors()` would otherwise warn about. Per coefficient,
+#' because that check reads the coefficient rows, which brms leaves empty
+#' when a class-level prior covers them (a false positive of Milestone
+#' 4's check, noted in STATE-milestone-6.md, not fixed here).
+task_prior <- function() {
+  brms::set_prior(
+    "normal(0, 1)", class = "b", coef = "tasktask1", nlpar = "kappa"
+  ) +
+    brms::set_prior(
+      "normal(0, 1)", class = "b", coef = "tasktask2", nlpar = "kappa"
+    )
+}
+
+#' A generator that records what it was given and returns the layout
+#' with fresh responses
+recording_generator <- function() {
+  seen <- new.env(parent = emptyenv())
+  seen$draws <- list()
+  seen$data <- list()
+  f <- function(draws, data) {
+    seen$draws[[length(seen$draws) + 1L]] <- draws
+    seen$data[[length(seen$data) + 1L]] <- data
+    data$y <- seq_len(nrow(data)) + length(seen$draws)
+    data
+  }
+  list(f = f, seen = seen)
+}
+
+test_that("a generator with a task formula runs where the default errors", {
+  skip_if_not_installed("SBC")
+  skip_if_not_installed("bmm")
+  skip_on_cran()
+  mock <- sbc_mock_fitter(draws = task_draws())
+
+  expect_error(
+    sbc_run(
+      mock,
+      formula = task_formula(), data = task_data(), n_sims = 2L,
+      prior = task_prior()
+    ),
+    "intercept-only"
+  )
+
+  gen <- recording_generator()
+  results <- sbc_run(
+    sbc_mock_fitter(draws = task_draws()),
+    formula = task_formula(), data = task_data(), n_sims = 3L,
+    generator = gen$f, level = c("population", "sd"), prior = task_prior()
+  )
+
+  info <- attr(results, "bmmtools_sbc")
+  expect_identical(info$generator, "user")
+  expect_identical(info$level, c("population", "sd"))
+  expect_setequal(
+    info$variables,
+    c(
+      "b_kappa_task1", "b_kappa_task2", "b_thetat_Intercept",
+      "sd_id__kappa_Intercept", "sd_id__thetat_Intercept"
+    )
+  )
+  expect_setequal(unique(results$stats$variable), info$variables)
+})
+
+test_that("the generator receives the whole row of the four classes", {
+  skip_if_not_installed("SBC")
+  skip_if_not_installed("bmm")
+  skip_on_cran()
+  gen <- recording_generator()
+  mock <- sbc_mock_fitter(draws = task_draws())
+
+  sbc_run(
+    mock,
+    formula = task_formula(), data = task_data(), n_sims = 3L,
+    generator = gen$f, level = "population", prior = task_prior()
+  )
+
+  expect_length(gen$seen$draws, 3L)
+  row <- gen$seen$draws[[1L]]
+  expect_type(row, "double")
+  # every b_, sd_ and r_ draw, whether or not it is ranked ...
+  expect_setequal(
+    names(row),
+    c(
+      "b_kappa_task1", "b_kappa_task2", "b_thetat_Intercept",
+      "sd_id__kappa_Intercept", "sd_id__thetat_Intercept",
+      paste0("r_id__kappa[", 1:3, ",Intercept]")
+    )
+  )
+  # ... and neither a fixed parameter's constant nor the log density
+  expect_false(any(c("b_mu1_Intercept", "lp__") %in% names(row)))
+  # the data is the user's own frame, columns and all
+  expect_identical(gen$seen$data[[1L]], task_data())
+  # and what the generator returned is what was fitted
+  for (k in seq_along(sbc_dataset_calls(mock$calls))) {
+    call <- sbc_dataset_calls(mock$calls)[[k]]
+    expect_identical(call$data$y, seq_len(12L) + k)
+    expect_true("task" %in% call$columns)
+  }
+})
+
+test_that("the generator's truths are the row itself, under the fit's names", {
+  skip_if_not_installed("SBC")
+  skip_if_not_installed("bmm")
+  skip_on_cran()
+  gen <- recording_generator()
+
+  results <- sbc_run(
+    sbc_mock_fitter(draws = task_draws()),
+    formula = task_formula(), data = task_data(), n_sims = 2L,
+    generator = gen$f, level = "population", prior = task_prior()
+  )
+
+  first <- results$stats[results$stats$sim_id == 1L, ]
+  truths <- stats::setNames(first$simulated_value, first$variable)
+  ranked <- names(gen$seen$draws[[1L]])[1:3]
+  expect_equal(truths[ranked], gen$seen$draws[[1L]][ranked])
+})
+
+test_that("a generator that is not a two-argument function is refused", {
+  skip_if_not_installed("SBC")
+  skip_if_not_installed("bmm")
+  skip_on_cran()
+  mock <- sbc_mock_fitter()
+  expect_error(sbc_run(mock, generator = "no"), "function")
+  err <- expect_error(sbc_run(mock, generator = function(draws) draws))
+  expect_match(conditionMessage(err), "generator\\(draws, data\\)")
+  # dots count as accepting both
+  expect_no_error(check_sbc_generator(function(...) NULL))
+  expect_no_error(check_sbc_generator(NULL))
+})
+
+test_that("what the generator returns is checked, naming the data set", {
+  skip_if_not_installed("SBC")
+  skip_if_not_installed("bmm")
+  skip_on_cran()
+  err <- expect_error(
+    sbc_run(sbc_mock_fitter(), generator = function(draws, data) 1)
+  )
+  expect_match(conditionMessage(err), "data frame")
+  expect_match(conditionMessage(err), "data set 1")
+
+  err <- expect_error(sbc_run(
+    sbc_mock_fitter(),
+    generator = function(draws, data) data.frame(id = data$id)
+  ))
+  expect_match(conditionMessage(err), "\"y\"")
+
+  err <- expect_error(sbc_run(
+    sbc_mock_fitter(),
+    generator = function(draws, data) data.frame(y = data$y)
+  ))
+  expect_match(conditionMessage(err), "\"id\"")
+})
+
+test_that("an error inside the generator names the data set and the draw", {
+  skip_if_not_installed("SBC")
+  skip_if_not_installed("bmm")
+  skip_on_cran()
+  err <- expect_error(sbc_run(
+    sbc_mock_fitter(),
+    generator = function(draws, data) stop("boom")
+  ))
+  message <- conditionMessage(err)
+  expect_match(message, "data set 1")
+  expect_match(message, "b_kappa_Intercept")
+  expect_match(conditionMessage(err$parent), "boom")
+})
+
+test_that("in generator mode a level the prior fit lacks is dropped, named", {
+  skip_if_not_installed("SBC")
+  skip_if_not_installed("bmm")
+  skip_on_cran()
+  model <- bmm::mixture2p(resp_error = "y")
+  # a formula with a group term, fitted (by the mock) without sd_ draws:
+  # generator mode cannot know from the formula, so it reads the fit
+  mock <- sbc_mock_fitter(
+    variables = c("b_kappa_Intercept", "b_thetat_Intercept")
+  )
+  messages <- character(0)
+  results <- withCallingHandlers(
+    sbc_run(
+      mock,
+      level = c("population", "sd", "subject"),
+      generator = function(draws, data) data, quiet = FALSE
+    ),
+    message = function(m) {
+      messages <<- c(messages, conditionMessage(m))
+      invokeRestart("muffleMessage")
+    }
+  )
+  expect_true(any(grepl("Dropping.*sd.*sd_id__", messages)))
+  expect_true(any(grepl("Dropping.*subject.*r_id__", messages)))
+  expect_identical(attr(results, "bmmtools_sbc")$level, "population")
+
+  # without a group term the reason is the formula, not the fit
+  messages <- character(0)
+  withCallingHandlers(
+    sbc_run(
+      mock,
+      level = c("population", "sd"),
+      formula = bmm::bmf(kappa ~ 1, thetat ~ 1),
+      generator = function(draws, data) data, quiet = FALSE
+    ),
+    message = function(m) {
+      messages <<- c(messages, conditionMessage(m))
+      invokeRestart("muffleMessage")
+    }
+  )
+  expect_true(any(grepl("Dropping.*sd.*group term", messages)))
+})
+
+test_that("in generator mode cor ranks every correlation of the group", {
+  skip_if_not_installed("SBC")
+  skip_if_not_installed("bmm")
+  skip_on_cran()
+  model <- bmm::mixture2p(resp_error = "y")
+  mock <- sbc_mock_fitter(
+    variables = posterior::variables(sbc_prior_draws(1L))
+  )
+
+  results <- sbc_run(
+    mock,
+    level = c("population", "sd", "cor"),
+    formula = recovery_formula(model, re_cor = "all"),
+    generator = function(draws, data) data
+  )
+
+  expect_true(
+    "cor_id__kappa_Intercept__thetat_Intercept" %in%
+      attr(results, "bmmtools_sbc")$variables
+  )
+})
+
+test_that("in generator mode subject truths must carry the layout's labels", {
+  skip_if_not_installed("SBC")
+  skip_if_not_installed("bmm")
+  skip_on_cran()
+  mock <- sbc_mock_fitter(subjects = c("1", "2", "3"))
+
+  # the fit's own labels: fine, and the r_ draws are ranked
+  results <- sbc_run(
+    mock,
+    level = c("population", "subject"), n_sims = 2L,
+    generator = function(draws, data) data
+  )
+  expect_true(
+    "r_id__kappa[2,Intercept]" %in% attr(results, "bmmtools_sbc")$variables
+  )
+
+  # other labels: an error naming both sets, because SBC would rank
+  # nothing for those subjects and say nothing
+  err <- expect_error(sbc_run(
+    sbc_mock_fitter(subjects = c("1", "2", "3")),
+    level = c("population", "subject"), n_sims = 2L,
+    generator = function(draws, data) {
+      data$id <- data$id + 10L
+      data
+    }
+  ))
+  expect_match(conditionMessage(err), "11")
+  expect_match(conditionMessage(err), "labels")
+
+  # without the subject level the labels are the generator's business
+  expect_no_error(sbc_run(
+    sbc_mock_fitter(subjects = c("1", "2", "3")),
+    level = "population", n_sims = 2L,
+    generator = function(draws, data) {
+      data$id <- data$id + 10L
+      data
+    }
+  ))
+})
+
+test_that("an unbalanced design is fine when the generator owns the data", {
+  skip_if_not_installed("SBC")
+  skip_if_not_installed("bmm")
+  skip_on_cran()
+  data <- sbc_data()[-1L, ]
+
+  expect_error(sbc_run(sbc_mock_fitter(), data = data), "unbalanced")
+
+  results <- sbc_run(
+    sbc_mock_fitter(),
+    data = data, n_sims = 2L, level = "population",
+    generator = function(draws, data) data
+  )
+  layout <- attr(results, "bmmtools_sbc")$layout
+  expect_identical(layout$n_subjects, 3L)
+  expect_identical(layout$n_trials, 4L)
+})
+
+test_that("sbc_generator_sets resolves each level against the fit's names", {
+  available <- c(
+    "b_kappa_task1", "b_kappa_task2", "b_thetat_Intercept",
+    "b_mu1_Intercept", "Intercept_mu1", "sd_id__kappa_Intercept",
+    "cor_id__kappa_Intercept__thetat_Intercept",
+    "r_id__kappa[1,Intercept]", "r_id__kappa[2,Intercept]",
+    "z_1[1,1]", "lp__"
+  )
+  groups <- list(group = "id", correlated = TRUE, varying = "kappa")
+
+  sets <- sbc_generator_sets(
+    sbc_model(), groups, "id", c("population", "sd", "cor", "subject"),
+    available
+  )
+  expect_identical(sets$level, c("population", "sd", "cor", "subject"))
+  expect_setequal(
+    sets$take,
+    c(
+      "b_kappa_task1", "b_kappa_task2", "b_thetat_Intercept",
+      "sd_id__kappa_Intercept", "cor_id__kappa_Intercept__thetat_Intercept",
+      "r_id__kappa[1,Intercept]", "r_id__kappa[2,Intercept]"
+    )
+  )
+  expect_setequal(sets$rank, sets$take)
+
+  # ranking less than is taken
+  population <- sbc_generator_sets(
+    sbc_model(), groups, "id", "population", available
+  )
+  expect_setequal(
+    population$rank, c("b_kappa_task1", "b_kappa_task2", "b_thetat_Intercept")
+  )
+  expect_setequal(population$take, sets$take)
+
+  # no population draw at all is a bug, not a drop
+  expect_error(
+    sbc_generator_sets(sbc_model(), groups, "id", "population", "lp__"),
+    "population"
+  )
+})
+
+test_that("broad patterns name every draw of a class for a parameter", {
+  patterns <- sbc_variables(
+    sbc_model(), "id", c("population", "sd", "cor", "subject"),
+    broad = TRUE
+  )
+  expect_equal(
+    unname(patterns[names(patterns) == "population:kappa"]), "^b_kappa_"
+  )
+  expect_equal(unname(patterns[names(patterns) == "cor:id"]), "^cor_id__")
+  expect_true(grepl(patterns[["population:kappa"]], "b_kappa_task2"))
+  expect_false(grepl(patterns[["population:kappa"]], "b_kappa2_Intercept"))
+  expect_true(grepl(patterns[["sd:kappa"]], "sd_id__kappa_task1"))
+  expect_true(grepl(patterns[["subject:kappa"]], "r_id__kappa[s1,task1]"))
+  expect_false(grepl(patterns[["subject:kappa"]], "r_id__kappa2[1,Intercept]"))
+})
+
+test_that("the user generator refuses to be asked for more rows than it has", {
+  skip_if_not_installed("SBC")
+  skip_if_not_installed("bmm")
+  skip_on_cran()
+  model <- bmm::mixture2p(resp_error = "y")
+  draws <- posterior::subset_draws(
+    sbc_prior_draws(3L),
+    variable = c("b_kappa_Intercept", "b_thetat_Intercept")
+  )
+  generator <- sbc_user_generator(
+    draws, posterior::variables(draws), function(draws, data) data,
+    sbc_data(), model,
+    list(n_subjects = 3L, n_trials = 4L, group = "id", ids = c("1", "2", "3")),
+    group = "id", needs_group = FALSE
+  )
+  expect_error(SBC::generate_datasets(generator, 4L), "3")
 })

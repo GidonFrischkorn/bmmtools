@@ -134,18 +134,25 @@ sbc_prior_draws <- function(n_draws = 60L, group = "id", subjects = NULL) {
 #'   of the subject level has to say which labels its prior fit saw ---
 #'   which is also what a real prior fit does, since it is fitted to the
 #'   user's `data` and names its `r_` draws after that column's values.
+#' @param draws A `draws_matrix` to carry instead of [sbc_prior_draws()]'s,
+#'   for a fit whose names the default matrix cannot have --- a
+#'   cell-means formula's `b_kappa_task1`, say. `variables` and
+#'   `subjects` are then ignored: the caller has said exactly what the
+#'   fit carries.
 #' @return A list with `fitter` to inject and `calls`, an environment
 #'   holding `n` and the call log.
 #' @noRd
 sbc_mock_fitter <- function(variables = NULL, n_draws = 60L, group = "id",
-                            subjects = NULL) {
+                            subjects = NULL, draws = NULL) {
   calls <- new.env(parent = emptyenv())
   calls$n <- 0L
   calls$log <- list()
-  draws <- sbc_prior_draws(n_draws, group, subjects)
-  variables <- variables %||%
-    grep("^cor_", posterior::variables(draws), invert = TRUE, value = TRUE)
-  draws <- posterior::subset_draws(draws, variable = variables)
+  if (is.null(draws)) {
+    draws <- sbc_prior_draws(n_draws, group, subjects)
+    variables <- variables %||%
+      grep("^cor_", posterior::variables(draws), invert = TRUE, value = TRUE)
+    draws <- posterior::subset_draws(draws, variable = variables)
+  }
   fitter <- function(formula, data, model, prior = NULL, ...) {
     calls$n <- calls$n + 1L
     dots <- list(...)

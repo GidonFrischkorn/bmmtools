@@ -11,6 +11,7 @@ sbc(
   prior = NULL,
   n_sims = 100,
   level = c("population", "sd"),
+  generator = NULL,
   ...,
   seed = NULL,
   file = NULL,
@@ -26,20 +27,24 @@ sbc(
 \arguments{
 \item{model}{A \code{bmmodel}, built with the column names \code{data} uses.}
 
-\item{formula}{The \code{bmmformula} under check. Every parameter formula
-must be intercept-only, with or without one \code{(1 | id)} or
-\code{(1 | p | id)} term --- the shapes \code{\link[=recovery_formula]{recovery_formula()}} writes.
-Anything else is an error naming the term: the default generator
-maps a prior draw onto \code{\link[=simulate_recovery]{simulate_recovery()}}'s arguments, and that
-map is exact for those shapes and guesswork for a covariate or a
-task factor.}
+\item{formula}{The \code{bmmformula} under check. Without a \code{generator},
+every parameter formula must be intercept-only, with or without one
+\code{(1 | id)} or \code{(1 | p | id)} term --- the shapes
+\code{\link[=recovery_formula]{recovery_formula()}} writes. Anything else is an error naming the
+term: the default generator maps a prior draw onto
+\code{\link[=simulate_recovery]{simulate_recovery()}}'s arguments, and that map is exact for those
+shapes and guesswork for a covariate or a task factor. With a
+\code{generator} any formula works, as long as every parameter that has
+a group term has the same one, written as a bare column name.}
 
 \item{data}{The design to simulate over, and only that: the subjects
 are the unique values of the grouping column and the trials are the
 rows each of them has. The response values are ignored, because the
-generator replaces them. Every subject must have the same number of
-rows. The simulated data sets carry the same subject labels as
-\code{data}, which is what lets a subject truth meet its own \code{r_} draw.}
+generator replaces them. Without a \code{generator}, every subject must
+have the same number of rows. The simulated data sets carry the
+same subject labels as \code{data}, which is what lets a subject truth
+meet its own \code{r_} draw. With a \code{generator}, \code{data} is handed to it
+as it is, columns and all.}
 
 \item{prior}{A \code{brmsprior}, or \code{NULL} for bmm's defaults. This is the
 prior that is calibrated, so \code{NULL} calibrates bmm's own. A list is
@@ -71,7 +76,33 @@ everything the formula implies is always drawn from the prior and
 simulated from, because the ranks are only uniform when the data
 come from the joint prior. Holding the between-subject SDs at zero
 while the fitted model has a prior on them would take the
-population ranks down with it.}
+population ranks down with it.
+
+With a \code{generator}, each level means \strong{every} draw of that class
+for the model's free parameters, read off the prior fit rather than
+built from the formula: \code{"population"} every \verb{b_<par>_*} (so a
+cell-means formula's \code{b_kappa_task1} and a covariate's
+\code{b_kappa_cond}), \code{"sd"} every \verb{sd_<group>__<par>_*}, \code{"cor"} every
+\verb{cor_<group>__*} and \code{"subject"} every \verb{r_<group>__<par>[*]}. A
+level the prior fit has no draw of is dropped with a message.}
+
+\item{generator}{\code{NULL} simulates each data set with
+\code{\link[=simulate_recovery]{simulate_recovery()}}, which is exact for the intercept-only
+formulas above and requires them. A function lifts that
+restriction: it is called once per data set as
+\code{generator(draws, data)}, where \code{draws} is that data set's prior
+draw as a \strong{named numeric vector under the fit's own draw names}
+--- every \code{b_}, \code{sd_}, \code{cor_} and \code{r_} draw of the free parameters,
+whether or not it is ranked, because a generator handed less than
+the fit puts a prior on would simulate from a point mass where the
+fit has a prior --- and \code{data} is \code{data} as given. It returns the
+data frame to fit, which must carry the model's response columns
+and, when the formula has a group term, the grouping column with
+the labels of \code{data} if the subject level is ranked. bmmtools never
+interprets the row, so the truth names equal the draw names by
+construction. Note that brms's \code{r_} draws are deviations from the
+intercept: a generator that builds a subject's value adds them to
+the population value itself.}
 
 \item{...}{Passed to the fitter, for the prior fit and for every data
 set fit: \code{chains}, \code{iter}, \code{backend}, \code{init}, \code{control}. \code{cores},
@@ -114,7 +145,8 @@ that nothing is compiled.}
 attribute, \code{bmmtools_sbc}, holding \code{model}, \code{n_sims}, \code{level},
 \code{variables} (the draw names that were ranked), \code{seed} (\code{NA} when
 none was given), \code{prior} (\code{brms::prior_summary()} of the prior fit,
-which is what the draws came from), \code{layout} and \code{diagnostics}.
+which is what the draws came from), \code{layout}, \code{diagnostics} and
+\code{generator} (\code{"simulate_recovery"} or \code{"user"}).
 }
 \description{
 Simulation-based calibration (Talts et al. 2018; Modrák et al. 2023)
@@ -162,6 +194,40 @@ results <- sbc(
 )
 SBC::plot_rank_hist(results)
 attr(results, "bmmtools_sbc")$variables
+
+# any formula, with a generator that reads the draw row itself: here a
+# condition effect on kappa, so `draws` carries `b_kappa_cond` too
+design <- data.frame(
+  id = rep(1:20, each = 50), cond = rep(c(-0.5, 0.5), 500), y = 0
+)
+generate <- function(draws, data) {
+  # one call per subject and condition: rmixture2p() takes scalars
+  cells <- split(seq_len(nrow(data)), list(data$id, data$cond))
+  for (rows in cells) {
+    id <- data$id[[rows[[1]]]]
+    cond <- data$cond[[rows[[1]]]]
+    kappa <- exp(
+      draws[["b_kappa_Intercept"]] + draws[["b_kappa_cond"]] * cond +
+        draws[[paste0("r_id__kappa[", id, ",Intercept]")]]
+    )
+    p_mem <- plogis(
+      draws[["b_thetat_Intercept"]] +
+        draws[[paste0("r_id__thetat[", id, ",Intercept]")]]
+    )
+    data$y[rows] <- bmm::rmixture2p(
+      length(rows), kappa = kappa, p_mem = p_mem
+    )
+  }
+  data
+}
+results <- sbc(
+  model,
+  bmm::bmf(kappa ~ 1 + cond + (1 | id), thetat ~ 1 + (1 | id)),
+  design,
+  generator = generate,
+  n_sims = 20,
+  chains = 2, iter = 500, backend = "cmdstanr"
+)
 }
 
 }

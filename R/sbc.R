@@ -44,12 +44,22 @@ escape_regex <- function(x) {
 #'
 #' @param group The grouping factor, or `NULL` for a formula with no
 #'   group term, which then has no `sd`, `cor` or `subject` patterns.
+#' @param broad `FALSE` builds the exact, intercept-only shapes above,
+#'   for the default generator, whose formulas have no other shape.
+#'   `TRUE` builds the prefixes a user `generator` needs (spec (i),
+#'   decided A): every `b_<par>_*`, every `sd_<g>__<par>_*`, every
+#'   `cor_<g>__*` (one pattern, named after the group) and every
+#'   `r_<g>__<par>[*`, so that a cell-means `b_kappa_task1` or a random
+#'   slope's `sd_id__kappa_cond` is a draw of its level. The trailing
+#'   `_` after the parameter is what keeps `^b_kappa_` off
+#'   `b_kappa2_Intercept`.
 #' @return A character vector of regexes named `"<level>:<term>"`. The
 #'   name says which variable each pattern is there to find, which is
 #'   what lets `prior_parameter_draws()` report a pattern that found
 #'   nothing instead of quietly returning a narrower matrix.
 #' @noRd
-sbc_variables <- function(model, group, level, call = rlang::caller_env()) {
+sbc_variables <- function(model, group, level, broad = FALSE,
+                          call = rlang::caller_env()) {
   check_model(model, call = call)
   level <- rlang::arg_match(
     level, c("population", "sd", "cor", "subject"),
@@ -63,7 +73,11 @@ sbc_variables <- function(model, group, level, call = rlang::caller_env()) {
   }
 
   if ("population" %in% level) {
-    out <- add(out, paste0("^b_", esc, "_Intercept$"), "population", free)
+    out <- add(
+      out,
+      if (broad) paste0("^b_", esc, "_") else paste0("^b_", esc, "_Intercept$"),
+      "population", free
+    )
   }
   if (is.null(group)) {
     return(out)
@@ -71,9 +85,19 @@ sbc_variables <- function(model, group, level, call = rlang::caller_env()) {
   g <- escape_regex(group)
 
   if ("sd" %in% level) {
-    out <- add(out, paste0("^sd_", g, "__", esc, "_Intercept$"), "sd", free)
+    out <- add(
+      out,
+      if (broad) {
+        paste0("^sd_", g, "__", esc, "_")
+      } else {
+        paste0("^sd_", g, "__", esc, "_Intercept$")
+      },
+      "sd", free
+    )
   }
-  if ("cor" %in% level && length(free) > 1L) {
+  if ("cor" %in% level && broad) {
+    out <- add(out, paste0("^cor_", g, "__"), "cor", group)
+  } else if ("cor" %in% level && length(free) > 1L) {
     pairs <- utils::combn(seq_along(free), 2L)
     a <- pairs[1L, ]
     b <- pairs[2L, ]
@@ -93,7 +117,12 @@ sbc_variables <- function(model, group, level, call = rlang::caller_env()) {
   }
   if ("subject" %in% level) {
     out <- add(
-      out, paste0("^r_", g, "__", esc, "\\[.+,Intercept\\]$"),
+      out,
+      if (broad) {
+        paste0("^r_", g, "__", esc, "\\[")
+      } else {
+        paste0("^r_", g, "__", esc, "\\[.+,Intercept\\]$")
+      },
       "subject", free
     )
   }
@@ -366,9 +395,14 @@ check_sbc_formula <- function(formula, call = rlang::caller_env()) {
 #' relabels the simulated column to these before the two are matched by
 #' name.
 #'
+#' @param balanced `TRUE` refuses a design whose subjects have different
+#'   numbers of rows, because `simulate_recovery()` cannot produce one.
+#'   `FALSE`, for a user `generator` that owns the data, records the
+#'   modal count as `n_trials` and lets the design be.
 #' @return A list with `n_subjects`, `n_trials`, `group` and `ids`.
 #' @noRd
-sbc_layout <- function(data, group, call = rlang::caller_env()) {
+sbc_layout <- function(data, group, balanced = TRUE,
+                       call = rlang::caller_env()) {
   if (!is.data.frame(data)) {
     cli::cli_abort(
       "{.arg data} must be a data frame, not {.obj_type_friendly {data}}.",
@@ -394,7 +428,7 @@ sbc_layout <- function(data, group, call = rlang::caller_env()) {
 
   trials <- as.integer(counts)
   modal <- trials[[which.max(tabulate(match(trials, unique(trials))))]]
-  if (length(unique(trials)) > 1L) {
+  if (balanced && length(unique(trials)) > 1L) {
     # nolint next: object_usage_linter. Used by cli's glue interpolation.
     odd <- paste0(
       names(counts)[trials != modal], " (", trials[trials != modal], ")"
@@ -952,6 +986,257 @@ sbc_generator <- function(draws, rank, model, layout, correlated, group,
   SBC::SBC_generator_function(f, future.chunk.size = Inf)
 }
 
+#' Refuse a `generator` that is not a function of `(draws, data)`
+#' @noRd
+check_sbc_generator <- function(generator, call = rlang::caller_env()) {
+  if (is.null(generator)) {
+    return(invisible(NULL))
+  }
+  if (!is.function(generator)) {
+    cli::cli_abort(
+      c(
+        "{.arg generator} must be a function or {.code NULL}, \\
+         not {.obj_type_friendly {generator}}.",
+        i = "{.fn sbc} calls it as {.code generator(draws, data)}."
+      ),
+      call = call
+    )
+  }
+  arguments <- names(formals(generator))
+  if (!"..." %in% arguments && length(arguments) < 2L) {
+    cli::cli_abort(
+      c(
+        "{.arg generator} takes {length(arguments)} argument{?s}, and \\
+         {.fn sbc} calls it as {.code generator(draws, data)}.",
+        i = "{.arg draws} is one prior draw as a named numeric vector \\
+             under the fit's own draw names; {.arg data} is the layout \\
+             frame."
+      ),
+      call = call
+    )
+  }
+  invisible(NULL)
+}
+
+#' What a user generator receives and what is ranked, from the fit's names
+#'
+#' Generator mode (spec (i), decided A) does not build names from the
+#' formula, because the formula may have any shape: it reads the prior
+#' fit's own variable names and takes every `b_`, `sd_`, `cor_` and
+#' `r_` draw of the model's free parameters. The generator receives all
+#' of them (`take`), because a generator handed less than the fit puts a
+#' prior on would simulate from a point mass where the fit has a prior,
+#' and every rank would be off in silence. `level` then picks which
+#' classes are ranked, and a class the fit has no draw of is dropped
+#' with a message --- the formula can say why when it has no group term,
+#' and otherwise the fit is the reason.
+#'
+#' @param available The prior fit's variable names.
+#' @return As `sbc_pattern_sets()`, but `take` and `rank` are resolved
+#'   draw names rather than patterns.
+#' @noRd
+sbc_generator_sets <- function(model, groups, group, level, available,
+                               call = rlang::caller_env()) {
+  has_group <- !is.null(groups$group)
+  classes <- c("population", "sd", "cor", "subject")
+  patterns <- sbc_variables(
+    model, if (has_group) group else NULL, classes,
+    broad = TRUE, call = call
+  )
+  pattern_levels <- sbc_variable_levels(patterns)
+  matched <- lapply(patterns, function(p) grep(p, available, value = TRUE))
+  names_of <- function(lvls) {
+    unique(unlist(matched[pattern_levels %in% lvls], use.names = FALSE))
+  }
+  found <- vapply(
+    classes, function(lvl) length(names_of(lvl)) > 0L, logical(1)
+  )
+
+  if (!found[["population"]]) {
+    # nolint next: object_usage_linter. Used by cli's glue interpolation.
+    looked <- unname(patterns[pattern_levels == "population"])
+    cli::cli_abort(
+      c(
+        "No draw of the prior fit is a population-level draw of a free \\
+         parameter.",
+        x = "Looked for: {.val {looked}}.",
+        i = "The fit has: {.val {available}}.",
+        i = "Please report it at \\
+             {.url https://github.com/GidonFrischkorn/bmmtools/issues}."
+      ),
+      call = call
+    )
+  }
+
+  # nolint start: object_usage_linter. Used by cli's glue interpolation.
+  prefixes <- c(
+    sd = paste0("sd_", group, "__"),
+    cor = paste0("cor_", group, "__"),
+    subject = paste0("r_", group, "__")
+  )
+  # nolint end
+  dropped <- character(0)
+  for (lvl in level) {
+    if (found[[lvl]]) next
+    dropped <- c(dropped, lvl)
+    reason <- if (!has_group) {
+      "no parameter of the formula has a group term, so the fit has no \\
+       between-subject draws"
+    } else {
+      "the prior fit has no {.field {prefixes[[lvl]]}} draws"
+    }
+    cli::cli_inform(c(
+      paste0("Dropping the {.val {lvl}} level: ", reason, "."),
+      i = "The other levels are ranked as asked."
+    ))
+  }
+  rank <- setdiff(level, dropped)
+
+  list(
+    take = names_of(classes[found]),
+    rank = names_of(rank),
+    level = rank
+  )
+}
+
+#' Check the data frame a user generator returned, naming the data set
+#'
+#' The model's response columns and, when the formula has a group term,
+#' the grouping column have to be there, or brms would be the one to
+#' say so after the prior fit and a compile. When the subject level is
+#' ranked the grouping column also has to carry the layout's labels:
+#' the truths are named after the prior fit's labels, and a data set
+#' fitted under other labels would give SBC nothing to rank them
+#' against, silently.
+#'
+#' @noRd
+check_generated_data <- function(generated, row_number, model, group,
+                                 needs_group, ids, subject_ranked,
+                                 call = rlang::caller_env()) {
+  if (!is.data.frame(generated)) {
+    cli::cli_abort(
+      c(
+        "{.arg generator} returned {.obj_type_friendly {generated}} for \\
+         data set {row_number}, not a data frame.",
+        i = "It is called as {.code generator(draws, data)} and returns \\
+             the data frame to fit."
+      ),
+      call = call
+    )
+  }
+  needed <- c(
+    unlist(model$resp_vars, use.names = FALSE),
+    if (needs_group) group
+  )
+  missing <- setdiff(needed, names(generated))
+  if (length(missing) > 0L) {
+    # nolint start: object_usage_linter. Used by cli's glue interpolation.
+    responses <- unlist(model$resp_vars, use.names = FALSE)
+    returned <- names(generated)
+    # nolint end
+    cli::cli_abort(
+      c(
+        "The data {.arg generator} returned for data set {row_number} \\
+         lack the column{?s} {.val {missing}}.",
+        i = "It returned {.val {returned}}.",
+        i = "The model's response column{?s}: {.val {responses}}.",
+        i = if (needs_group) "The grouping column: {.val {group}}."
+      ),
+      call = call
+    )
+  }
+  if (subject_ranked) {
+    labels <- unique(as.character(generated[[group]]))
+    if (!setequal(labels, ids)) {
+      cli::cli_abort(
+        c(
+          "The data {.arg generator} returned for data set {row_number} \\
+           carry other subject labels than {.arg data}.",
+          x = "Returned: {.val {labels}}.",
+          x = "The prior fit's labels: {.val {ids}}.",
+          i = "The subject level names its truths after the prior fit's \\
+               labels, so the data set fits have to use the same ones, \\
+               or {.pkg SBC} would have nothing to rank them against."
+        ),
+        call = call
+      )
+    }
+  }
+  invisible(generated)
+}
+
+#' The SBC generator around a user function: one row in, one data set out
+#'
+#' bmmtools never interprets the row. It hands every `b_`, `sd_`, `cor_`
+#' and `r_` draw of the prior fit to `generator(draws, data)` as a named
+#' numeric vector, checks what comes back, and emits the ranked entries
+#' of the same row as `variables` --- so the truth names equal the fit's
+#' draw names by construction, for any formula.
+#'
+#' @param draws The prior draws, `n_sims` rows, already subset to what
+#'   the generator receives.
+#' @param rank The draw names SBC ranks, a subset of the columns.
+#' @noRd
+sbc_user_generator <- function(draws, rank, generator, data, model, layout,
+                               group, needs_group,
+                               call = rlang::caller_env()) {
+  draws <- posterior::as_draws_matrix(draws)
+  values <- matrix(
+    as.numeric(draws),
+    nrow = posterior::ndraws(draws),
+    dimnames = list(NULL, posterior::variables(draws))
+  )
+  subject_ranked <- any(grepl(
+    paste0("^r_", escape_regex(group), "__"), rank
+  ))
+
+  state <- rlang::env(row = 0L) # nolint: object_usage_linter. Used in `f`.
+  f <- function() {
+    state$row <- state$row + 1L
+    row_number <- state$row
+    if (row_number > nrow(values)) {
+      cli::cli_abort(
+        c(
+          "The generator has only {nrow(values)} prior draw{?s} and was \\
+           asked for a {row_number}{.strong th} data set.",
+          i = "{.fn sbc} draws exactly {.arg n_sims} rows, so \\
+               {.fn SBC::generate_datasets} has to be called with the \\
+               same number."
+        ),
+        call = call
+      )
+    }
+    row <- values[row_number, ]
+
+    generated <- tryCatch(
+      generator(row, data),
+      error = function(e) {
+        # nolint next: object_usage_linter. Used by cli's glue interpolation.
+        shown <- paste0(names(row), " = ", format(row, digits = 4))
+        cli::cli_abort(
+          c(
+            "{.arg generator} failed on data set {row_number}.",
+            x = "The draw was: {.val {shown}}.",
+            i = "These are values the {.emph prior} allows, on the link \\
+                 scale, not values anyone would fit."
+          ),
+          parent = e, call = call
+        )
+      }
+    )
+    check_generated_data(
+      generated, row_number, model, group, needs_group, layout$ids,
+      subject_ranked, call = call
+    )
+
+    variables <- as.list(row[rank])
+    check_variable_names(names(variables), rank, call = call)
+    list(variables = variables, generated = generated)
+  }
+
+  SBC::SBC_generator_function(f, future.chunk.size = Inf)
+}
+
 #' The SBC backend: one data set, one fit
 #'
 #' The lambda takes `cores` because `cores_arg = "cores"` makes
@@ -1125,19 +1410,23 @@ check_sbc_args <- function(prior, seed, fitter, cache_mode, cache_location,
 #' all work as SBC documents them.
 #'
 #' @param model A `bmmodel`, built with the column names `data` uses.
-#' @param formula The `bmmformula` under check. Every parameter formula
-#'   must be intercept-only, with or without one `(1 | id)` or
-#'   `(1 | p | id)` term --- the shapes [recovery_formula()] writes.
-#'   Anything else is an error naming the term: the default generator
-#'   maps a prior draw onto [simulate_recovery()]'s arguments, and that
-#'   map is exact for those shapes and guesswork for a covariate or a
-#'   task factor.
+#' @param formula The `bmmformula` under check. Without a `generator`,
+#'   every parameter formula must be intercept-only, with or without one
+#'   `(1 | id)` or `(1 | p | id)` term --- the shapes
+#'   [recovery_formula()] writes. Anything else is an error naming the
+#'   term: the default generator maps a prior draw onto
+#'   [simulate_recovery()]'s arguments, and that map is exact for those
+#'   shapes and guesswork for a covariate or a task factor. With a
+#'   `generator` any formula works, as long as every parameter that has
+#'   a group term has the same one, written as a bare column name.
 #' @param data The design to simulate over, and only that: the subjects
 #'   are the unique values of the grouping column and the trials are the
 #'   rows each of them has. The response values are ignored, because the
-#'   generator replaces them. Every subject must have the same number of
-#'   rows. The simulated data sets carry the same subject labels as
-#'   `data`, which is what lets a subject truth meet its own `r_` draw.
+#'   generator replaces them. Without a `generator`, every subject must
+#'   have the same number of rows. The simulated data sets carry the
+#'   same subject labels as `data`, which is what lets a subject truth
+#'   meet its own `r_` draw. With a `generator`, `data` is handed to it
+#'   as it is, columns and all.
 #' @param prior A `brmsprior`, or `NULL` for bmm's defaults. This is the
 #'   prior that is calibrated, so `NULL` calibrates bmm's own. A list is
 #'   an error: [prior_check()] is what compares prior sets.
@@ -1167,6 +1456,31 @@ check_sbc_args <- function(prior, seed, fitter, cache_mode, cache_location,
 #'   come from the joint prior. Holding the between-subject SDs at zero
 #'   while the fitted model has a prior on them would take the
 #'   population ranks down with it.
+#'
+#'   With a `generator`, each level means **every** draw of that class
+#'   for the model's free parameters, read off the prior fit rather than
+#'   built from the formula: `"population"` every `b_<par>_*` (so a
+#'   cell-means formula's `b_kappa_task1` and a covariate's
+#'   `b_kappa_cond`), `"sd"` every `sd_<group>__<par>_*`, `"cor"` every
+#'   `cor_<group>__*` and `"subject"` every `r_<group>__<par>[*]`. A
+#'   level the prior fit has no draw of is dropped with a message.
+#' @param generator `NULL` simulates each data set with
+#'   [simulate_recovery()], which is exact for the intercept-only
+#'   formulas above and requires them. A function lifts that
+#'   restriction: it is called once per data set as
+#'   `generator(draws, data)`, where `draws` is that data set's prior
+#'   draw as a **named numeric vector under the fit's own draw names**
+#'   --- every `b_`, `sd_`, `cor_` and `r_` draw of the free parameters,
+#'   whether or not it is ranked, because a generator handed less than
+#'   the fit puts a prior on would simulate from a point mass where the
+#'   fit has a prior --- and `data` is `data` as given. It returns the
+#'   data frame to fit, which must carry the model's response columns
+#'   and, when the formula has a group term, the grouping column with
+#'   the labels of `data` if the subject level is ranked. bmmtools never
+#'   interprets the row, so the truth names equal the draw names by
+#'   construction. Note that brms's `r_` draws are deviations from the
+#'   intercept: a generator that builds a subject's value adds them to
+#'   the population value itself.
 #' @param ... Passed to the fitter, for the prior fit and for every data
 #'   set fit: `chains`, `iter`, `backend`, `init`, `control`. `cores`,
 #'   `sample_prior`, `file`, `file_refit` and `file_compress` are
@@ -1199,7 +1513,8 @@ check_sbc_args <- function(prior, seed, fitter, cache_mode, cache_location,
 #'   attribute, `bmmtools_sbc`, holding `model`, `n_sims`, `level`,
 #'   `variables` (the draw names that were ranked), `seed` (`NA` when
 #'   none was given), `prior` (`brms::prior_summary()` of the prior fit,
-#'   which is what the draws came from), `layout` and `diagnostics`.
+#'   which is what the draws came from), `layout`, `diagnostics` and
+#'   `generator` (`"simulate_recovery"` or `"user"`).
 #'
 #' @details
 #' Two convergence bars apply to the same fits. bmmtools warns once on
@@ -1242,6 +1557,40 @@ check_sbc_args <- function(prior, seed, fitter, cache_mode, cache_location,
 #' )
 #' SBC::plot_rank_hist(results)
 #' attr(results, "bmmtools_sbc")$variables
+#'
+#' # any formula, with a generator that reads the draw row itself: here a
+#' # condition effect on kappa, so `draws` carries `b_kappa_cond` too
+#' design <- data.frame(
+#'   id = rep(1:20, each = 50), cond = rep(c(-0.5, 0.5), 500), y = 0
+#' )
+#' generate <- function(draws, data) {
+#'   # one call per subject and condition: rmixture2p() takes scalars
+#'   cells <- split(seq_len(nrow(data)), list(data$id, data$cond))
+#'   for (rows in cells) {
+#'     id <- data$id[[rows[[1]]]]
+#'     cond <- data$cond[[rows[[1]]]]
+#'     kappa <- exp(
+#'       draws[["b_kappa_Intercept"]] + draws[["b_kappa_cond"]] * cond +
+#'         draws[[paste0("r_id__kappa[", id, ",Intercept]")]]
+#'     )
+#'     p_mem <- plogis(
+#'       draws[["b_thetat_Intercept"]] +
+#'         draws[[paste0("r_id__thetat[", id, ",Intercept]")]]
+#'     )
+#'     data$y[rows] <- bmm::rmixture2p(
+#'       length(rows), kappa = kappa, p_mem = p_mem
+#'     )
+#'   }
+#'   data
+#' }
+#' results <- sbc(
+#'   model,
+#'   bmm::bmf(kappa ~ 1 + cond + (1 | id), thetat ~ 1 + (1 | id)),
+#'   design,
+#'   generator = generate,
+#'   n_sims = 20,
+#'   chains = 2, iter = 500, backend = "cmdstanr"
+#' )
 #' }
 #'
 #' @export
@@ -1251,6 +1600,7 @@ sbc <- function(model,
                 prior = NULL,
                 n_sims = 100,
                 level = c("population", "sd"),
+                generator = NULL,
                 ...,
                 seed = NULL,
                 file = NULL,
@@ -1285,32 +1635,58 @@ sbc <- function(model,
     )
   }
   check_sbc_args(prior, seed, .fitter, cache_mode, cache_location)
+  check_sbc_generator(generator)
   dots <- rlang::list2(...)
   check_sbc_dots(dots)
 
-  groups <- check_sbc_formula(formula)
+  # with a user generator the formula may have any shape, so only its
+  # group term is read; the default generator needs the whole check
+  user <- !is.null(generator)
+  groups <- if (user) {
+    sbc_formula_groups(formula)
+  } else {
+    check_sbc_formula(formula)
+  }
   group <- groups$group %||% "id"
   check_group_ids(data, group)
-  layout <- sbc_layout(data, group)
-  sets <- sbc_pattern_sets(model, groups, group, level)
+  layout <- sbc_layout(data, group, balanced = !user)
+  sets <- if (!user) sbc_pattern_sets(model, groups, group, level)
 
   check_improper_priors(formula, data, model, list(sbc = prior))
   base <- file %||% tempfile(pattern = "bmmtools-sbc-")
   fit <- prior_fit(
     "sbc", prior, formula, data, model, base, refit, seed, dots, .fitter
   )
-  draws <- prior_parameter_draws(fit, n_sims, sets$take, seed = seed)
-  ranked <- select_variables(sets$rank, posterior::variables(draws))
+  if (user) {
+    # every draw first, because which of them are the four classes is
+    # read off the fit's own names, not built from the formula
+    draws <- prior_parameter_draws(fit, n_sims, c(all = "."), seed = seed)
+    sets <- sbc_generator_sets(
+      model, groups, group, level, posterior::variables(draws)
+    )
+    draws <- posterior::subset_draws(draws, variable = sets$take)
+    ranked <- sets$rank
+  } else {
+    draws <- prior_parameter_draws(fit, n_sims, sets$take, seed = seed)
+    ranked <- select_variables(sets$rank, posterior::variables(draws))
+  }
 
   fitter <- .fitter
   if (is.null(fitter)) {
     rlang::check_installed("bmm", "to fit the simulated data sets.")
     fitter <- bmm::bmm
   }
-  datasets <- with_seed_if(seed, SBC::generate_datasets(
-    sbc_generator(draws, ranked, model, layout, groups$correlated, group),
-    n_sims
-  ))
+  sbc_generator_object <- if (user) {
+    sbc_user_generator(
+      draws, ranked, generator, data, model, layout, group,
+      needs_group = !is.null(groups$group)
+    )
+  } else {
+    sbc_generator(draws, ranked, model, layout, groups$correlated, group)
+  }
+  datasets <- with_seed_if(
+    seed, SBC::generate_datasets(sbc_generator_object, n_sims)
+  )
 
   options <- list(
     datasets = datasets,
@@ -1332,7 +1708,8 @@ sbc <- function(model,
     seed = if (is.null(seed)) NA_real_ else as.double(seed),
     prior = tryCatch(brms::prior_summary(fit), error = function(e) NULL),
     layout = layout,
-    diagnostics = sbc_diagnostics(results)
+    diagnostics = sbc_diagnostics(results),
+    generator = if (user) "user" else "simulate_recovery"
   )
   results
 }
