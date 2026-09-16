@@ -1,4 +1,4 @@
-# The generator adapters (spec 3, section 3; local/ARCHITECTURE.md decision 5).
+# The generator adapters.
 #
 # bmm's r<model>() functions do not take the model's parameter names on
 # the model's link scale (measured 2026-09-07 and 2026-09-08), so each
@@ -6,8 +6,9 @@
 # natural-scale parameters onto the generator's arguments and the
 # generator's output onto the model's column names. Column names come
 # from the model object, never from literals. A user-supplied
-# `generator =` always takes precedence (decision 13); request B2 asks
-# bmm for signatures that would empty this table.
+# `generator =` always takes precedence over the built-in adapter. An
+# upstream change letting r<model>() take the model's own parameter
+# names would empty this table.
 
 #' The class name an adapter is registered under
 #' @noRd

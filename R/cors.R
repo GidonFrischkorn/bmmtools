@@ -1,5 +1,4 @@
-# Correlated truths (spec 5, section 5.1; local/ARCHITECTURE.md decisions 26
-# and 27).
+# Correlated truths.
 #
 # Subject values of the varying parameters, and any observed covariates,
 # are one draw from a multivariate normal. The draw is `Z %*% chol(R)`
@@ -340,7 +339,7 @@ sd_table <- function(sds) {
   tibble::tibble(term = varying, true_value = as.double(unname(sds[varying])))
 }
 
-#' A pair term under decision 27: the two names in C-locale order
+#' A pair term: the two names in C-locale order
 #' @noRd
 pair_term <- function(a, b) {
   sorted <- sort(c(a, b), method = "radix")

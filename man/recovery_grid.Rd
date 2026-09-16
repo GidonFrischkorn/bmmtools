@@ -142,7 +142,7 @@ turns it into one row per subject.
 }
 \description{
 The loop the validation scripts in bmm wrote by hand, with the
-requirements their overnight runs taught (decision 19): one durable
+requirements their overnight runs taught: one durable
 file per cell written as soon as the cell finishes, a resume that
 reads those files and needs no temporary state, a smoke mode in its
 own directory, a preflight fit that catches a compile or init error

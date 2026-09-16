@@ -1,5 +1,4 @@
-# Components: several models, one set of simulated people (spec 5, section
-# 5.5; local/ARCHITECTURE.md decisions 27 and 33).
+# Components: several models, one set of simulated people.
 #
 # A component is one model with its own trials, tasks, generator and
 # formula. The subject values of every component, and the covariates, are
@@ -12,8 +11,7 @@
 #' Is this a valid component name?
 #'
 #' The rule is bmm's sanitising of response names in its multivariate
-#' branches (decision 33), so a component name survives a later joint fit
-#' unchanged.
+#' branches, so a component name survives a later joint fit unchanged.
 #'
 #' @noRd
 valid_component_name <- function(name) {

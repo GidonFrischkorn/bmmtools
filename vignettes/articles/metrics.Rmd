@@ -199,8 +199,8 @@ A scale shift below 1 is therefore not a defect by itself.
 `calibration_slope` is the column to read against 1: above 1 the
 estimates are shrunk more than the data warrant, below 1 less.
 
-<!-- Numbers from local/dev/sim/ccc_shrinkage.R (not shipped), output
-     ccc_shrinkage.out, 2026-09-14; slope column is b(truth|est). -->
+<!-- Numbers from a conjugate normal simulation run 2026-09-14, kept with
+     the maintainers' development records; slope column is b(truth|est). -->
 
 The table shows this for a normal model with exact posterior means,
 50 subjects and 2000 replications per row. The unpooled estimate is the

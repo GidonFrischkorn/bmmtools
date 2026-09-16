@@ -1,5 +1,4 @@
-# The grid runner (spec 3, section 4; local/ARCHITECTURE.md decisions 8, 17,
-# 19).
+# The grid runner.
 #
 # One durable file per cell, written as soon as the cell finishes; a
 # resume that re-reads existing files and never depends on a temporary
@@ -109,10 +108,10 @@ warn_failed_cells <- function(labels, message, what = "cell") {
 #'
 #' Without tasks a column named after an entry of `pars` replaces it. With
 #' tasks a column may also name a parameter whose task terms `pars` gives,
-#' or a full task term (spec 5, section 5.4): a bare column sets the bare
-#' value and every task term `pars` already has, and a full-term column is
-#' applied after it, so that within a row a full term still wins, as it
-#' does in `simulate_recovery()`.
+#' or a full task term: a bare column sets the bare value and every task
+#' term `pars` already has, and a full-term column is applied after it, so
+#' that within a row a full term still wins, as it does in
+#' `simulate_recovery()`.
 #'
 #' @noRd
 override_pars <- function(pars, row, tasks = NULL, task_col = NULL) {
@@ -761,7 +760,7 @@ grid_formula <- function(formula, row, i, model, re_cor, task_col,
 #' Run a parameter-recovery grid
 #'
 #' The loop the validation scripts in bmm wrote by hand, with the
-#' requirements their overnight runs taught (decision 19): one durable
+#' requirements their overnight runs taught: one durable
 #' file per cell written as soon as the cell finishes, a resume that
 #' reads those files and needs no temporary state, a smoke mode in its
 #' own directory, a preflight fit that catches a compile or init error

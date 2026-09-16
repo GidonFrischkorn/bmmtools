@@ -1,5 +1,4 @@
-# True and estimated subject values side by side (spec 5, section 5.3;
-# local/ARCHITECTURE.md decision 31).
+# True and estimated subject values side by side.
 #
 # The table a structural equation model reads: one row per subject, the
 # true value and the posterior point estimate of every parameter, and the

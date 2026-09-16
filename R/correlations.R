@@ -1,11 +1,10 @@
-# Correlation recovery (spec 5, section 5.3; local/ARCHITECTURE.md
-# decisions 27 and 28).
+# Correlation recovery.
 #
 # Three estimators of a between-subject correlation, all read from one
 # fit: `model` is the group-level correlation the model estimates (the
 # cor rows of extract_estimates()), `draws` correlates the subject values
 # within each posterior draw, and `point` correlates the posterior means.
-# The conjugate simulation in local/dev/sim/cor_estimators.R is why all
+# A conjugate simulation of the three estimators is why all
 # three are kept: under a posterior trade-off between two parameters,
 # `point` is biased at rho = 0 while `draws` is not.
 #
@@ -359,7 +358,7 @@ fit_correlation_parts <- function(fit, estimator, scale, group, ci_level,
   )
 }
 
-# fit sets (spec 5, section 5.5a) -------------------------------------------
+# fit sets ----------------------------------------------------------------
 
 #' Is `x` a set of separate fits, one per component?
 #'

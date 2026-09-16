@@ -96,7 +96,7 @@ inverse_link <- function(x, link) {
 
 #' The link of a term, looked up by name and then by prefix
 #'
-#' Decision 27 names a task cell `<par>_<coef>` and a component parameter
+#' A task cell is named `<par>_<coef>` and a component parameter
 #' `<comp>_<par>`, so a link table keyed by parameter does not list those
 #' terms. The exact name wins; otherwise the longest name in `links` that
 #' is followed by `_` in the term, so that `kappa2_task1` takes the link

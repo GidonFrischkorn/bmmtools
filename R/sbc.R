@@ -1,5 +1,4 @@
-# Simulation-based calibration: the naming layer (spec 6, section 1;
-# local/ARCHITECTURE.md decision 15).
+# Simulation-based calibration: the naming layer.
 #
 # `sbc()` builds two objects and hands them to `SBC::compute_SBC()`. The
 # risky half is not the pipeline, it is the names. SBC matches the
@@ -11,11 +10,10 @@
 # zero-column draws object and says nothing.
 #
 # So the names are built here, from the model and the formula, and
-# asserted with `check_variable_names()`, which errors. Decision 15 said
-# the generator's `variables` carry bmm's parameter names; that is wrong
-# and was corrected on 2026-09-16 --- they carry the fit's brms draw
-# names (`b_kappa_Intercept`, not `kappa`), because those are what SBC
-# matches against.
+# asserted with `check_variable_names()`, which errors. The generator's
+# `variables` carry the fit's brms draw names (`b_kappa_Intercept`, not
+# `kappa`), because those are what SBC matches against (measured
+# 2026-09-16).
 
 #' Quote the regex metacharacters a parameter or group name may contain
 #'
@@ -343,8 +341,7 @@ sbc_formula_groups <- function(formula, call = rlang::caller_env()) {
 #' for the shapes `recovery_formula()` writes --- an intercept and at
 #' most one group term --- and is guesswork for a covariate or a task
 #' factor, so those are refused and the message points at `generator`,
-#' which lifts the restriction by taking the draw row whole (spec,
-#' decision (d)).
+#' which lifts the restriction by taking the draw row whole.
 #'
 #' @return As `sbc_formula_groups()`.
 #' @noRd
@@ -621,7 +618,7 @@ subsample_prior_draws <- function(draws, n_sims, variables, seed = NULL,
   posterior::as_draws_matrix(posterior::subset_draws(selected, draw = rows))
 }
 
-# Simulation-based calibration: the run (spec 6, section 1; decision 15).
+# Simulation-based calibration: the run.
 #
 # The half above builds and checks names; this half builds the two
 # objects SBC asks for and hands them over. Nothing here computes a
@@ -1241,8 +1238,8 @@ sbc_user_generator <- function(draws, rank, generator, data, model, layout,
 #'
 #' The lambda takes `cores` because `cores_arg = "cores"` makes
 #' `SBC_fit.SBC_backend_function()` put it into the call, and a function
-#' without the formal cannot receive it (ARCHITECTURE decision 15,
-#' corrected 2026-09-16). The returned `bmmfit` is read by SBC's own
+#' without the formal cannot receive it. The returned `bmmfit` is read
+#' by SBC's own
 #' `brmsfit` methods, so there is no backend class to write.
 #'
 #' @noRd
@@ -1260,15 +1257,16 @@ sbc_backend <- function(formula, model, prior, dots, fitter) {
   )
 }
 
-#' Count the fits past each convergence bar, and warn once (spec N2)
+#' Count the fits past each convergence bar, and warn once
 #'
-#' Two bars apply to the same fits: bmmtools' Rhat 1.05 (decision 18) and
-#' SBC's own 1.01. Shipping both silently is worse than either, so this
+#' Two bars apply to the same fits: bmmtools' Rhat 1.05 and SBC's own
+#' 1.01. Shipping both silently is worse than either, so this
 #' states bmmtools' and names SBC's. `results$default_diagnostics`
 #' survives `keep_fits = FALSE` (measured 2026-09-16), so nothing has to
 #' be kept to read it.
 #'
-#' Decision 18's `ess_bulk_min = 400` is deliberately not applied:
+#' `check_convergence()`'s `ess_bulk_min = 400` is deliberately not
+#' applied here:
 #' SBC-length fits are short by design and it would fire on nearly every
 #' run, which is how a warning stops being read.
 #'

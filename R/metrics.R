@@ -1,4 +1,4 @@
-# Recovery metrics (local/ARCHITECTURE.md decision 18).
+# Recovery metrics.
 #
 # Every function here takes plain numeric vectors and returns a scalar
 # (or a small named list). None of them touches a fit object, which is
@@ -175,7 +175,7 @@ ccc_z_variance <- function(ccc, r, u, n) {
 #' regressed on the estimate; and a 95% interval from Lin's Z transformation.
 #'
 #' A calibrated posterior mean has `v = r` and `calibration_slope = 1`,
-#' not `v = 1`: shrinkage is not scale bias (local/dev/eval-ccc-2026-09-14.md).
+#' not `v = 1`: shrinkage is not scale bias.
 #'
 #' @return A named list: `ccc`, `ccc_low`, `ccc_high`, `accuracy`,
 #'   `scale_shift`, `location_shift`, `calibration_slope`, `r`, `var_z`,

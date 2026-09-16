@@ -1,12 +1,11 @@
-# The reference cross-check (spec 6 section 2; local/ARCHITECTURE.md
-# decisions 11, 13 and 14).
+# The reference cross-check.
 #
 # recover() asks whether a model gives back the values that generated the
 # data. cross_check() asks the other question a new model has to answer:
 # does it agree with what is already known? The right-hand side is a
 # closed form, another implementation or a published value --- a
 # comparison, not a truth, which is why `?cross_check` says so where the
-# column is called `bias` (spec, decision N3).
+# column is called `bias`.
 #
 # Everything the comparison needs already exists: extract_estimates() for
 # both sides, resolve_links() and to_natural_scale() for the scale, and
@@ -18,7 +17,7 @@
 #' A list against one fixed reference is `recover()`'s shape with the
 #' reference as `true_value`, and the case that would justify a branch
 #' here --- a reference that varies by replication --- a list does not
-#' express (spec, decision (a)).
+#' express.
 #'
 #' @noRd
 check_cross_check_fit <- function(fit, call = rlang::caller_env()) {
@@ -50,7 +49,7 @@ check_cross_check_fit <- function(fit, call = rlang::caller_env()) {
 #' `extract_estimates()` has had `"sd"` and `"cor"` since Milestone 5.2,
 #' but a correlation reference would need `var1`, `var2` and a
 #' pair-ordering rule of its own, which is a second reference contract
-#' for a rare case (spec, decision N4). Naming them explicitly beats the
+#' for a rare case. Naming them explicitly beats the
 #' bare "must be one of" that `arg_match()` would give.
 #'
 #' @noRd
@@ -328,7 +327,7 @@ check_reference <- function(reference, level, group, ci_level, resolved,
 #'
 #' `bias` and `covered` are `recover()`'s words for the same two
 #' quantities, and `covered` points the same way in all three scorers:
-#' the fit's interval covers the value it is compared with (decision N3).
+#' the fit's interval covers the value it is compared with.
 #' `overlap` is the extra question a reference with an interval can
 #' answer, and is `NA` --- never `FALSE` --- for a row without one, so a
 #' missing interval never reads as a disagreement.

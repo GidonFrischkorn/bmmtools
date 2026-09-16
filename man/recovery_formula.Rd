@@ -34,7 +34,7 @@ of the simulation.}
 A \code{bmmformula}.
 }
 \description{
-The formula the validation scripts in bmm converged on (decision 5):
+The formula the validation scripts in bmm converged on:
 \verb{<parameter> ~ 1 + (1 | id)} for every parameter the model estimates,
 and nothing for the ones it fixes. \code{\link[=recovery_grid]{recovery_grid()}} uses it when no
 formula is given; a user who wants to change one term can start

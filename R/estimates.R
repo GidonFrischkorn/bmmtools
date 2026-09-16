@@ -1,5 +1,5 @@
 # The estimates tibble: the single contract between the run layer and the
-# score layer (local/ARCHITECTURE.md decision 1, spec section 2).
+# score layer.
 #
 # extract_estimates() is the only score-layer function that touches a fit
 # object. Everything downstream of it --- recover(), the metrics, the
@@ -10,7 +10,7 @@
 #'
 #' Column names and their `typeof()`, in contract order. The first nine
 #' are the apabayes `parameters` columns; `level` and `id` are the
-#' bmmtools additions (local/ARCHITECTURE.md decision 14).
+#' bmmtools additions.
 #'
 #' @return A named character vector: column name to storage type.
 #' @noRd
@@ -72,7 +72,7 @@ split_coefficient <- function(x) {
   )
 }
 
-#' The terms of parameter and coefficient pairs (local/ARCHITECTURE.md D27)
+#' The terms of parameter and coefficient pairs
 #'
 #' A parameter with one coefficient is its bare name, whatever the
 #' coefficient; one with several and no `Intercept`, as cell-means coding
@@ -181,7 +181,7 @@ resolve_group <- function(group, groups, call = rlang::caller_env()) {
 
 #' Summarise a draws array into the numeric half of the contract
 #'
-#' The point estimate is the posterior median (spec, API decision 1): it
+#' The point estimate is the posterior median: it
 #' is invariant under the link transform, so scoring on the link scale
 #' and scoring on the natural scale use the same number.
 #'
@@ -359,7 +359,7 @@ group_coefficients <- function(variables, group, call = rlang::caller_env()) {
 
 #' Add the population intercept to each group-level deviation, per draw
 #'
-#' The order matters (spec, API decision 3): summing the draws and then
+#' The order matters: summing the draws and then
 #' summarising gives the right interval, while summarising each side and
 #' adding the two summaries gives one that is too narrow.
 #'

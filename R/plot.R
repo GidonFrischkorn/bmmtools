@@ -1,4 +1,4 @@
-# The recovery plot (spec section 7).
+# The recovery plot.
 #
 # ggplot2 is in Suggests, so the entry point checks for it rather than
 # importing it: a scoring pipeline that never plots installs without it.

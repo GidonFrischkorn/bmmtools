@@ -1,10 +1,10 @@
 # Parameter recovery: score fits against the values that generated the
-# data (spec sections 4 and 5).
+# data.
 #
 # Both entry points work on the estimates tibble, so a fit is one
 # accepted input among several rather than a requirement. That is what
 # makes the score layer testable and installable with no fitting package
-# present (local/ARCHITECTURE.md decisions 1 and 6).
+# present.
 
 #' Turn whatever was passed as `fits` into an estimates tibble
 #'
@@ -90,8 +90,7 @@ check_truth <- function(truth, keys, call = rlang::caller_env()) {
 #' A `bmmfit` carries its own link table, so scoring on the natural scale
 #' needs no argument. A bare `brmsfit` or a bare estimates tibble carries
 #' none, and rather than guess an identity link and report numbers on an
-#' unstated scale, scoring falls back to the link scale and says so
-#' (local/ARCHITECTURE.md decision 2).
+#' unstated scale, scoring falls back to the link scale and says so.
 #'
 #' @noRd
 resolve_links <- function(fits, links, scale, call = rlang::caller_env()) {
@@ -286,7 +285,7 @@ to_natural_scale <- function(x, links, values = c("estimate", "true_value"),
 #'
 #' `sd` rows are kept on the link scale whatever `resolved$scale` says,
 #' because the SD of a link-scale random effect has no natural-scale
-#' counterpart that one inverse link would give (spec 5, section 5.2).
+#' counterpart that one inverse link would give.
 #'
 #' @noRd
 score_level <- function(estimates, truth, level, resolved, error_call) {

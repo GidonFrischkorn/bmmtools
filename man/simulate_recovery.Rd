@@ -89,8 +89,9 @@ the link scale become a data set and the truth that produced it, so
 that \code{\link[=recover]{recover()}} and \code{\link[=recover_subjects]{recover_subjects()}} can score a fit of that
 data. Subject values are drawn on the link scale around the
 population values, converted to the natural scale through
-\code{\link[=inverse_link]{inverse_link()}}, and handed to the model's own \verb{r<model>()} generator
-(decision 13) or to a function you supply.
+\code{\link[=inverse_link]{inverse_link()}}, and handed to the model's own \verb{r<model>()} generator,
+or to the function you pass as \code{generator}, which always takes
+precedence over the built-in one.
 }
 \details{
 Adapters exist for \code{sdt_yn}, \code{sdt_mafc}, \code{ezdm} (three parameters),

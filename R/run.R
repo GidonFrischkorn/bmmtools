@@ -1,4 +1,4 @@
-# The cache (spec 2, section 3; local/ARCHITECTURE.md decision 4).
+# The cache.
 #
 # brms's own `file =` cache detects a change to the Stan code, the Stan
 # data and the algorithm, and nothing else (measured on brms 2.23.0). In

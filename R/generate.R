@@ -1,5 +1,4 @@
-# The generate layer (spec 3, sections 1 and 2; local/ARCHITECTURE.md
-# decisions 3, 5, 13, 17).
+# The generate layer.
 #
 # A bmm model plus population values on the link scale become data and
 # a truth table. Subject values are drawn on the link scale, converted
@@ -269,7 +268,7 @@ check_generated <- function(data, model, covariate_names = NULL,
   invisible(data)
 }
 
-# tasks (spec 5, section 5.4; local/ARCHITECTURE.md decisions 27 and 30) ----
+# tasks ---------------------------------------------------------------------
 
 #' Validate `tasks` and, when there are tasks, `task_col`
 #'
@@ -536,8 +535,9 @@ truth_tables <- function(pars, sds, values, cors = NULL, covariates = NULL) {
 #' that [recover()] and [recover_subjects()] can score a fit of that
 #' data. Subject values are drawn on the link scale around the
 #' population values, converted to the natural scale through
-#' [inverse_link()], and handed to the model's own `r<model>()` generator
-#' (decision 13) or to a function you supply.
+#' [inverse_link()], and handed to the model's own `r<model>()` generator,
+#' or to the function you pass as `generator`, which always takes
+#' precedence over the built-in one.
 #'
 #' @param model A `bmmodel`, built with the column names the fit will
 #'   use, so the generated columns match.
@@ -794,7 +794,7 @@ print.bmmtools_simulation <- function(x, ...) {
 
 #' The default recovery formula: every free parameter gets a random intercept
 #'
-#' The formula the validation scripts in bmm converged on (decision 5):
+#' The formula the validation scripts in bmm converged on:
 #' `<parameter> ~ 1 + (1 | id)` for every parameter the model estimates,
 #' and nothing for the ones it fixes. [recovery_grid()] uses it when no
 #' formula is given; a user who wants to change one term can start

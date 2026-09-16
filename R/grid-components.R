@@ -1,4 +1,4 @@
-# The component form of recovery_grid() (spec 5, section 5.5b).
+# The component form of recovery_grid().
 #
 # `recovery_grid(model = <list of components>)` simulates one set per cell
 # with simulate_components(), fits every component through fit_cached() and

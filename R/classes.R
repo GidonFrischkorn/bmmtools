@@ -1,8 +1,8 @@
-# The recovery classes (spec section 6).
+# The recovery classes.
 #
 # `bmmtools_recovery` is a tibble subclass: one row per fit x parameter,
 # carrying the apabayes `parameters` columns first and bmmtools's
-# additions after (local/ARCHITECTURE.md decision 14). Subclassing a tibble
+# additions after. Subclassing a tibble
 # means dplyr verbs keep working; a verb that drops a contract column
 # drops the class, which is what dplyr_reconstruct() below implements.
 
@@ -972,9 +972,9 @@ print.bmmtools_cor_recovery_summary <- function(x, ...) {
 #' The cross-check contract
 #'
 #' The apabayes `parameters` columns first, then the reference and the
-#' comparison (local/ARCHITECTURE.md decision 14). There is no
+#' comparison. There is no
 #' `replication` column: `cross_check()` takes one fit, and a list of
-#' them is `recover()`'s shape (spec, decision (a)).
+#' them is `recover()`'s shape.
 #'
 #' @noRd
 cross_check_contract <- function() {
@@ -1005,8 +1005,8 @@ cross_check_contract <- function() {
 #' The columns `summary()` of a cross-check returns
 #'
 #' `bias`, `rmse` and `coverage` are `summary.bmmtools_recovery()`'s
-#' words for the same quantities (decision N3), so the three scorers read
-#' with one vocabulary. `share_overlap` has no analogue there and keeps
+#' words for the same quantities, so the three scorers read with one
+#' vocabulary. `share_overlap` has no analogue there and keeps
 #' its own name.
 #'
 #' @noRd

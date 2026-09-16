@@ -1,5 +1,4 @@
-# Prior predictive checks on the observable scale (spec 4;
-# local/ARCHITECTURE.md decision 16).
+# Prior predictive checks on the observable scale.
 #
 # A prior on kappa is uninterpretable; the same prior read as "89% of
 # prior draws imply chance-level responding" is not. The draws come from
@@ -166,18 +165,17 @@ bound_rate <- function(yrep, bound, side) {
   mean(hit, na.rm = TRUE)
 }
 
-#' The default summary of decision 16
+#' The default prior-predictive summary
 #'
 #' Returns the `function(yrep, data)` the user contract names; the range
 #' and the model reach it through the closure rather than through extra
 #' arguments.
 #'
-#' For a discrete response the two rates are what decision 16 asks for:
-#' the share of prior-predictive draws implying floor or ceiling
-#' performance. For a continuous response exact equality to a boundary
-#' has probability zero, so they report the mass outside the support,
-#' which is `0` unless the model is wrong, and the quantiles are what
-#' carries the information.
+#' For a discrete response the two rates are the share of
+#' prior-predictive draws implying floor or ceiling performance. For a
+#' continuous response exact equality to a boundary has probability zero,
+#' so they report the mass outside the support, which is `0` unless the
+#' model is wrong, and the quantiles are what carries the information.
 #'
 #' @noRd
 default_prior_summary <- function(range, model) {
