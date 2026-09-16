@@ -243,8 +243,13 @@ sbc_group_term <- function(e, parameter, call = rlang::caller_env()) {
 #' so any fixed part is fine, but `level` still needs the group name to
 #' build the `sd_`, `cor_` and `r_` patterns.
 #'
-#' @return A list with `group` (`NULL` when there is no group term) and
-#'   `correlated`.
+#' @return A list with `group` (`NULL` when there is no group term),
+#'   `correlated`, and `varying`, the parameters whose own formula
+#'   carries the group term. `varying` is what keeps `sbc()` from asking
+#'   for an `sd_` draw of a parameter that does not vary (spec N5): a
+#'   formula where `kappa` varies and `thetat` does not is one the
+#'   default generator simulates perfectly well, and building the
+#'   patterns over every free parameter would refuse it.
 #' @noRd
 sbc_formula_groups <- function(formula, call = rlang::caller_env()) {
   if (!inherits(formula, "bmmformula")) {
@@ -278,7 +283,7 @@ sbc_formula_groups <- function(formula, call = rlang::caller_env()) {
   }
 
   if (length(found) == 0L) {
-    return(list(group = NULL, correlated = FALSE))
+    return(list(group = NULL, correlated = FALSE, varying = character(0)))
   }
   groups <- vapply(found, function(x) x$group, character(1))
   if (length(unique(groups)) > 1L) {
@@ -297,7 +302,8 @@ sbc_formula_groups <- function(formula, call = rlang::caller_env()) {
   }
   list(
     group = unname(groups[[1L]]),
-    correlated = any(vapply(found, function(x) x$correlated, logical(1)))
+    correlated = any(vapply(found, function(x) x$correlated, logical(1))),
+    varying = names(found)
   )
 }
 
@@ -527,21 +533,41 @@ prior_parameter_draws <- function(fit, n_sims, variables, seed = NULL, ...) {
 prior_parameter_draws.default <- function(fit, n_sims, variables,
                                           seed = NULL, ...) {
   rlang::check_installed("brms", "to read prior draws from a fit.")
-  n_sims <- check_count(n_sims, "n_sims")
+  subsample_prior_draws(
+    posterior::as_draws_matrix(fit$fit),
+    check_count(n_sims, "n_sims"), variables, seed
+  )
+}
 
-  draws <- posterior::as_draws_matrix(fit$fit)
+#' Subset a draws object to the variables and sample `n_sims` of its rows
+#'
+#' The body of `prior_parameter_draws.default()`, kept apart so that the
+#' `mockfit` method of the test suite runs the same coverage check and
+#' the same draw-count error rather than a second implementation of
+#' them: a mock that is laxer than the real path would hide exactly the
+#' mismatch this layer exists to catch.
+#'
+#' @noRd
+subsample_prior_draws <- function(draws, n_sims, variables, seed = NULL,
+                                  call = rlang::caller_env()) {
   selected <- posterior::subset_draws(
     draws,
-    variable = select_variables(variables, posterior::variables(draws))
+    variable = select_variables(
+      variables, posterior::variables(draws),
+      call = call
+    )
   )
 
   available <- posterior::ndraws(selected)
   if (available < n_sims) {
-    cli::cli_abort(c(
-      "The prior fit has {available} draw{?s}, fewer than the \\
-       {n_sims} {.arg n_sims} asks for.",
-      i = "Raise {.arg iter} or {.arg chains}, or lower {.arg n_sims}."
-    ))
+    cli::cli_abort(
+      c(
+        "The prior fit has {available} draw{?s}, fewer than the \\
+         {n_sims} {.arg n_sims} asks for.",
+        i = "Raise {.arg iter} or {.arg chains}, or lower {.arg n_sims}."
+      ),
+      call = call
+    )
   }
 
   # the sample is across chains, so chains stop meaning anything; saying
@@ -549,4 +575,618 @@ prior_parameter_draws.default <- function(fit, n_sims, variables,
   selected <- posterior::merge_chains(selected)
   rows <- with_seed_if(seed, sample.int(available, n_sims))
   posterior::as_draws_matrix(posterior::subset_draws(selected, draw = rows))
+}
+
+# Simulation-based calibration: the run (spec 6, section 1; decision 15).
+#
+# The half above builds and checks names; this half builds the two
+# objects SBC asks for and hands them over. Nothing here computes a
+# rank: `sbc()` returns SBC's own `SBC_results` so that its plots and
+# its tests apply unchanged.
+
+#' The variable names a set of varying parameters can carry
+#'
+#' `sbc_variables()` builds its `sd_`, `cor_` and `r_` patterns over
+#' every free parameter of the model, which is right when the formula
+#' gives every parameter a group term and wrong when it does not: a
+#' formula where `kappa` varies and `thetat` does not would otherwise ask
+#' for `sd_id__thetat_Intercept`, which no fit of it has, and
+#' `select_variables()` would refuse a run the default generator can do
+#' perfectly well (spec N5).
+#'
+#' @noRd
+sbc_varying_names <- function(varying) {
+  pairs <- character(0)
+  if (length(varying) > 1L) {
+    combos <- utils::combn(varying, 2L)
+    pairs <- vapply(
+      seq_len(ncol(combos)),
+      function(k) pair_term(combos[[1L, k]], combos[[2L, k]])$term,
+      character(1)
+    )
+  }
+  c(
+    paste0("sd:", varying),
+    paste0("cor:", pairs),
+    paste0("subject:", varying)
+  )
+}
+
+#' Why a level the user asked for cannot be ranked, or `NA` when it can
+#' @noRd
+sbc_level_obstacle <- function(level, groups) {
+  varying <- groups$varying
+  if (level == "population" || length(varying) > 0L) {
+    if (level != "cor") {
+      return(NA_character_)
+    }
+    if (!groups$correlated) {
+      return("its group terms are not correlated, so the fit has no \\
+              {.field cor_} draws; write {.code (1 | p | id)} to \\
+              correlate them")
+    }
+    if (length(varying) < 2L) {
+      return("only {.val {varying}} varies between subjects, and a \\
+              correlation needs two parameters that do")
+    }
+    return(NA_character_)
+  }
+  "no parameter of the formula has a group term, so the fit has no \\
+   between-subject draws"
+}
+
+#' Which levels are drawn from the prior and which of them are ranked
+#'
+#' Two pattern sets, not one. `level` says what is **ranked**; what is
+#' **drawn** is everything the formula implies, because SBC's uniformity
+#' rests on the data coming from the joint prior. Holding the
+#' between-subject SDs at zero while the fitted model has a prior on them
+#' would break that joint and take the population ranks down with it ---
+#' silently, as a run that looks short rather than wrong (spec N5).
+#'
+#' @return A list with `draw` (the patterns to take from the prior fit),
+#'   `rank` (the subset SBC is asked to rank) and `level` (the levels
+#'   that survived).
+#' @noRd
+sbc_pattern_sets <- function(model, groups, group, level,
+                             call = rlang::caller_env()) {
+  dropped <- character(0)
+  for (lvl in level) {
+    obstacle <- sbc_level_obstacle(lvl, groups)
+    if (is.na(obstacle)) next
+    dropped <- c(dropped, lvl)
+    cli::cli_inform(c(
+      "Dropping the {.val {lvl}} level: {obstacle}.",
+      i = "The other levels are ranked as asked."
+    ))
+  }
+  rank <- setdiff(level, dropped)
+
+  # what is drawn is decided by the same obstacles, over all three
+  # drawable levels --- not by `dropped`, which only ever holds levels
+  # the caller asked to rank. Reading it off `dropped` would leave `cor`
+  # in the drawn set whenever `level` omitted it, and the default
+  # `recovery_formula()` writes uncorrelated group terms, so the
+  # commonest call of all would ask a real fit for a `cor_` draw it does
+  # not have --- after the prior fit had already run.
+  drawable <- c("population", "sd", "cor")
+  draw <- drawable[
+    is.na(vapply(drawable, sbc_level_obstacle, character(1), groups = groups))
+  ]
+  has_group <- length(groups$varying) > 0L
+  patterns <- sbc_variables(
+    model, if (has_group) group else NULL, union(draw, rank),
+    call = call
+  )
+  levels <- sbc_variable_levels(patterns)
+  patterns <- patterns[
+    levels == "population" | names(patterns) %in%
+      sbc_varying_names(groups$varying)
+  ]
+  levels <- sbc_variable_levels(patterns)
+
+  list(
+    draw = patterns[levels %in% draw],
+    rank = patterns[levels %in% rank],
+    level = rank
+  )
+}
+
+#' The `cor_` draw name of each pair of varying parameters, in either order
+#'
+#' Which order brms writes is not guaranteed, so both are looked for and
+#' the one the fit has is kept. A pair the fit has no draw for is left
+#' out and its correlation stays 0.
+#'
+#' @noRd
+sbc_cor_names <- function(varying, group, available) {
+  if (length(varying) < 2L) {
+    return(list())
+  }
+  combos <- utils::combn(varying, 2L)
+  out <- list()
+  for (k in seq_len(ncol(combos))) {
+    a <- combos[[1L, k]]
+    b <- combos[[2L, k]]
+    found <- intersect(
+      c(
+        paste0("cor_", group, "__", a, "_Intercept__", b, "_Intercept"),
+        paste0("cor_", group, "__", b, "_Intercept__", a, "_Intercept")
+      ),
+      available
+    )
+    if (length(found) > 0L) {
+      out[[length(out) + 1L]] <- list(a = a, b = b, name = found[[1L]])
+    }
+  }
+  out
+}
+
+#' The correlation matrix one prior draw implies, or `NULL` for none
+#' @noRd
+sbc_cor_matrix <- function(row, pairs, varying) {
+  if (length(pairs) == 0L) {
+    return(NULL)
+  }
+  out <- diag(length(varying))
+  dimnames(out) <- list(varying, varying)
+  for (pair in pairs) {
+    out[pair$a, pair$b] <- row[[pair$name]]
+    out[pair$b, pair$a] <- row[[pair$name]]
+  }
+  out
+}
+
+#' The SBC generator: one prior draw, one simulated data set
+#'
+#' `SBC::generate_datasets()` calls the function with no arguments, once
+#' per simulation, so the row it is on lives in this closure.
+#' `future.chunk.size = Inf` pins SBC's sequential branch (`replicate()`,
+#' measured 2026-09-16): under the futures branch each worker would get
+#' its own copy of the counter and emit the same rows twice.
+#'
+#' @param draws The prior draws, `n_sims` rows under the fit's own draw
+#'   names --- **every** variable the formula implies, not only the ones
+#'   that will be ranked (spec N5).
+#' @param rank The draw names to emit as `variables`, which is what SBC
+#'   ranks.
+#' @param layout `sbc_layout()`'s list.
+#' @noRd
+sbc_generator <- function(draws, rank, model, layout, correlated, group,
+                          call = rlang::caller_env()) {
+  # a plain matrix, not `as.matrix()`: that keeps the `draws_matrix`
+  # class, whose `[` drops the variable names one row at a time and
+  # would then index every value as NA
+  draws <- posterior::as_draws_matrix(draws)
+  available <- posterior::variables(draws)
+  values <- matrix(
+    as.numeric(draws),
+    nrow = posterior::ndraws(draws), dimnames = list(NULL, available)
+  )
+  free <- model_parameters(model)$free
+  population <- paste0("b_", free, "_Intercept")
+
+  sds <- stats::setNames(
+    paste0("sd_", group, "__", free, "_Intercept"), free
+  )
+  sds <- sds[sds %in% available]
+  varying <- names(sds)
+  pairs <- if (correlated) {
+    sbc_cor_names(varying, group, available)
+  } else {
+    list()
+  }
+
+  # the row counter lives in its own environment rather than behind
+  # `<<-`: SBC calls the generator with no arguments, so which row it is
+  # on has to be kept somewhere, and an explicit environment says where
+  state <- rlang::env(row = 0L) # nolint: object_usage_linter. Used in `f`.
+  f <- function() {
+    state$row <- state$row + 1L
+    row_number <- state$row
+    if (row_number > nrow(values)) {
+      cli::cli_abort(
+        c(
+          "The generator has only {nrow(values)} prior draw{?s} and was \\
+           asked for a {row_number}{.strong th} data set.",
+          i = "{.fn sbc} draws exactly {.arg n_sims} rows, so \\
+               {.fn SBC::generate_datasets} has to be called with the \\
+               same number."
+        ),
+        call = call
+      )
+    }
+    row <- values[row_number, ]
+
+    simulation <- simulate_recovery(
+      model,
+      pars = stats::setNames(unname(row[population]), free),
+      n_subjects = layout$n_subjects,
+      n_trials = layout$n_trials,
+      sds = if (length(sds) > 0L) {
+        stats::setNames(unname(row[sds]), varying)
+      },
+      cors = sbc_cor_matrix(row, pairs, varying),
+      seed = NULL
+    )
+    data <- simulation$data
+    # simulate_recovery() always calls the column `id`; the formula may
+    # not, and brms would be the one to notice
+    if (!identical(group, "id")) {
+      names(data)[names(data) == "id"] <- group
+    }
+
+    variables <- as.list(row[rank])
+    check_variable_names(names(variables), rank, call = call)
+    list(variables = variables, generated = data)
+  }
+
+  SBC::SBC_generator_function(f, future.chunk.size = Inf)
+}
+
+#' The SBC backend: one data set, one fit
+#'
+#' The lambda takes `cores` because `cores_arg = "cores"` makes
+#' `SBC_fit.SBC_backend_function()` put it into the call, and a function
+#' without the formal cannot receive it (ARCHITECTURE decision 15,
+#' corrected 2026-09-16). The returned `bmmfit` is read by SBC's own
+#' `brmsfit` methods, so there is no backend class to write.
+#'
+#' @noRd
+sbc_backend <- function(formula, model, prior, dots, fitter) {
+  fit_one <- function(generated, cores) {
+    rlang::exec(
+      fitter,
+      formula = formula, data = generated, model = model, prior = prior,
+      cores = cores, !!!dots
+    )
+  }
+  SBC::SBC_backend_function(
+    fit_one,
+    generated_arg = "generated", cores_arg = "cores"
+  )
+}
+
+#' Count the fits past each convergence bar, and warn once (spec N2)
+#'
+#' Two bars apply to the same fits: bmmtools' Rhat 1.05 (decision 18) and
+#' SBC's own 1.01. Shipping both silently is worse than either, so this
+#' states bmmtools' and names SBC's. `results$default_diagnostics`
+#' survives `keep_fits = FALSE` (measured 2026-09-16), so nothing has to
+#' be kept to read it.
+#'
+#' Decision 18's `ess_bulk_min = 400` is deliberately not applied:
+#' SBC-length fits are short by design and it would fire on nearly every
+#' run, which is how a warning stops being read.
+#'
+#' @noRd
+sbc_diagnostics <- function(results, rhat_max = 1.05,
+                            ess_to_rank_min = 0.5) {
+  out <- list(
+    n_fits = NA_integer_,
+    rhat_max = rhat_max,
+    ess_to_rank_min = ess_to_rank_min,
+    n_high_rhat = NA_integer_,
+    n_low_ess_to_rank = NA_integer_,
+    n_missing = NA_integer_
+  )
+  diagnostics <- results$default_diagnostics
+  needed <- c("max_rhat", "min_ess_to_rank")
+  if (!is.data.frame(diagnostics) || !all(needed %in% names(diagnostics))) {
+    return(out)
+  }
+
+  out$n_fits <- nrow(diagnostics)
+  out$n_high_rhat <- sum(diagnostics$max_rhat > rhat_max, na.rm = TRUE)
+  out$n_low_ess_to_rank <- sum(
+    diagnostics$min_ess_to_rank < ess_to_rank_min,
+    na.rm = TRUE
+  )
+  out$n_missing <- sum(
+    is.na(diagnostics$max_rhat) | is.na(diagnostics$min_ess_to_rank)
+  )
+  if (out$n_high_rhat + out$n_low_ess_to_rank + out$n_missing == 0L) {
+    return(out)
+  }
+
+  cli::cli_warn(
+    c(
+      "{out$n_fits} fit{?s} of the calibration, and some did not converge.",
+      x = "{out$n_high_rhat} {?has/have} an Rhat above {rhat_max}.",
+      x = "{out$n_low_ess_to_rank} {?has/have} a tail ESS below \\
+           {ess_to_rank_min} of the maximum rank, which skews the ranks \\
+           themselves.",
+      x = if (out$n_missing > 0L) {
+        "{out$n_missing} {?has/have} no Rhat or no ESS at all."
+      },
+      i = "{.pkg SBC}'s own {.fn summary} uses the stricter Rhat 1.01; \\
+           these counts are against {.pkg bmmtools}' {rhat_max}.",
+      i = "Fit with {.code keep_fits = TRUE} and run \\
+           {.fn check_convergence} per fit to see which."
+    ),
+    class = "bmmtools_sbc_diagnostics"
+  )
+  out
+}
+
+#' Refuse a grouping column with missing values
+#'
+#' `sbc_layout()` counts with `table()`, which drops `NA` without saying
+#' so: a design with a missing id would be read off the rows that happen
+#' to have one, and the simulation would be of a smaller study than the
+#' user described (6.2's review, deferred to here).
+#'
+#' @noRd
+check_group_ids <- function(data, group, call = rlang::caller_env()) {
+  if (!group %in% names(data)) {
+    return(invisible(data))
+  }
+  # nolint next: object_usage_linter. Used by cli's glue interpolation.
+  missing <- sum(is.na(data[[group]]))
+  if (missing > 0L) {
+    cli::cli_abort(
+      c(
+        "{.arg data} has {missing} row{?s} whose {.val {group}} is \\
+         {.code NA}.",
+        i = "The layout is counted per subject, and a missing id would \\
+             be dropped from that count without changing the design \\
+             {.fn sbc} then simulates."
+      ),
+      call = call
+    )
+  }
+  invisible(data)
+}
+
+#' Validate the arguments `sbc()` does not hand straight on
+#' @noRd
+check_sbc_args <- function(prior, seed, fitter, cache_mode, cache_location,
+                           call = rlang::caller_env()) {
+  if (!is.null(prior) && !inherits(prior, "brmsprior")) {
+    cli::cli_abort(
+      c(
+        "{.arg prior} must be a {.cls brmsprior} or {.code NULL}, \\
+         not {.obj_type_friendly {prior}}.",
+        i = "{.fn sbc} calibrates one prior. {.fn prior_check} is what \\
+             compares prior sets."
+      ),
+      call = call
+    )
+  }
+  if (!is.null(seed) && (!is.numeric(seed) || length(seed) != 1L)) {
+    cli::cli_abort(
+      "{.arg seed} must be a single number or {.code NULL}.",
+      call = call
+    )
+  }
+  if (!is.null(fitter) && !is.function(fitter)) {
+    cli::cli_abort(
+      "{.arg .fitter} must be a function, \\
+       not {.obj_type_friendly {fitter}}.",
+      call = call
+    )
+  }
+  if (identical(cache_mode, "results") && is.null(cache_location)) {
+    cli::cli_abort(
+      c(
+        "{.arg cache_location} is needed when \\
+         {.code cache_mode = \"results\"}.",
+        i = "It is the directory {.pkg SBC} writes each fit's result to."
+      ),
+      call = call
+    )
+  }
+  invisible(NULL)
+}
+
+#' Check that a model's implementation is calibrated
+#'
+#' Simulation-based calibration (Talts et al. 2018; Modrák et al. 2023)
+#' is the check that a model's likelihood, its Stan code and its
+#' post-processing agree with each other. If they do, the rank of a
+#' parameter drawn from the prior, among the posterior draws of a fit to
+#' data simulated from that draw, is uniform over the simulations. A
+#' rank histogram that is not flat says the implementation is wrong; a
+#' flat one says nothing about whether the model is a good one.
+#'
+#' `sbc()` computes no ranks. It fits the prior once, turns its draws
+#' into data sets through [simulate_recovery()], builds the backend that
+#' fits each of them, and hands both to `SBC::compute_SBC()`. What comes
+#' back is SBC's own `SBC_results`, so `SBC::plot_rank_hist()`,
+#' `SBC::plot_ecdf_diff()`, `SBC::plot_coverage()` and `results$stats`
+#' all work as SBC documents them.
+#'
+#' @param model A `bmmodel`, built with the column names `data` uses.
+#' @param formula The `bmmformula` under check. Every parameter formula
+#'   must be intercept-only, with or without one `(1 | id)` or
+#'   `(1 | p | id)` term --- the shapes [recovery_formula()] writes.
+#'   Anything else is an error naming the term: the default generator
+#'   maps a prior draw onto [simulate_recovery()]'s arguments, and that
+#'   map is exact for those shapes and guesswork for a covariate or a
+#'   task factor.
+#' @param data The design to simulate over, and only that: the subjects
+#'   are the unique values of the grouping column and the trials are the
+#'   rows each of them has. The response values are ignored, because the
+#'   generator replaces them. Every subject must have the same number of
+#'   rows.
+#' @param prior A `brmsprior`, or `NULL` for bmm's defaults. This is the
+#'   prior that is calibrated, so `NULL` calibrates bmm's own. A list is
+#'   an error: [prior_check()] is what compares prior sets.
+#' @param n_sims How many data sets to simulate and fit. Twenty is enough
+#'   to see a run through; a verdict needs enough ranks to read a
+#'   histogram over about twenty bins, which is what the default is for.
+#'   **It is also `n_sims` model fits**, so a default run is hours of
+#'   Stan and belongs in a script rather than at a prompt.
+#' @param level Which draws are ranked: `"population"` the
+#'   `b_<par>_Intercept` draws, `"sd"` the `sd_<group>__<par>_Intercept`
+#'   draws and `"cor"` the `cor_<group>__…` draws. `"population"` cannot
+#'   be dropped. A level the formula cannot produce --- `"sd"` without a
+#'   group term, `"cor"` without a correlated one --- is dropped with a
+#'   message.
+#'
+#'   `level` selects what is **ranked**, not what is **drawn**:
+#'   everything the formula implies is always drawn from the prior and
+#'   simulated from, because the ranks are only uniform when the data
+#'   come from the joint prior. Holding the between-subject SDs at zero
+#'   while the fitted model has a prior on them would take the
+#'   population ranks down with it.
+#' @param ... Passed to the fitter, for the prior fit and for every data
+#'   set fit: `chains`, `iter`, `backend`, `init`, `control`. `cores`,
+#'   `sample_prior`, `file`, `file_refit` and `file_compress` are
+#'   refused, each with a message saying where it belongs.
+#' @param seed Applied around the prior-draw subsample and around
+#'   `SBC::generate_datasets()`, so the same seed gives the same data
+#'   sets, and passed to the fitter of the prior fit, where it enters
+#'   [fit_cached()]'s key. `NULL` leaves the random number generator
+#'   alone and is recorded as `NA`. The data set fits take no seed:
+#'   SBC's `future.seed` handles them, and one seed across fits would
+#'   correlate them.
+#' @param file Where to cache the **prior fit**, as in [prior_check()].
+#'   `NULL` uses a temporary file. The data set fits are cached by SBC
+#'   through `cache_mode`, not by [fit_cached()].
+#' @param refit Passed to [fit_cached()] for the prior fit.
+#' @param cores_per_fit Cores for each data set fit. `NULL` leaves
+#'   `SBC::compute_SBC()`'s own default.
+#' @param thin_ranks Thinning before ranking. `NULL` leaves SBC's default
+#'   for a function backend.
+#' @param keep_fits `TRUE` keeps every fit in the result, which is
+#'   hundreds of MB for a default run. `FALSE` still keeps the ranks and
+#'   the convergence diagnostics.
+#' @param cache_mode,cache_location Passed to `SBC::compute_SBC()`.
+#'   `"results"` needs a `cache_location`.
+#' @param .fitter The fitting function, `bmm::bmm()` by default. Used for
+#'   the prior fit and inside the backend; tests inject a stand-in so
+#'   that nothing is compiled.
+#'
+#' @return `SBC::compute_SBC()`'s `SBC_results`, unchanged apart from one
+#'   attribute, `bmmtools_sbc`, holding `model`, `n_sims`, `level`,
+#'   `variables` (the draw names that were ranked), `seed` (`NA` when
+#'   none was given), `prior` (`brms::prior_summary()` of the prior fit,
+#'   which is what the draws came from), `layout` and `diagnostics`.
+#'
+#' @details
+#' Two convergence bars apply to the same fits. bmmtools warns once on
+#' its own Rhat 1.05 (see [check_convergence()]) together with SBC's
+#' rank-ESS 0.5, records both counts in the attribute, and names SBC's
+#' stricter Rhat 1.01 in the message. An ESS below half the maximum rank
+#' skews the ranks themselves, which is why it is a bar here and not
+#' only a diagnostic.
+#'
+#' @references
+#' Talts, S., Betancourt, M., Simpson, D., Vehtari, A., & Gelman, A.
+#' (2018). Validating Bayesian inference algorithms with simulation-based
+#' calibration. \doi{10.48550/arXiv.1804.06788}
+#'
+#' Modrák, M., Moon, A. H., Kim, S., Bürkner, P.-C., Huurre, N.,
+#' Faltejsková, K., Gelman, A., & Vehtari, A. (2023). Simulation-based
+#' calibration checking for Bayesian computation: The choice of test
+#' quantities shapes sensitivity. *Bayesian Analysis*.
+#' \doi{10.1214/23-BA1404}
+#'
+#' @examples
+#' \dontrun{
+#' model <- bmm::mixture2p(resp_error = "y")
+#' results <- sbc(
+#'   model,
+#'   recovery_formula(model),
+#'   data.frame(id = rep(1:20, each = 50), y = 0),
+#'   n_sims = 20,
+#'   chains = 2, iter = 500, backend = "cmdstanr",
+#'   seed = 1
+#' )
+#' SBC::plot_rank_hist(results)
+#' attr(results, "bmmtools_sbc")$variables
+#' }
+#'
+#' @export
+sbc <- function(model,
+                formula,
+                data,
+                prior = NULL,
+                n_sims = 100,
+                level = c("population", "sd"),
+                ...,
+                seed = NULL,
+                file = NULL,
+                refit = c("on_change", "never", "always"),
+                cores_per_fit = NULL,
+                thin_ranks = NULL,
+                keep_fits = FALSE,
+                cache_mode = c("none", "results"),
+                cache_location = NULL,
+                .fitter = NULL) {
+  rlang::check_installed(
+    c("SBC", "posterior"), "to run simulation-based calibration."
+  )
+  check_model(model)
+  level <- rlang::arg_match(
+    level, c("population", "sd", "cor"),
+    multiple = TRUE
+  )
+  refit <- rlang::arg_match(refit)
+  cache_mode <- rlang::arg_match(cache_mode)
+  n_sims <- check_count(n_sims, "n_sims")
+  if (!"population" %in% level) {
+    cli::cli_abort(c(
+      "{.arg level} must include {.val population}.",
+      i = "The population parameters are the ones every model has, and a \\
+           calibration that ranks none of them checks nothing."
+    ))
+  }
+  if (!is.data.frame(data)) {
+    cli::cli_abort(
+      "{.arg data} must be a data frame, not {.obj_type_friendly {data}}."
+    )
+  }
+  check_sbc_args(prior, seed, .fitter, cache_mode, cache_location)
+  dots <- rlang::list2(...)
+  check_sbc_dots(dots)
+
+  groups <- check_sbc_formula(formula)
+  group <- groups$group %||% "id"
+  check_group_ids(data, group)
+  layout <- sbc_layout(data, group)
+  sets <- sbc_pattern_sets(model, groups, group, level)
+
+  check_improper_priors(formula, data, model, list(sbc = prior))
+  base <- file %||% tempfile(pattern = "bmmtools-sbc-")
+  fit <- prior_fit(
+    "sbc", prior, formula, data, model, base, refit, seed, dots, .fitter
+  )
+  draws <- prior_parameter_draws(fit, n_sims, sets$draw, seed = seed)
+  ranked <- select_variables(sets$rank, posterior::variables(draws))
+
+  fitter <- .fitter
+  if (is.null(fitter)) {
+    rlang::check_installed("bmm", "to fit the simulated data sets.")
+    fitter <- bmm::bmm
+  }
+  datasets <- with_seed_if(seed, SBC::generate_datasets(
+    sbc_generator(draws, ranked, model, layout, groups$correlated, group),
+    n_sims
+  ))
+
+  options <- list(
+    datasets = datasets,
+    backend = sbc_backend(formula, model, prior, dots, fitter),
+    keep_fits = keep_fits,
+    cache_mode = cache_mode
+  )
+  # each NULL option is left out so that SBC's own default applies
+  options$cores_per_fit <- cores_per_fit
+  options$thin_ranks <- thin_ranks
+  options$cache_location <- cache_location
+  results <- rlang::exec(SBC::compute_SBC, !!!options)
+
+  attr(results, "bmmtools_sbc") <- list(
+    model = class(model)[[length(class(model))]],
+    n_sims = n_sims,
+    level = sets$level,
+    variables = ranked,
+    seed = if (is.null(seed)) NA_real_ else as.double(seed),
+    prior = tryCatch(brms::prior_summary(fit), error = function(e) NULL),
+    layout = layout,
+    diagnostics = sbc_diagnostics(results)
+  )
+  results
 }

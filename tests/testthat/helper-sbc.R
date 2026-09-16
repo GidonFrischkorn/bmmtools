@@ -53,18 +53,119 @@ sbc_mock_fit <- function(variables = sbc_mock_variables(), n_draws = 50L) {
 #' Deliberately not a stub that ignores `variables`: the point of the
 #' generic is that the selection and the draw count are exercised, and a
 #' method that returned everything would hide exactly the mismatch 6.2
-#' exists to catch.
+#' exists to catch. It goes through `subsample_prior_draws()`, the body
+#' the default method uses, so the coverage check and the draw-count
+#' error are the real ones rather than a second implementation of them.
 #'
 #' @noRd
 mock_parameter_draws <- function(fit, n_sims, variables, seed = NULL, ...) {
-  selected <- posterior::subset_draws(
-    fit$prior_draws,
-    variable = variables, regex = TRUE
+  subsample_prior_draws(
+    fit$prior_draws, check_count(n_sims, "n_sims"), variables, seed
   )
-  posterior::subset_draws(selected, draw = seq_len(n_sims))
 }
 
 registerS3method(
   "prior_parameter_draws", "sbcmockfit", mock_parameter_draws,
   envir = asNamespace("bmmtools")
 )
+
+#' Prior draws a `mixture2p` simulation can actually be run from
+#'
+#' `sbc_mock_fit()`'s values are indices, which is all the naming layer
+#' needs. `sbc()` hands them to `simulate_recovery()`, so they have to be
+#' values the model can generate from: `kappa` on the log link and
+#' `thetat` on the logit link, the SDs positive, the correlation inside
+#' (-1, 1). Deterministic and free of the random number stream, so a test
+#' can assert on a particular row.
+#'
+#' @noRd
+sbc_prior_draws <- function(n_draws = 60L, group = "id") {
+  k <- seq_len(n_draws)
+  values <- cbind(
+    b_kappa_Intercept = log(4) + 0.01 * k,
+    b_thetat_Intercept = stats::qlogis(0.7) + 0.005 * k,
+    sd_kappa = 0.2 + 0.002 * k,
+    sd_thetat = 0.3 + 0.002 * k,
+    cor_pair = 0.5 * cos(k / 7)
+  )
+  colnames(values) <- c(
+    "b_kappa_Intercept", "b_thetat_Intercept",
+    paste0("sd_", group, "__kappa_Intercept"),
+    paste0("sd_", group, "__thetat_Intercept"),
+    paste0("cor_", group, "__kappa_Intercept__thetat_Intercept")
+  )
+  posterior::as_draws_matrix(values)
+}
+
+#' A mock fitter for `sbc()`: one object serving as prior fit and as fit
+#'
+#' The prior fit is read through `prior_parameter_draws()` and every
+#' dataset fit through SBC's `SBC_fit_to_draws_matrix()`, so the same
+#' object answers both. What the test asks about afterwards is the log:
+#' how often the fitter was called, and with what.
+#'
+#' @param variables Which columns of [sbc_prior_draws()] the fit carries.
+#'   `NULL` carries every column **except** the `cor_` one, because that
+#'   is what a real fit of the default `recovery_formula()` has: its
+#'   group terms are uncorrelated, so brms writes no correlation. A mock
+#'   that shipped every possible name regardless of the formula under
+#'   test once let a HIGH through a green gate --- `sbc()` asked a real
+#'   fit for a `cor_` draw it did not have, and every test "found" the
+#'   one the mock happened to carry. Pass `variables` to build a fit
+#'   whose draws deliberately do or do not cover what `sbc()` resolved.
+#' @return A list with `fitter` to inject and `calls`, an environment
+#'   holding `n` and the call log.
+#' @noRd
+sbc_mock_fitter <- function(variables = NULL, n_draws = 60L, group = "id") {
+  calls <- new.env(parent = emptyenv())
+  calls$n <- 0L
+  calls$log <- list()
+  draws <- sbc_prior_draws(n_draws, group)
+  variables <- variables %||%
+    grep("^cor_", posterior::variables(draws), invert = TRUE, value = TRUE)
+  draws <- posterior::subset_draws(draws, variable = variables)
+  fitter <- function(formula, data, model, prior = NULL, ...) {
+    calls$n <- calls$n + 1L
+    dots <- list(...)
+    calls$log[[calls$n]] <- list(
+      n_rows = nrow(data), columns = names(data),
+      ids = unique(as.character(data[[1L]])),
+      data = data, prior = prior,
+      sample_prior = dots$sample_prior, cores = dots$cores,
+      seed = dots$seed, chains = dots$chains, iter = dots$iter
+    )
+    structure(
+      list(prior_draws = draws), class = c("sbcmockfit", "mockfit")
+    )
+  }
+  # SBC hashes the backend with rlang::hash(), which serialises this
+  # closure. Left in the test environment its parent chain reaches the
+  # attached `package:bmmtools`, and serialize() then warns once per run
+  # about it -- a warning that says nothing and would bury a real one.
+  # Re-parenting to the namespace keeps everything the fitter needs and
+  # stops the walk there.
+  environment(fitter) <- rlang::env(
+    asNamespace("bmmtools"),
+    calls = calls, draws = draws
+  )
+  list(fitter = fitter, calls = calls)
+}
+
+#' The calls that fitted a data set, i.e. every call after the prior fit
+#' @noRd
+sbc_dataset_calls <- function(calls) {
+  calls$log[-1L]
+}
+
+# SBC reads a fit through its own generic, so the mock fit needs a
+# method there too. Registered into SBC's namespace, the way
+# helper-generate.R registers extract_estimates.mockfit into bmmtools';
+# guarded because SBC is in Suggests and the suite has to load without
+# it.
+if (requireNamespace("SBC", quietly = TRUE)) {
+  registerS3method(
+    "SBC_fit_to_draws_matrix", "sbcmockfit",
+    function(fit, ...) fit$prior_draws,
+    envir = asNamespace("SBC")
+  )
+}

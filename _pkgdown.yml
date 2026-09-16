@@ -66,6 +66,7 @@ reference:
   contents:
   - cross_check
   - summary.bmmtools_cross_check
+  - sbc
 
 - title: Plot
   contents:
