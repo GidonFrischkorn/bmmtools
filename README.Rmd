@@ -17,33 +17,43 @@ knitr::opts_chunk$set(
 
 <!-- badges: start -->
 [![Lifecycle: experimental](https://img.shields.io/badge/lifecycle-experimental-orange.svg)](https://lifecycle.r-lib.org/articles/stages.html#experimental)
+[![R-CMD-check](https://github.com/GidonFrischkorn/bmmtools/actions/workflows/R-CMD-check.yaml/badge.svg)](https://github.com/GidonFrischkorn/bmmtools/actions/workflows/R-CMD-check.yaml)
 <!-- badges: end -->
 
-bmmtools holds the validation half of the model-development workflow of
-the [bmm](https://github.com/venpopov/bmm) package.
-`bmm::use_model_template()` scaffolds a new cognitive measurement model;
-bmmtools checks it. Every check is the same loop, simulate, fit, score,
-and only the scorer changes:
+Writing a new cognitive measurement model has two halves. bmm builds and
+fits it: `bmm::use_model_template()` writes the skeleton of a new model,
+and `bmm::bmm()` fits it. bmmtools is the other half: it checks that the
+model works before anyone trusts it on real data.
+
+Every check is the same loop, simulate data from known values, fit the
+model, score the fit, and only the scorer changes:
 
 | Scorer | truth comes from | scored against | answers |
 | --- | --- | --- | --- |
-| `recover()` | a fixed grid of generating values | posterior vs. truth: correlation with CI, RMSE, bias, CrI coverage | can this model be estimated from data of this size |
+| `recover()` | a fixed grid of generating values | bias, RMSE, how often the credible interval covers the generating value, and the correlation between generating value and estimate with a confidence interval | can this model be estimated from data of this size |
 | `prior_check()` | the prior | the observable scale: floor and ceiling rates, quantile profile | are these priors sane on the scale a reader understands |
-| `recover_correlations()` | correlated generating values, or a factor model | between-subject correlations three ways (the model's own, per draw, of posterior means) against the generating and the in-sample correlation | can this model measure individual differences and their correlates |
-| `sbc()` | the prior | posterior rank of the truth (a thin adapter over the SBC package) | is the implementation correct |
+| `recover_correlations()` | correlated generating values, or a factor model | between-subject correlations, estimated three ways and scored against both the correlation used to generate and the one the simulated people actually had | can this model measure individual differences and their correlates |
+| `sbc()` | the prior | posterior rank of the truth, through the SBC package | is the implementation correct |
 | `cross_check()` | a fixed grid, or real data | a closed-form estimator, another implementation, or published values | does the new model agree with what is already known |
+
+`sbc()` is simulation-based calibration. Draw parameters from the prior,
+simulate data from them, fit, and record where the drawn value falls
+among the posterior draws. Averaged over the prior the posterior is the
+prior again, so those ranks have to be uniform; a histogram with a peak
+or a slope means the implementation and the model on paper are not the
+same thing.
 
 `recover_subjects()` scores person-level posterior parameters, which no
 other package does. Scoring dispatches on `brmsfit`, so a plain brms fit
-can be scored too; the model-aware generate layer needs bmm.
+can be scored too; only the simulation step, which reads a bmm model
+object to know what to generate, needs bmm itself.
 
-Every bmmtools function this README names is built: the five scorers of
-the table, `recover_subjects()`, and the simulation, grid and cache
-layers underneath them. What is not done is the release: the vignette
-"Validating a new bmm model", `cran-comments.md`, a NEWS list written
-for a release rather than for development, and a
-`devtools::check(cran = TRUE)` run. Until those are done the version is
-0.0.0.9000 and the API can still change.
+Version 0.1.0 is the first release. Every function this README names is
+built and documented: the five scorers of the table,
+`recover_subjects()`, and underneath them `simulate_recovery()`,
+`recovery_grid()` and `fit_cached()`. It is an early release even so.
+bmmtools is not on CRAN, and the lifecycle badge says experimental
+because argument names and return shapes can still change before 1.0.
 
 ## Who it is for
 
@@ -54,6 +64,18 @@ how many trials a model needs. If you fit bmm models to your own data,
 you do not need it; bmm's own documentation covers that.
 
 ## A recovery check in brief
+
+The model below is bmm's two-parameter mixture model for continuous
+reproduction, the task where someone reports a remembered colour or
+orientation on a continuous scale. `kappa` is the precision of the memory
+responses and `thetat` the probability that a response comes from memory
+rather than a guess. Both are given on the link scale, `kappa` logged and
+`thetat` on the log-odds scale, because that is the scale the model is
+estimated on.
+
+`simulate_recovery()` returns two things: `data`, ready to fit, and
+`truth`, which holds the generating values. `truth$population` has the
+values above, `truth$subjects` each simulated person's own.
 
 ```r
 library(bmmtools)
@@ -76,12 +98,24 @@ summary(recovery)
 recover_subjects(fit, sim$truth$subjects) |> plot_recovery()
 ```
 
-`recovery_grid()` runs the same loop over a grid of subjects, trials
-and replications, with one file per cell and a resume, and
-`prior_check()` shows what the priors imply for the data before any
-model is fitted to them. The articles on the
-[package website](https://www.gfrischkorn.org/bmmtools/) walk
-through each step.
+Line by line: `recovery_formula()` writes the bmm formula a recovery
+study needs, a random intercept over `id` for every free parameter.
+`fit_cached()` fits with `bmm::bmm()` and saves the result, so calling it
+again with everything unchanged reads the fit back instead of sampling
+for an hour. `check_convergence()` returns one row of diagnostics, the
+worst rhat, the smallest effective sample sizes and the divergent
+transitions, together with a pass verdict.
+`recover()` scores the population values and `recover_subjects()` each
+simulated person's, both returning a tibble that `summary()` reduces to
+one row per parameter and `plot_recovery()` draws as estimate against
+generating value.
+
+`recovery_grid()` runs the same loop over a grid of subjects, trials and
+replications, writing one file per cell so an interrupted run can be
+resumed, and `prior_check()` shows what the priors imply for the data
+before any model is fitted to them. The articles on the
+[package website](https://www.gfrischkorn.org/bmmtools/) walk through
+each step.
 
 ## What bmmtools is not
 
@@ -106,25 +140,36 @@ through each step.
   accumulation, multinomial processing tree and memory measurement
   models.
 - Not a reporting package. Every scorer returns a tidy tibble whose
-  columns follow the [apabayes](https://github.com/GidonFrischkorn/apabayes)
-  contract, so a recovery table drops into a manuscript through
-  `apabayes` with no glue code. Neither package imports the other.
+  columns follow the apabayes contract, so a recovery table drops into a
+  manuscript through `apabayes` with no glue code. Neither package
+  imports the other.
 - No model fitting of its own (that is `bmm()`), and no Bayesian power or
   design analysis.
 
 ## Installation
 
-bmmtools is not on CRAN yet.
+bmmtools is not on CRAN. Install the current release from GitHub:
 
 ```r
 # install.packages("pak")
+pak::pak("GidonFrischkorn/bmmtools@v0.1.0")
+```
+
+Without the tag you get the development version, which is whatever is on
+`main`:
+
+```r
 pak::pak("GidonFrischkorn/bmmtools")
 ```
 
-`sbc()` needs the [SBC](https://hyunjimoon.github.io/SBC/) package, which
-is not on CRAN either. `pak` resolves it from the `Remotes:` line in
-DESCRIPTION, but CRAN strips that field, so install it directly if you
-took bmmtools from anywhere else:
+Fitting anything needs bmm, brms and a working
+[cmdstanr](https://mc-stan.org/cmdstanr/) installation; they are
+Suggests, so bmmtools installs and its score layer runs without them.
+
+`sbc()` additionally needs the [SBC](https://hyunjimoon.github.io/SBC/)
+package, which is not on CRAN either. `pak` resolves it from the
+`Remotes:` line in DESCRIPTION, so the commands above already bring it
+in. To install it on its own:
 
 ```r
 pak::pak("hyunjimoon/SBC")
