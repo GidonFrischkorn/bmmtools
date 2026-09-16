@@ -91,6 +91,7 @@ articles:
   navbar: Running studies
   contents:
   - articles/recovery-grid
+  - articles/correlation-recovery
   - articles/prior-check
 
 - title: For model developers

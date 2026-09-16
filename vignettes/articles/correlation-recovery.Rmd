@@ -1,0 +1,516 @@
+---
+title: "Recovering between-subject correlations"
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 7,
+  fig.height = 4,
+  out.width = "100%"
+)
+options(width = 90)
+# paths relative to the package root, whether this renders from the
+# package root (pkgdown) or from vignettes/articles
+from_root <- function(path) {
+  if (dir.exists("vignettes")) path else file.path("..", "..", path)
+}
+# the code shown is read from the script that produced the results
+shown <- function(label, file) {
+  lines <- readLines(from_root(file))
+  markers <- grep("^## ---- ", lines)
+  start <- markers[lines[markers] == paste("## ----", label)]
+  end <- c(markers[markers > start], length(lines) + 1L)[[1L]] - 1L
+  code <- lines[(start + 1L):end]
+  while (length(code) > 0L && !nzchar(trimws(code[[length(code)]]))) {
+    code <- code[-length(code)]
+  }
+  code
+}
+script <- "vignettes/articles/precompute/correlation-recovery.R"
+library(bmmtools)
+res <- readRDS(from_root("vignettes/articles/assets/correlation-recovery.rds"))
+cors <- res$cor_recovery
+
+# numbers in the text: two decimals, no leading zero for values within [-1, 1]
+num <- function(x, digits = 2) {
+  out <- formatC(x, digits = digits, format = "f")
+  ifelse(abs(x) < 1, sub("^(-?)0\\.", "\\1.", out), out)
+}
+# one cell of by_type
+cell <- function(type, r, cor, est, column) {
+  row <- by_type[by_type$pair_type == type & by_type$rho == r &
+                   by_type$re_cor == cor & by_type$estimator == est, ]
+  num(row[[column]])
+}
+lav <- function(r, cor, pair, column) {
+  s <- res$lavaan_grid_summary
+  num(s[[column]][s$rho == r & s$re_cor == cor & s$pair == pair])
+}
+lav_status <- function(cond, status) {
+  s <- res$lavaan_status
+  n <- s$n[s$condition == cond & s$status == status]
+  if (length(n) == 0L) 0L else n
+}
+groups <- dplyr::left_join(res$convergence_groups, res$design,
+                           by = "condition")
+group_fits <- function(cor, grp, column) {
+  g <- groups[groups$re_cor == cor & groups$group == grp, ]
+  sum(g[[column]] > 0)
+}
+att <- function(term, est, column) {
+  a <- res$attenuation
+  num(a[[column]][a$term == term & a$estimator == est])
+}
+```
+
+A model that measures individual differences has to do more than order
+people correctly on each of its parameters. Most substantive questions
+are about how those differences relate: whether precision in one task
+goes with precision in another, whether two parameters of the same model
+are separable, or whether a parameter correlates with an ability
+measured outside the model. [Validating a new bmm model](bmmtools.html)
+scored how well subject estimates recover the subjects' true values.
+This article scores how well the correlations between them are
+recovered.
+
+> **A first look, not a benchmark.** The results below come from one
+> small simulation: four conditions, 20 replications each, 100 subjects
+> per data set, fitted with four chains of 1,000 iterations, half of them
+> warmup. At that length
+> many fits miss the usual convergence standard, and we score them under
+> a looser one (see [Convergence](#convergence)). The results show how
+> the tools work and in which direction each estimator errs. They are
+> not a calibrated recommendation for study design. A more comprehensive
+> simulation will replace this article once the package is stable.
+
+To run the code you need bmm, brms, a working
+[cmdstanr](https://mc-stan.org/cmdstanr/) installation and, for the SEM
+part, lavaan. The output was computed once and saved, so this page was
+built without Stan or lavaan. Simulating and fitting the grid took
+`r round(res$minutes_fitting)` minutes.
+
+## Generating correlated people
+
+```{r model, eval = FALSE, code = shown("model", script)}
+```
+
+The model is bmm's two-parameter mixture model, with population values
+and between-subject SDs on the link scale as in
+[Validating a new bmm model](bmmtools.html). Each simulated subject
+does two tasks with 100 trials each, so there are four subject-level
+terms, `kappa` and `thetat` in task 1 and task 2, and one observed
+covariate `G`, standing in for an ability measured by a separate test.
+
+The correlations among these five variables come from a factor model:
+
+```{r truth, code = shown("truth", script)}
+```
+
+`cors_from_factors()` turns loadings and factor correlations into the
+implied correlation matrix. The two tasks load $\sqrt{.7}$ on a factor
+per parameter, `precision` for `kappa` and `memory` for `thetat`, and
+`G` loads 1 on its own factor `ability`. All three factors correlate
+$\rho$. This gives three kinds of pairs with known values:
+
+- **the same parameter across tasks**, $.7$ at every $\rho$;
+- **different parameters**, $.7\rho$, so $.35$ at $\rho = .5$;
+- **a parameter with `G`**, $\sqrt{.7}\,\rho$, so $.42$ at $\rho = .5$.
+
+We used a factor model, rather than one correlation for every pair,
+for two reasons. First, the article can then separate the correlation
+between two terms, which the estimators below score, from the
+correlation between the latent factors, which a structural equation
+model recovers. Second, the factor model keeps that SEM identified even
+at $\rho = 0$, because the two tasks of one parameter still correlate
+$.7$.
+
+## Three estimators
+
+`extract_correlations()` offers three answers to the question of how two
+subject-level terms correlate:
+
+- `"model"` is the correlation of the random effects the model
+  estimates. It exists only when the random effects of the two terms
+  share a correlation block, `(1 | p | id)`.
+- `"draws"` correlates the subjects' values within each posterior draw
+  and summarises these correlations like any other posterior, with the
+  median and a 95% equal-tailed credible interval (CrI).
+- `"point"` correlates the subjects' posterior means, with a Fisher-z
+  interval that treats the means as if they were observed values.
+
+They target different quantities. `model` estimates the correlation in
+the population the subjects come from. `draws` describes the subjects in
+the data set: its interval reflects uncertainty about their values, not
+about which subjects happened to be sampled. `point` is a correlation of
+estimates, and so it inherits whatever shrinkage and estimation error
+those estimates carry. `recover_correlations()` therefore scores each
+estimate against two truths: `true_value`, the generating correlation,
+and `sample_value`, the correlation the simulated subjects actually had.
+
+## The grid
+
+```{r grid, eval = FALSE, code = shown("grid", script)}
+```
+
+The grid crosses the factor correlation, $\rho = 0$ or $.5$, with the
+random-effects structure of the fitted model. Under
+`re_cor = "none"` every term has its own random intercept and the model
+assumes the terms are uncorrelated. Under `re_cor = "all"` the four
+terms share one correlation block, so the model estimates their
+correlations.
+
+```{r run, eval = FALSE, code = shown("run", script)}
+```
+
+`cors` and `formula` are functions of the grid row. `cors_for()` builds
+the correlation matrix for the row's $\rho$, and the formula function
+reads the row's `re_cor`, which is how one grid compares two model
+specifications. `tasks` and `covariates` add the task dimension and `G`
+to the simulated data. `correlations` asks the grid to extract all three
+estimators from every fit; `model` rows exist only in the
+`re_cor = "all"` cells. `threads` enables within-chain parallelisation
+in brms; in a timing test with one 100-subject fit it cut the sampling
+time from 499 to 238 seconds.
+
+## Convergence {#convergence}
+
+```{r convergence, eval = FALSE, code = shown("convergence", script)}
+```
+
+```{r, echo = FALSE}
+convergence_table <- res$convergence |>
+  dplyr::summarise(
+    fits = dplyr::n(),
+    pass = sum(pass),
+    pass_strict = sum(pass_strict),
+    max_rhat = max(max_rhat),
+    min_ess_bulk = min(min_ess_bulk),
+    min_ess_tail = min(min_ess_tail),
+    n_divergent = sum(n_divergent),
+    .by = condition
+  ) |>
+  dplyr::left_join(res$design, by = "condition")
+convergence_table[c("condition", "rho", "re_cor", "fits", "pass",
+                    "pass_strict", "max_rhat", "min_ess_bulk",
+                    "min_ess_tail", "n_divergent")]
+```
+
+Under the usual standard, Rhat below 1.01, bulk and tail ESS above 400
+and no divergent transitions, only `r sum(res$convergence$pass_strict)`
+of the `r nrow(res$convergence)` fits pass. None had a divergent
+transition or hit the maximum tree depth; they fall short on Rhat and
+ESS, and not by much. The worst Rhat is
+`r num(max(res$convergence$max_rhat))`, the smallest bulk ESS
+`r round(min(res$convergence$min_ess_bulk))` and the smallest tail ESS
+`r round(min(res$convergence$min_ess_tail))`. We therefore score every
+fit with Rhat below `r res$bar$rhat_max` and bulk and tail ESS above
+`r res$bar$ess_bulk_min`, which all `r sum(res$convergence$pass)` fits
+meet.
+
+The shortfall is concentrated in a few variables:
+
+```{r convergence-groups, eval = FALSE, code = shown("convergence-groups", script)}
+```
+
+```{r, echo = FALSE}
+groups |>
+  dplyr::summarise(
+    fits = dplyr::n(),
+    fits_rhat = sum(n_rhat > 0),
+    fits_ess = sum(n_ess > 0),
+    max_rhat = max(max_rhat),
+    min_ess_bulk = min(min_ess_bulk),
+    .by = c(re_cor, group)
+  )
+```
+
+In the `re_cor = "all"` cells, `r group_fits("all", "cor", "n_rhat")` of
+40 fits have a correlation parameter with Rhat of 1.01 or above, and
+`r group_fits("all", "cor", "n_ess")` have one with ESS at or below 400.
+The smallest bulk ESS of any correlation parameter is
+`r round(min(groups$min_ess_bulk[groups$group == "cor"]))`. These are
+the draws the `model` estimator summarises, so its intervals below rest
+on fewer effective draws than the other estimators'. In the
+`re_cor = "none"` cells, `r group_fits("none", "subject", "n_rhat")` of
+40 fits have at least one of their 400 subject-level terms with Rhat of
+1.01 or above, `r group_fits("none", "sd", "n_rhat")` an SD and
+`r group_fits("none", "population", "n_rhat")` a population parameter.
+Longer chains are the obvious remedy. For a simulation meant to show
+the direction of errors rather than exact calibration, we did not run
+them.
+
+## Scoring
+
+```{r correlations, eval = FALSE, code = shown("correlations", script)}
+```
+
+`summary()` of the correlation recovery has one row per condition, pair
+and estimator. With ten pairs, three estimators and four conditions this
+is a long table, so we average it within the three kinds of pairs:
+
+```{r}
+pair_type <- function(term) {
+  dplyr::case_when(
+    grepl("(^|__)G(__|$)", term) ~ "with G",
+    grepl("^kappa.*__kappa|^thetat.*__thetat", term) ~ "same parameter",
+    TRUE ~ "across parameters"
+  )
+}
+by_type <- res$cor_summary |>
+  dplyr::mutate(pair_type = pair_type(term)) |>
+  dplyr::summarise(
+    true_value = mean(true_value),
+    mean_estimate = mean(mean_estimate),
+    bias = mean(bias),
+    coverage = mean(coverage),
+    coverage_sample = mean(coverage_sample),
+    rejection_rate = mean(rejection_rate),
+    ci_width = mean(ci_width),
+    .by = c(pair_type, rho, re_cor, estimator)
+  )
+print(by_type, n = Inf)
+```
+
+`rejection_rate` is the share of replications whose interval excludes
+zero: the false-positive rate where the true correlation is 0 and the
+power where it is not. [Recovery summary columns](metrics.html) defines
+the other columns.
+
+```{r, fig.height = 4.5}
+library(ggplot2)
+ggplot(
+  by_type,
+  aes(estimator, mean_estimate, colour = re_cor)
+) +
+  geom_hline(aes(yintercept = true_value), linetype = "dashed") +
+  geom_point(size = 2.5, position = position_dodge(width = 0.4)) +
+  facet_grid(paste("rho =", rho) ~ pair_type) +
+  labs(x = NULL, y = "Mean estimate (dashed: generating value)",
+       colour = "re_cor")
+```
+
+**The same parameter across tasks.** The generating correlation is .70.
+A model without correlated random effects shrinks each subject towards
+the mean of that term alone, and both estimators are attenuated: `draws`
+gives `r cell("same parameter", 0.5, "none", "draws", "mean_estimate")`
+and `point` `r cell("same parameter", 0.5, "none", "point", "mean_estimate")`
+at $\rho = .5$. With correlated random effects, `model` and `draws`
+recover the correlation, at
+`r cell("same parameter", 0.5, "all", "model", "mean_estimate")` and
+`r cell("same parameter", 0.5, "all", "draws", "mean_estimate")`.
+`point` now overshoots, at
+`r cell("same parameter", 0.5, "all", "point", "mean_estimate")`, and
+because its interval is narrow (mean width
+`r cell("same parameter", 0.5, "all", "point", "ci_width")`) it covers
+the generating value in only
+`r cell("same parameter", 0.5, "all", "point", "coverage")` of the
+replications. A likely reason is that the correlated model shrinks
+each subject towards the correlation it estimates, so the posterior
+means line up more closely than the true values do.
+
+**Different parameters.** At $\rho = 0$ this pair type measures false
+positives. Under `re_cor = "all"`, `point` excludes zero in
+`r cell("across parameters", 0, "all", "point", "rejection_rate")` of
+the replications, against
+`r cell("across parameters", 0, "all", "draws", "rejection_rate")` for
+`draws` and
+`r cell("across parameters", 0, "all", "model", "rejection_rate")` for
+`model`. At $\rho = .5$ (generating value .35) the same pattern holds:
+`draws` and `model` are close,
+`r cell("across parameters", 0.5, "all", "draws", "mean_estimate")` and
+`r cell("across parameters", 0.5, "all", "model", "mean_estimate")`,
+and `point` is inflated to
+`r cell("across parameters", 0.5, "all", "point", "mean_estimate")`.
+Under `re_cor = "none"`, `draws` is attenuated to
+`r cell("across parameters", 0.5, "none", "draws", "mean_estimate")`,
+while `point` lands near the truth at
+`r cell("across parameters", 0.5, "none", "point", "mean_estimate")`.
+However, the same `point` estimator gives
+`r cell("across parameters", 0, "none", "point", "mean_estimate")`
+where the truth is 0, so this is not an unbiased estimator but, in this
+design, an attenuation and an upward bias that partly cancel.
+
+**A parameter with `G`.** Here `point` is the best calibrated
+estimator. At $\rho = 0$ it excludes zero in
+`r cell("with G", 0, "all", "point", "rejection_rate")` of the
+replications under `re_cor = "all"`, and at $\rho = .5$ its mean is
+`r cell("with G", 0.5, "all", "point", "mean_estimate")` against a
+generating value of .42, covered in
+`r cell("with G", 0.5, "all", "point", "coverage")` of the replications.
+`draws` excludes zero in
+`r cell("with G", 0, "all", "draws", "rejection_rate")` of the
+replications at $\rho = 0$. This follows from its target: its
+interval covers the correlation these 100 subjects actually had in
+`r cell("with G", 0, "all", "draws", "coverage_sample")` of the
+replications. A sample of 100 subjects has a correlation with `G` that
+differs from 0 by chance, and the `draws` interval, which carries no
+uncertainty about which subjects were sampled, is narrow enough
+(mean width `r cell("with G", 0, "all", "draws", "ci_width")`) to
+detect it.
+
+Taken together, in this design, correlations between parameters of one
+model were best recovered by fitting correlated random effects and
+reading `model` or `draws`. Correlating posterior means from that model
+overstated the correlations and inflated false positives. For a
+correlation with an observed covariate, `point` answered the population
+question and `draws` the in-sample one.
+
+`plot_recovery()` shows the replications of one cell, each estimate
+against the correlation the subjects actually had:
+
+```{r plot, fig.width = 9, fig.height = 7.5, code = shown("plot", script)}
+```
+
+## The SEM route
+
+A second way to estimate a latent correlation is to take the subject
+estimates out of the model and fit a structural equation model to them.
+`subject_table()` returns one row per subject with the true and
+estimated value of every term and the covariates:
+
+```{r subject-table, eval = FALSE, code = shown("subject-table", script)}
+```
+
+```{r lavaan-grid, eval = FALSE, code = shown("lavaan-grid", script)}
+```
+
+The CFA mirrors the generating model. Each parameter's two tasks load
+on one factor with equal loadings, `G` is observed, and within a task
+the residuals of `kappa` and `thetat` covary, because both are estimated
+from the same trials. Every fit is kept with its status:
+
+```{r, echo = FALSE}
+res$lavaan_status
+lavaan_summary <- res$lavaan_grid_summary[
+  c("condition", "rho", "re_cor", "pair", "n_fits", "n_warning",
+    "mean_estimate", "sd_estimate", "coverage")
+]
+dplyr::mutate(lavaan_summary, dplyr::across(mean_estimate:coverage, \(x) round(x, 3)))
+```
+
+Under `re_cor = "none"` all 40 CFAs fit without warnings. The
+correlations with `G` are recovered, at
+`r lav(0.5, "none", "precision__G", "mean_estimate")` and
+`r lav(0.5, "none", "memory__G", "mean_estimate")` for a latent .5, and
+`r lav(0, "none", "precision__G", "mean_estimate")` and
+`r lav(0, "none", "memory__G", "mean_estimate")` for 0. The correlation
+between the two parameter factors is not: it is
+`r lav(0, "none", "precision__memory", "mean_estimate")` where the
+factors are uncorrelated and
+`r lav(0.5, "none", "precision__memory", "mean_estimate")` where they
+correlate .5. This is consistent with the upward bias of `point`
+between parameters seen above, which the CFA then corrects for
+attenuation and so enlarges.
+
+Under `re_cor = "all"`, `r lav_status("row-3", "warning")` of 20 CFAs at
+$\rho = 0$ and `r lav_status("row-4", "warning")` of 20 at $\rho = .5$
+end with a warning: negative residual variances or a residual covariance
+matrix that is not positive definite. The factor correlation varies
+widely between replications, with an SD of
+`r lav(0.5, "all", "precision__memory", "sd_estimate")` at $\rho = .5$,
+and its 95% confidence interval covers .5 in
+`r lav(0.5, "all", "precision__memory", "coverage")` of them. One explanation, which this simulation does not test, is
+that posterior means from a model with correlated random effects
+already carry the correlation the model estimated, and a CFA on them
+has little room left to model it again.
+
+In this design, the two-step route recovers correlations with an
+observed covariate but not the correlation between two parameters of
+the same model. lavaan ran in the precompute script; it is not a
+dependency of bmmtools.
+
+## Several models, separate fits
+
+Sometimes the terms come from different models, fitted separately:
+precision in a visual working memory task and in a verbal one, each
+with its own `bmm` fit. `recovery_component()` describes one model,
+`simulate_components()` draws correlated subjects across several, and
+`fit_components()` fits each:
+
+```{r components, eval = FALSE, code = shown("components", script)}
+```
+
+```{r fit-components, eval = FALSE, code = shown("fit-components", script)}
+```
+
+```{r, echo = FALSE}
+res$set_convergence
+```
+
+This example is a single data set of 100 subjects at $\rho = .5$, so
+its numbers illustrate the arithmetic rather than estimate a bias. Both
+fits pass the looser bar; fit `a` misses the strict one on Rhat.
+
+```{r separate-fits, eval = FALSE, code = shown("separate-fits", script)}
+```
+
+```{r reliability, eval = FALSE, code = shown("reliability", script)}
+```
+
+```{r, echo = FALSE}
+res$attenuation[c("term", "estimator", "true_value", "mean_estimate",
+                  "rel_a", "rel_b", "expected", "disattenuated")]
+```
+
+Neither fit knows about the other model's subjects, so a correlation
+across fits is attenuated by the reliabilities of the two subject
+estimates. Here the reliability is the squared correlation of true and
+estimated values, between
+`r num(min(res$reliability))` and `r num(max(res$reliability))`. For
+`kappa` the generating correlation of .70 comes out as
+`r att("a_kappa__b_kappa", "point", "mean_estimate")` with `point` and
+`r att("a_kappa__b_kappa", "draws", "mean_estimate")` with `draws`,
+close to the expected
+`r att("a_kappa__b_kappa", "point", "expected")` for
+$\rho\sqrt{rel_a\,rel_b}$ and
+`r att("a_kappa__b_kappa", "draws", "expected")` for
+$\rho\,rel_a\,rel_b$. Dividing by those factors gives
+`r att("a_kappa__b_kappa", "point", "disattenuated")` and
+`r att("a_kappa__b_kappa", "draws", "disattenuated")`. For `thetat`
+both estimates lie above the expected values,
+`r att("a_thetat__b_thetat", "point", "mean_estimate")` against
+`r att("a_thetat__b_thetat", "point", "expected")` and
+`r att("a_thetat__b_thetat", "draws", "mean_estimate")` against
+`r att("a_thetat__b_thetat", "draws", "expected")`, and their
+disattenuated values,
+`r att("a_thetat__b_thetat", "point", "disattenuated")` and
+`r att("a_thetat__b_thetat", "draws", "disattenuated")`, overshoot .70.
+A single data set cannot tell whether this is noise. In practice the
+reliabilities are not known and would have to be estimated as well.
+
+```{r lavaan-components, eval = FALSE, code = shown("lavaan-components", script)}
+```
+
+```{r, echo = FALSE}
+dplyr::mutate(
+  res$lavaan_set[c("pair", "estimate", "ci_low", "ci_high", "status")],
+  dplyr::across(estimate:ci_high, \(x) round(x, 3))
+)
+```
+
+The CFA on the separate fits recovers the correlations with `G`,
+`r num(res$lavaan_set$estimate[res$lavaan_set$pair == "precision__G"])`
+and
+`r num(res$lavaan_set$estimate[res$lavaan_set$pair == "memory__G"])`,
+and overestimates the correlation of the two parameter factors at
+`r num(res$lavaan_set$estimate[res$lavaan_set$pair == "precision__memory"])`,
+the same direction as in the grid. A joint multivariate fit of both
+models would estimate these correlations directly; bmmtools does not
+support that yet.
+
+## Which function does what
+
+| Step | Function | Returns |
+| --- | --- | --- |
+| truth | `cors_from_factors()` | a correlation matrix implied by a factor model |
+| simulate | `simulate_recovery()`, `simulate_components()` | data and truth, with tasks and covariates |
+| formula | `recovery_formula(re_cor = )` | random intercepts, correlated or not |
+| fit | `fit_cached()`, `fit_components()` | fits, reused while nothing changed |
+| gate | `check_convergence()` | diagnostics and a verdict under your thresholds |
+| extract | `extract_correlations()` | `model`, `draws` and `point` correlations |
+| score | `recover_correlations()` | estimates against true and sample correlations |
+| summarise | `summary()` | one row per pair, estimator and condition |
+| two-step | `subject_table()` | true and estimated values per subject, for an SEM |
+| loop | `recovery_grid(correlations = )` | all of the above over a design grid |
