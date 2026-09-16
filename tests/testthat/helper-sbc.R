@@ -78,8 +78,14 @@ registerS3method(
 #' (-1, 1). Deterministic and free of the random number stream, so a test
 #' can assert on a particular row.
 #'
+#' @param subjects The subject labels whose
+#'   `r_<group>__<par>[<label>,Intercept]` draws the matrix carries, or
+#'   `NULL` for none. Only the tests of the
+#'   subject level ask for them: a mock that carried every possible name
+#'   regardless of what was asked is the failure mode described under
+#'   [sbc_mock_fitter()].
 #' @noRd
-sbc_prior_draws <- function(n_draws = 60L, group = "id") {
+sbc_prior_draws <- function(n_draws = 60L, group = "id", subjects = NULL) {
   k <- seq_len(n_draws)
   values <- cbind(
     b_kappa_Intercept = log(4) + 0.01 * k,
@@ -94,6 +100,16 @@ sbc_prior_draws <- function(n_draws = 60L, group = "id") {
     paste0("sd_", group, "__thetat_Intercept"),
     paste0("cor_", group, "__kappa_Intercept__thetat_Intercept")
   )
+  for (term in c("kappa", "thetat")) {
+    for (i in seq_along(subjects)) {
+      # deviations around zero, distinct per subject and term
+      column <- 0.1 * i * sin(k / 5 + i) * if (term == "kappa") 1 else -1
+      values <- cbind(values, column)
+      colnames(values)[ncol(values)] <- paste0(
+        "r_", group, "__", term, "[", subjects[[i]], ",Intercept]"
+      )
+    }
+  }
   posterior::as_draws_matrix(values)
 }
 
@@ -113,14 +129,20 @@ sbc_prior_draws <- function(n_draws = 60L, group = "id") {
 #'   fit for a `cor_` draw it did not have, and every test "found" the
 #'   one the mock happened to carry. Pass `variables` to build a fit
 #'   whose draws deliberately do or do not cover what `sbc()` resolved.
+#' @param subjects Passed to [sbc_prior_draws()]: the labels whose `r_`
+#'   draws the fit carries. `NULL`, the default, carries none, so a test
+#'   of the subject level has to say which labels its prior fit saw ---
+#'   which is also what a real prior fit does, since it is fitted to the
+#'   user's `data` and names its `r_` draws after that column's values.
 #' @return A list with `fitter` to inject and `calls`, an environment
 #'   holding `n` and the call log.
 #' @noRd
-sbc_mock_fitter <- function(variables = NULL, n_draws = 60L, group = "id") {
+sbc_mock_fitter <- function(variables = NULL, n_draws = 60L, group = "id",
+                            subjects = NULL) {
   calls <- new.env(parent = emptyenv())
   calls$n <- 0L
   calls$log <- list()
-  draws <- sbc_prior_draws(n_draws, group)
+  draws <- sbc_prior_draws(n_draws, group, subjects)
   variables <- variables %||%
     grep("^cor_", posterior::variables(draws), invert = TRUE, value = TRUE)
   draws <- posterior::subset_draws(draws, variable = variables)

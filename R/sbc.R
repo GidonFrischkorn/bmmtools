@@ -359,7 +359,14 @@ check_sbc_formula <- function(formula, call = rlang::caller_env()) {
 #' generator replaces them. The design must be balanced, because
 #' `simulate_recovery()` is.
 #'
-#' @return A list with `n_subjects`, `n_trials` and `group`.
+#' `ids` are the labels of the grouping column in the order `data` gives
+#' them. They matter for the subject level: the prior fit is fitted to
+#' `data` and names its `r_` draws after these labels, while
+#' `simulate_recovery()` numbers its subjects 1..n, so the generator
+#' relabels the simulated column to these before the two are matched by
+#' name.
+#'
+#' @return A list with `n_subjects`, `n_trials`, `group` and `ids`.
 #' @noRd
 sbc_layout <- function(data, group, call = rlang::caller_env()) {
   if (!is.data.frame(data)) {
@@ -404,7 +411,10 @@ sbc_layout <- function(data, group, call = rlang::caller_env()) {
     )
   }
 
-  list(n_subjects = length(counts), n_trials = modal, group = group)
+  list(
+    n_subjects = length(counts), n_trials = modal, group = group,
+    ids = unique(as.character(data[[group]]))
+  )
 }
 
 #' The `...` arguments `sbc()` refuses, and where each one belongs
@@ -644,9 +654,19 @@ sbc_level_obstacle <- function(level, groups) {
 #' would break that joint and take the population ranks down with it ---
 #' silently, as a run that looks short rather than wrong (spec N5).
 #'
-#' @return A list with `draw` (the patterns to take from the prior fit),
-#'   `rank` (the subset SBC is asked to rank) and `level` (the levels
-#'   that survived).
+#' The subject level is a third case: ranked when asked, never drawn.
+#' The subject values are produced by `simulate_recovery()` from the
+#' drawn SDs and correlations, which is the prior conditional, so taking
+#' them off the prior row as well would simulate from one draw and rank
+#' against another. Their *names* are still taken from the prior fit,
+#' because that is what makes the generator's constructed
+#' `r_<g>__<par>[<label>,Intercept]` names checkable against real ones
+#' before a single data set is fitted.
+#'
+#' @return A list with `draw` (the patterns whose values feed the
+#'   simulation), `rank` (the subset SBC is asked to rank), `take` (every
+#'   pattern to subset from the prior fit, the union of the two) and
+#'   `level` (the levels that survived).
 #' @noRd
 sbc_pattern_sets <- function(model, groups, group, level,
                              call = rlang::caller_env()) {
@@ -688,8 +708,65 @@ sbc_pattern_sets <- function(model, groups, group, level,
   list(
     draw = patterns[levels %in% draw],
     rank = patterns[levels %in% rank],
+    take = patterns,
     level = rank
   )
+}
+
+#' The subject truths as brms names them: deviations, under the labels
+#'
+#' brms's `r_<g>__<par>[<label>,Intercept]` draws are deviations from
+#' the intercept --- measured on the fixture 2026-09-16, the eight
+#' `r_id__kappa[i,Intercept]` posterior means average -0.0278 against a
+#' `b_kappa_Intercept` of 1.8692 --- while `simulate_recovery()`'s
+#' `truth$subjects` are absolute. Emitting the absolute values would give
+#' ranks that look like a badly miscalibrated model and are in fact a
+#' units error, which is why this subtraction has its own regression
+#' test.
+#'
+#' Matched on `id` and `term`, never on position. The simulation numbers
+#' its subjects 1..n and the prior fit names its draws after the labels
+#' of the user's grouping column, so the n-th simulated subject is
+#' emitted under the n-th label.
+#'
+#' @param truth A simulation's `truth`, with `population` and `subjects`.
+#' @param group The grouping factor, as it appears in the draw names.
+#' @param ids The labels, in the order the simulated subjects map onto.
+#' @return A named numeric vector, one deviation per subject and varying
+#'   parameter, on the link scale.
+#' @noRd
+sbc_subject_truths <- function(truth, group, ids) {
+  subjects <- truth$subjects
+  if (nrow(subjects) == 0L) {
+    # paste0() would recycle the empty term to one name, not to none
+    return(stats::setNames(numeric(0), character(0)))
+  }
+  population <- stats::setNames(
+    truth$population$true_value, truth$population$term
+  )
+  deviations <- subjects$true_value - unname(population[subjects$term])
+  labels <- ids[as.integer(subjects$id)]
+  stats::setNames(
+    as.double(deviations),
+    paste0("r_", group, "__", subjects$term, "[", labels, ",Intercept]")
+  )
+}
+
+#' Give the simulated group column the formula's name and the layout's labels
+#'
+#' `simulate_recovery()` always calls the column `id` and numbers the
+#' subjects 1..n. The formula may call it something else, in which case
+#' brms would be the one to notice, and the prior fit names its `r_`
+#' draws after the labels the user's `data` had, which the data set fits
+#' have to reproduce for SBC to match a subject truth to a subject draw.
+#'
+#' @noRd
+relabel_subjects <- function(data, group, ids) {
+  names(data)[names(data) == "id"] <- group
+  # the simulated column is a factor with levels 1..n in order, so its
+  # integer codes are the subject numbers
+  data[[group]] <- factor(ids[as.integer(data[[group]])], levels = ids)
+  data
 }
 
 #' The `cor_` draw name of each pair of varying parameters, in either order
@@ -799,8 +876,11 @@ simulate_from_draw <- function(row, row_number, model, layout, population,
 #'   names --- **every** variable the formula implies, not only the ones
 #'   that will be ranked (spec N5).
 #' @param rank The draw names to emit as `variables`, which is what SBC
-#'   ranks.
-#' @param layout `sbc_layout()`'s list.
+#'   ranks. Any `r_<group>__` name among them is a subject truth and is
+#'   emitted as the simulation's own deviation, never as the prior row's
+#'   value (see `sbc_subject_truths()`).
+#' @param layout `sbc_layout()`'s list. Without `ids` the labels are the
+#'   subject numbers themselves.
 #' @noRd
 sbc_generator <- function(draws, rank, model, layout, correlated, group,
                           call = rlang::caller_env()) {
@@ -826,6 +906,11 @@ sbc_generator <- function(draws, rank, model, layout, correlated, group,
   } else {
     list()
   }
+  ids <- layout$ids %||% as.character(seq_len(layout$n_subjects))
+  subject_names <- grep(
+    paste0("^r_", escape_regex(group), "__"), rank,
+    value = TRUE
+  )
 
   # the row counter lives in its own environment rather than behind
   # `<<-`: SBC calls the generator with no arguments, so which row it is
@@ -852,16 +937,16 @@ sbc_generator <- function(draws, rank, model, layout, correlated, group,
       row, row_number, model, layout, population, free, sds, varying,
       pairs, call
     )
-    data <- simulation$data
-    # simulate_recovery() always calls the column `id`; the formula may
-    # not, and brms would be the one to notice
-    if (!identical(group, "id")) {
-      names(data)[names(data) == "id"] <- group
-    }
+    data <- relabel_subjects(simulation$data, group, ids)
 
-    variables <- as.list(row[rank])
-    check_variable_names(names(variables), rank, call = call)
-    list(variables = variables, generated = data)
+    truths <- row[rank]
+    if (length(subject_names) > 0L) {
+      deviations <- sbc_subject_truths(simulation$truth, group, ids)
+      check_variable_names(names(deviations), subject_names, call = call)
+      truths[subject_names] <- deviations[subject_names]
+    }
+    check_variable_names(names(truths), rank, call = call)
+    list(variables = as.list(truths), generated = data)
   }
 
   SBC::SBC_generator_function(f, future.chunk.size = Inf)
@@ -1051,7 +1136,8 @@ check_sbc_args <- function(prior, seed, fitter, cache_mode, cache_location,
 #'   are the unique values of the grouping column and the trials are the
 #'   rows each of them has. The response values are ignored, because the
 #'   generator replaces them. Every subject must have the same number of
-#'   rows.
+#'   rows. The simulated data sets carry the same subject labels as
+#'   `data`, which is what lets a subject truth meet its own `r_` draw.
 #' @param prior A `brmsprior`, or `NULL` for bmm's defaults. This is the
 #'   prior that is calibrated, so `NULL` calibrates bmm's own. A list is
 #'   an error: [prior_check()] is what compares prior sets.
@@ -1062,10 +1148,18 @@ check_sbc_args <- function(prior, seed, fitter, cache_mode, cache_location,
 #'   Stan and belongs in a script rather than at a prompt.
 #' @param level Which draws are ranked: `"population"` the
 #'   `b_<par>_Intercept` draws, `"sd"` the `sd_<group>__<par>_Intercept`
-#'   draws and `"cor"` the `cor_<group>__…` draws. `"population"` cannot
-#'   be dropped. A level the formula cannot produce --- `"sd"` without a
-#'   group term, `"cor"` without a correlated one --- is dropped with a
+#'   draws, `"cor"` the `cor_<group>__…` draws and `"subject"` the
+#'   `r_<group>__<par>[<id>,Intercept]` draws, one per subject and
+#'   varying parameter. `"population"` cannot be dropped. A level the
+#'   formula cannot produce --- `"sd"` or `"subject"` without a group
+#'   term, `"cor"` without a correlated one --- is dropped with a
 #'   message.
+#'
+#'   `"subject"` is off by default because it adds `n_subjects` times the
+#'   number of varying parameters to the variables SBC ranks and plots:
+#'   twenty subjects and two parameters are forty more rank histograms.
+#'   It is the level that checks the partial pooling, and the one where a
+#'   units error would show --- see Details.
 #'
 #'   `level` selects what is **ranked**, not what is **drawn**:
 #'   everything the formula implies is always drawn from the prior and
@@ -1115,6 +1209,15 @@ check_sbc_args <- function(prior, seed, fitter, cache_mode, cache_location,
 #' skews the ranks themselves, which is why it is a bar here and not
 #' only a diagnostic.
 #'
+#' The subject truths are **deviations**. brms's `r_` draws are
+#' deviations from the intercept, while [simulate_recovery()]'s
+#' `truth$subjects` are absolute values, so the generator emits each
+#' subject's value minus that data set's population value, on the link
+#' scale, under the label the subject has in `data`. The subject values
+#' themselves are not read off the prior draw: they are drawn by
+#' [simulate_recovery()] from the drawn SDs and correlations, which is
+#' the same conditional the prior puts on them.
+#'
 #' @references
 #' Talts, S., Betancourt, M., Simpson, D., Vehtari, A., & Gelman, A.
 #' (2018). Validating Bayesian inference algorithms with simulation-based
@@ -1163,7 +1266,7 @@ sbc <- function(model,
   )
   check_model(model)
   level <- rlang::arg_match(
-    level, c("population", "sd", "cor"),
+    level, c("population", "sd", "cor", "subject"),
     multiple = TRUE
   )
   refit <- rlang::arg_match(refit)
@@ -1196,7 +1299,7 @@ sbc <- function(model,
   fit <- prior_fit(
     "sbc", prior, formula, data, model, base, refit, seed, dots, .fitter
   )
-  draws <- prior_parameter_draws(fit, n_sims, sets$draw, seed = seed)
+  draws <- prior_parameter_draws(fit, n_sims, sets$take, seed = seed)
   ranked <- select_variables(sets$rank, posterior::variables(draws))
 
   fitter <- .fitter

@@ -38,7 +38,8 @@ task factor.}
 are the unique values of the grouping column and the trials are the
 rows each of them has. The response values are ignored, because the
 generator replaces them. Every subject must have the same number of
-rows.}
+rows. The simulated data sets carry the same subject labels as
+\code{data}, which is what lets a subject truth meet its own \code{r_} draw.}
 
 \item{prior}{A \code{brmsprior}, or \code{NULL} for bmm's defaults. This is the
 prior that is calibrated, so \code{NULL} calibrates bmm's own. A list is
@@ -52,10 +53,18 @@ Stan and belongs in a script rather than at a prompt.}
 
 \item{level}{Which draws are ranked: \code{"population"} the
 \verb{b_<par>_Intercept} draws, \code{"sd"} the \verb{sd_<group>__<par>_Intercept}
-draws and \code{"cor"} the \verb{cor_<group>__…} draws. \code{"population"} cannot
-be dropped. A level the formula cannot produce --- \code{"sd"} without a
-group term, \code{"cor"} without a correlated one --- is dropped with a
+draws, \code{"cor"} the \verb{cor_<group>__…} draws and \code{"subject"} the
+\verb{r_<group>__<par>[<id>,Intercept]} draws, one per subject and
+varying parameter. \code{"population"} cannot be dropped. A level the
+formula cannot produce --- \code{"sd"} or \code{"subject"} without a group
+term, \code{"cor"} without a correlated one --- is dropped with a
 message.
+
+\code{"subject"} is off by default because it adds \code{n_subjects} times the
+number of varying parameters to the variables SBC ranks and plots:
+twenty subjects and two parameters are forty more rank histograms.
+It is the level that checks the partial pooling, and the one where a
+units error would show --- see Details.
 
 \code{level} selects what is \strong{ranked}, not what is \strong{drawn}:
 everything the formula implies is always drawn from the prior and
@@ -130,6 +139,15 @@ rank-ESS 0.5, records both counts in the attribute, and names SBC's
 stricter Rhat 1.01 in the message. An ESS below half the maximum rank
 skews the ranks themselves, which is why it is a bar here and not
 only a diagnostic.
+
+The subject truths are \strong{deviations}. brms's \code{r_} draws are
+deviations from the intercept, while \code{\link[=simulate_recovery]{simulate_recovery()}}'s
+\code{truth$subjects} are absolute values, so the generator emits each
+subject's value minus that data set's population value, on the link
+scale, under the label the subject has in \code{data}. The subject values
+themselves are not read off the prior draw: they are drawn by
+\code{\link[=simulate_recovery]{simulate_recovery()}} from the drawn SDs and correlations, which is
+the same conditional the prior puts on them.
 }
 \examples{
 \dontrun{

@@ -707,7 +707,7 @@ test_that("the attribute records what bmmtools decided", {
   expect_identical(info$seed, 11)
   expect_identical(
     info$layout,
-    list(n_subjects = 3L, n_trials = 4L, group = "id")
+    list(n_subjects = 3L, n_trials = 4L, group = "id", ids = c("1", "2", "3"))
   )
 })
 
@@ -876,13 +876,20 @@ test_that("sd and subject levels are dropped when nothing varies", {
     variables = c("b_kappa_Intercept", "b_thetat_Intercept")
   )
 
-  expect_message(
-    results <- sbc_run(
+  messages <- character(0)
+  results <- withCallingHandlers(
+    sbc_run(
       mock,
-      level = c("population", "sd"), formula = formula, quiet = FALSE
+      level = c("population", "sd", "subject"), formula = formula,
+      quiet = FALSE
     ),
-    "Dropping"
+    message = function(m) {
+      messages <<- c(messages, conditionMessage(m))
+      invokeRestart("muffleMessage")
+    }
   )
+  expect_true(any(grepl("Dropping.*sd", messages)))
+  expect_true(any(grepl("Dropping.*subject", messages)))
   expect_identical(attr(results, "bmmtools_sbc")$level, "population")
 })
 
@@ -1231,4 +1238,264 @@ test_that("a draw the model cannot generate from names the draw", {
   expect_match(message, "data set 2")
   expect_match(message, "sd_id__kappa_Intercept")
   expect_match(message, "prior")
+})
+
+# the subject level (6.4) ------------------------------------------------
+#
+# brms's `r_<g>__<par>[<label>,Intercept]` draws are deviations from the
+# intercept --- measured on the fixture 2026-09-16: the eight
+# `r_id__kappa[i,Intercept]` posterior means average -0.0278 against a
+# `b_kappa_Intercept` of 1.8692 --- while `simulate_recovery()`'s
+# `truth$subjects` are absolute. Emitting the absolute values would give
+# ranks that look like a badly miscalibrated model and are a units error.
+# The label is the other half: the prior fit names its `r_` draws after
+# the values of the user's grouping column, and the simulation numbers
+# its subjects 1..n, so the generated column has to be relabelled before
+# the two can be matched by name.
+
+test_that("sbc_layout records the subject labels in the order of data", {
+  layout <- sbc_layout(
+    data.frame(id = rep(c("s2", "s1", "s3"), each = 2L), y = 0), "id"
+  )
+  expect_identical(layout$ids, c("s2", "s1", "s3"))
+  expect_identical(layout$n_subjects, 3L)
+
+  # a factor is read by the labels it uses, not by its level order
+  levelled <- sbc_layout(
+    data.frame(
+      id = factor(rep(c("b", "a"), each = 3L), levels = c("z", "a", "b")),
+      y = 0
+    ),
+    "id"
+  )
+  expect_identical(levelled$ids, c("b", "a"))
+  expect_identical(length(levelled$ids), levelled$n_subjects)
+})
+
+test_that("subject truths are the simulated values minus the population", {
+  # pure arithmetic on a hand-built truth: no package, no simulation
+  truth <- list(
+    population = tibble::tibble(
+      term = c("kappa", "thetat"), true_value = c(2, 0.5)
+    ),
+    subjects = tibble::tibble(
+      id = c("1", "2", "3", "1", "2", "3"),
+      term = rep(c("kappa", "thetat"), each = 3L),
+      true_value = c(2.3, 1.8, 2.0, 0.1, 0.9, 0.5)
+    )
+  )
+
+  truths <- sbc_subject_truths(truth, "id", ids = c("a", "b", "c"))
+
+  expect_named(
+    truths,
+    c(
+      "r_id__kappa[a,Intercept]", "r_id__kappa[b,Intercept]",
+      "r_id__kappa[c,Intercept]", "r_id__thetat[a,Intercept]",
+      "r_id__thetat[b,Intercept]", "r_id__thetat[c,Intercept]"
+    )
+  )
+  expect_equal(unname(truths), c(0.3, -0.2, 0, -0.4, 0.4, 0))
+  # the whole point: adding the population value back gives the truth
+  population <- stats::setNames(
+    truth$population$true_value, truth$population$term
+  )
+  expect_equal(
+    unname(truths) + unname(population[truth$subjects$term]),
+    truth$subjects$true_value
+  )
+})
+
+test_that("a subject the truth has no row for is left out, not invented", {
+  truth <- list(
+    population = tibble::tibble(term = "kappa", true_value = 1),
+    subjects = tibble::tibble(
+      id = character(), term = character(), true_value = double()
+    )
+  )
+  expect_identical(
+    sbc_subject_truths(truth, "id", ids = c("a", "b")),
+    stats::setNames(numeric(0), character(0))
+  )
+})
+
+test_that("the generator emits deviations, under the prior fit's own labels", {
+  # the regression test for the deviation trap, on the committed fixture:
+  # the same seed reproduces the generator's simulation outside it, so
+  # the emitted subject truths can be compared with the simulation's
+  # absolute values exactly, not statistically
+  skip_if_not_installed("SBC")
+  skip_if_not_installed("brms")
+  skip_if_not_installed("bmm")
+  skip_on_cran()
+  fit <- mixture2p_fit()
+  model <- fit$bmm$model
+  free <- model_parameters(model)$free
+  patterns <- sbc_variables(model, "id", c("population", "sd", "subject"))
+  draws <- prior_parameter_draws(fit, n_sims = 3L, variables = patterns)
+  layout <- sbc_layout(fit$data, "id")
+  rank <- select_variables(patterns, posterior::variables(draws))
+
+  generator <- sbc_generator(
+    draws, rank, model, layout, correlated = FALSE, group = "id"
+  )
+  out <- withr::with_seed(7, generator$f())
+
+  # a plain named matrix, as the generator builds it: `[` on a
+  # draws_matrix drops the variable names one row at a time
+  values <- matrix(
+    as.numeric(draws),
+    nrow = posterior::ndraws(draws),
+    dimnames = list(NULL, posterior::variables(draws))
+  )
+  row <- values[1L, ]
+  sim <- withr::with_seed(7, simulate_recovery(
+    model,
+    pars = stats::setNames(row[paste0("b_", free, "_Intercept")], free),
+    n_subjects = layout$n_subjects, n_trials = layout$n_trials,
+    sds = stats::setNames(row[paste0("sd_id__", free, "_Intercept")], free)
+  ))
+  population <- stats::setNames(
+    sim$truth$population$true_value, sim$truth$population$term
+  )
+  subjects <- sim$truth$subjects
+  expected <- stats::setNames(
+    subjects$true_value - unname(population[subjects$term]),
+    paste0("r_id__", subjects$term, "[", subjects$id, ",Intercept]")
+  )
+
+  emitted <- unlist(out$variables)
+  expect_setequal(names(emitted), rank)
+  expect_equal(emitted[names(expected)], expected)
+  # the eight labels are the fixture's own, so SBC would find every one
+  expect_true(all(
+    grep("^r_", rank, value = TRUE) %in%
+      posterior::variables(posterior::as_draws_matrix(fit$fit))
+  ))
+  # and not the prior fit's r_ draws copied through: those are a
+  # different random variable, and copying them would rank the simulation
+  # against values it was not generated from
+  expect_false(isTRUE(all.equal(
+    unname(emitted[names(expected)]), unname(row[names(expected)])
+  )))
+  # the data are relabelled to match
+  expect_setequal(as.character(unique(out$generated$id)), layout$ids)
+})
+
+test_that("a label the prior fit did not see is an error naming both sets", {
+  # the trap of the 6.3 handoff: the prior fit is fitted to the user's
+  # data and carries its labels, the simulation numbers subjects 1..n.
+  # A layout whose labels differ from the fit's cannot be ranked, and the
+  # error has to come from the name check, not from SBC ranking nothing
+  skip_if_not_installed("SBC")
+  skip_if_not_installed("bmm")
+  skip_on_cran()
+  model <- bmm::mixture2p(resp_error = "y")
+  draws <- sbc_prior_draws(3L, subjects = c("1", "2"))
+  draws <- posterior::subset_draws(
+    draws, variable = grep("^cor_", posterior::variables(draws),
+      invert = TRUE, value = TRUE
+    )
+  )
+  rank <- posterior::variables(draws)
+  generator <- sbc_generator(
+    draws, rank, model,
+    list(n_subjects = 2L, n_trials = 3L, group = "id", ids = c("s1", "s2")),
+    correlated = FALSE, group = "id"
+  )
+
+  err <- expect_error(generator$f())
+  message <- conditionMessage(err)
+  expect_match(message, "r_id__kappa\\[s1,Intercept\\]")
+  expect_match(message, "r_id__kappa\\[1,Intercept\\]")
+})
+
+test_that("level = subject ranks every subject of every varying parameter", {
+  skip_if_not_installed("SBC")
+  skip_if_not_installed("bmm")
+  skip_on_cran()
+  mock <- sbc_mock_fitter(subjects = c("1", "2", "3"))
+
+  results <- sbc_run(
+    mock,
+    level = c("population", "sd", "subject"), n_sims = 4L
+  )
+
+  info <- attr(results, "bmmtools_sbc")
+  expect_identical(info$level, c("population", "sd", "subject"))
+  subject_names <- as.vector(outer(
+    c("r_id__kappa[", "r_id__thetat["), c("1", "2", "3"),
+    function(a, b) paste0(a, b, ",Intercept]")
+  ))
+  expect_setequal(
+    info$variables,
+    c(
+      "b_kappa_Intercept", "b_thetat_Intercept",
+      "sd_id__kappa_Intercept", "sd_id__thetat_Intercept",
+      subject_names
+    )
+  )
+  # what SBC ranked, not only what bmmtools recorded: n_subjects x
+  # n_varying more rows per simulation, which is why the level is opt-in
+  expect_setequal(unique(results$stats$variable), info$variables)
+  expect_equal(nrow(results$stats), 4L * 10L)
+})
+
+test_that("the generated data carry the layout's labels, not 1..n", {
+  skip_if_not_installed("SBC")
+  skip_if_not_installed("bmm")
+  skip_on_cran()
+  data <- sbc_data()
+  data$id <- paste0("s", data$id)
+  mock <- sbc_mock_fitter(subjects = c("s1", "s2", "s3"))
+
+  results <- sbc_run(
+    mock,
+    level = c("population", "subject"), n_sims = 2L, data = data
+  )
+
+  for (call in sbc_dataset_calls(mock$calls)) {
+    expect_setequal(call$ids, c("s1", "s2", "s3"))
+  }
+  expect_true(
+    "r_id__kappa[s2,Intercept]" %in% attr(results, "bmmtools_sbc")$variables
+  )
+  expect_true("r_id__kappa[s2,Intercept]" %in% results$stats$variable)
+})
+
+test_that("subject draws the prior fit lacks are an error, not a drop", {
+  # the formula implies them, so their absence is a bug in the fit, and
+  # the rule of "a level the formula does imply is an error" applies
+  skip_if_not_installed("SBC")
+  skip_if_not_installed("bmm")
+  skip_on_cran()
+  mock <- sbc_mock_fitter()
+
+  err <- expect_error(
+    sbc_run(mock, level = c("population", "subject"), n_sims = 2L)
+  )
+  expect_match(conditionMessage(err), "subject:kappa")
+})
+
+test_that("the subject level is ranked but never drawn from the prior row", {
+  sets <- sbc_pattern_sets(
+    sbc_model(),
+    list(group = "id", correlated = FALSE, varying = c("kappa", "thetat")),
+    "id", c("population", "sd", "subject")
+  )
+  expect_identical(sets$level, c("population", "sd", "subject"))
+  expect_setequal(
+    names(sets$rank),
+    c(
+      "population:kappa", "population:thetat", "sd:kappa", "sd:thetat",
+      "subject:kappa", "subject:thetat"
+    )
+  )
+  # the subjects are simulated from the drawn SDs, so they are never read
+  # off the row; but their names are taken from the prior fit, so that
+  # the generator's constructed names are checked against real ones
+  expect_false(any(grepl("^subject:", names(sets$draw))))
+  expect_setequal(
+    names(sets$take), union(names(sets$draw), names(sets$rank))
+  )
 })
