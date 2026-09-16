@@ -38,6 +38,12 @@ against the truth. It uses one model and one design, so that each step
 is visible. [Running a recovery study](recovery-grid.html) repeats the
 same loop over a design grid.
 
+The second half asks the three other questions a new model has to
+answer. `prior_check()` asks what the priors imply before any data are
+fitted, `sbc()` whether the implementation is correct, and
+`cross_check()` whether the model agrees with what is already known.
+Only the scorer changes; the loop is the same one.
+
 The model is bmm's two-parameter mixture model, `mixture2p`, because an
 adapter for it ships with bmmtools. A model without one works the same
 way once you supply a generator; see
@@ -182,6 +188,152 @@ plot_prior_check(checked)
 [Prior predictive checks on the observable scale](prior-check.html)
 covers the summaries, custom statistics and comparing prior sets.
 
+## Is the implementation correct?
+
+Recovery asks whether the model can be estimated from data of a given
+size. It cannot tell you whether the likelihood you wrote is the one you
+meant: a model with a sign error can still recover its own parameters.
+Simulation-based calibration (SBC) asks the other question. If the
+implementation is correct, then over data sets drawn from the prior the
+rank of the true value among the posterior draws is uniform, and a
+histogram of those ranks is flat.
+
+`sbc()` fits the prior once, turns each prior draw into a data set
+through `simulate_recovery()`, fits every one of them, and hands the
+result to the [SBC](https://hyunjimoon.github.io/SBC/) package, which
+owns the ranks and the plots. It needs a data layout rather than data:
+the responses are generated, so only the design matters.
+
+```{r sbc-prior, eval = FALSE, code = shown("sbc-prior", "vignettes/articles/precompute/bmmtools.R")}
+```
+
+The prior is given explicitly, and that is not incidental. bmm's default
+prior on the between-subject SD of `kappa` is a half-`student_t(3, 0,
+2.5)` on the **log** scale. Over twenty draws it reached 9.50, which puts
+a subject two SDs above the mean at a concentration of about `exp(21)`,
+and `bmm::rmixture2p()` fails on it. Two of twenty prior draws could not
+be generated from at all. A prior that puts mass where the model's own
+generator breaks cannot be used for SBC, and that is a finding about the
+prior rather than about the model: SBC draws from the prior, so a prior
+wide enough to be meaningless on the observable scale shows up here
+first.
+
+```{r sbc, eval = FALSE, code = shown("sbc", "vignettes/articles/precompute/bmmtools.R")}
+```
+
+`level` picks which draws are ranked, here the two population parameters
+and the two between-subject SDs. Whatever is ranked, everything the
+formula implies is always drawn from the prior and simulated from,
+because the ranks are uniform only when the data come from the joint
+prior.
+
+```{r sbc-plot, eval = FALSE, code = shown("sbc-plot", "vignettes/articles/precompute/bmmtools.R")}
+```
+
+```{r, echo = FALSE, fig.height = 4}
+SBC::plot_rank_hist(res$ranks)
+```
+
+The run ranked `r length(res$sbc_info$variables)` variables over
+`r res$sbc_info$diagnostics$n_fits` simulations, with
+`r res$sbc_info$diagnostics$n_high_rhat` fits above bmmtools' rhat bar of
+`r res$sbc_info$diagnostics$rhat_max` and
+`r res$sbc_info$diagnostics$n_low_ess_to_rank` below SBC's rank-ESS bar,
+and no backend errors.
+
+**Twenty simulations is a smoke test, not a verdict.** It shows that the
+pipeline runs end to end, that the truths and the draws are named
+alike, and that nothing is grossly wrong. It cannot tell a flat
+histogram from a mildly sloped one: with 20 draws across
+`r unique(res$ranks$stats$max_rank)[[1]] + 1` rank bins, almost any shape
+is consistent with uniformity. Answering whether `mixture2p` is
+calibrated needs a few hundred simulations and hours of sampling. Run
+`sbc()` at `n_sims = 20` while you are still changing the model, and
+once at a serious size before you believe the answer.
+
+`sbc()` returns SBC's own `SBC_results`, so every SBC function applies
+unchanged: `SBC::plot_ecdf_diff()`, `SBC::plot_sim_estimated()` and the
+rest.
+
+## Does it agree with what is known?
+
+The last question is whether a new model agrees with what the field
+already has. `cross_check()` compares a fit's estimates with a
+reference: a closed form, another implementation, or values from a
+published paper.
+
+`mixture2p` has no closed form to compare against, so this section uses
+signal detection instead, where one has existed since the 1960s. The
+model is `sdt_yn`, fitted to simulated yes-no data:
+
+```{r cross-check-fit, eval = FALSE, code = shown("cross-check-fit", "vignettes/articles/precompute/bmmtools.R")}
+```
+
+The reference is the textbook estimator computed from the observed hit
+and false-alarm rates, here
+`r sprintf("%.3f", res$hit_rate)` and `r sprintf("%.3f", res$fa_rate)`:
+
+```{r cross-check, eval = FALSE, code = shown("cross-check", "vignettes/articles/precompute/bmmtools.R")}
+```
+
+```{r, echo = FALSE}
+res$checked
+```
+
+Printing summarises, as it does for the other scorers: `bias`, `rmse`
+and `coverage` are `summary.bmmtools_recovery()`'s words for the same
+quantities, so the three scorers read with one vocabulary. With one fit
+there is a single comparison per parameter, so `rmse` is the absolute
+bias and `coverage` is 0 or 1.
+
+The object itself is one row per parameter, and holds the comparison
+term by term:
+
+```{r, eval = FALSE}
+checked[, c(
+  "term", "estimate", "ci_low", "ci_high",
+  "reference", "bias", "covered", "overlap"
+)]
+```
+
+```{r, echo = FALSE}
+res$checked[, c(
+  "term", "estimate", "ci_low", "ci_high",
+  "reference", "bias", "covered", "overlap"
+)]
+```
+
+`bias` is the signed difference from the reference and `covered` says
+whether the fit's credible interval contains it. `overlap` is `NA`
+because a closed form has no interval of its own; with a reference that
+does have one — published values with a confidence interval, say — it
+reports whether the two intervals meet, and it is never `FALSE` for a
+reference without one, so a missing interval cannot read as a
+disagreement.
+
+Selecting columns dropped the `bmmtools_cross_check` class, which is
+deliberate: the class promises the full contract, and a table that no
+longer carries it is a plain tibble.
+
+The wording matters more than it looks. **The reference is a comparison,
+not a truth.** The closed form makes its own assumptions, and a
+disagreement means the two disagree, not that the model is wrong. Here
+the equal-variance assumption holds by construction, because `sdt_yn`
+fixes `sdratio`, so `d` is d′ and the two are directly comparable. With
+`sdratio` free the model estimates d~a~ instead, and the reference has
+to be converted before it is comparable; `?cross_check` gives the
+conversion.
+
+```{r cross-check-plot, eval = FALSE, code = shown("cross-check-plot", "vignettes/articles/precompute/bmmtools.R")}
+```
+
+```{r, echo = FALSE}
+plot_recovery(res$checked)
+```
+
+The reference is on the x axis, the fit's credible interval is vertical,
+and a reference with its own interval would draw a horizontal one.
+
 ## Which function does what
 
 | Step | Function | Returns |
@@ -195,3 +347,5 @@ covers the summaries, custom statistics and comparing prior sets.
 | plot | `plot_recovery()`, `plot_prior_check()` | a ggplot |
 | loop | `recovery_grid()` | all of the above over a design grid |
 | priors | `prior_check()` | prior-predictive statistics |
+| calibration | `sbc()` | SBC's `SBC_results`, ranks and their plots |
+| agreement | `cross_check()` | a `bmmtools_cross_check` tibble |
