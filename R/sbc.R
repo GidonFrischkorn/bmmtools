@@ -737,6 +737,56 @@ sbc_cor_matrix <- function(row, pairs, varying) {
   out
 }
 
+#' Simulate one data set from one prior draw, saying which one if it fails
+#'
+#' A prior draw is not a plausible parameter value, it is whatever the
+#' prior allows, and a wide prior on a link-scale parameter allows a lot.
+#' Measured 2026-09-16 on `bmm::mixture2p()` under bmm's own defaults:
+#' the group-level SD of `kappa` has a half-`student_t(3, 0, 2.5)` prior,
+#' whose draws reach 9.5 on the log scale, so a subject's concentration
+#' reaches exp(2 + 2 x 9.5), and `rmixture2p()` dies inside its own
+#' sampler with `node stack overflow` -- a message that names neither the
+#' simulation nor a parameter.
+#'
+#' The failure is real and belongs to the prior, not to bmmtools, so this
+#' does not catch it. It says which draw it was and what that draw held,
+#' because the alternative is an hour of Stan ending in three words.
+#'
+#' @noRd
+simulate_from_draw <- function(row, row_number, model, layout, population,
+                               free, sds, varying, pairs,
+                               call = rlang::caller_env()) {
+  tryCatch(
+    simulate_recovery(
+      model,
+      pars = stats::setNames(unname(row[population]), free),
+      n_subjects = layout$n_subjects,
+      n_trials = layout$n_trials,
+      sds = if (length(sds) > 0L) {
+        stats::setNames(unname(row[sds]), varying)
+      },
+      cors = sbc_cor_matrix(row, pairs, varying),
+      seed = NULL
+    ),
+    error = function(e) {
+      # nolint next: object_usage_linter. Used by cli's glue interpolation.
+      shown <- paste0(names(row), " = ", format(row, digits = 4))
+      cli::cli_abort(
+        c(
+          "Simulating data set {row_number} from its prior draw failed.",
+          x = "The draw was: {.val {shown}}.",
+          i = "These are values the {.emph prior} allows, on the link \
+               scale, not values anyone would fit. A prior wide enough \
+               to put mass where the model cannot generate is itself \
+               the finding: tighten it and run {.fn sbc} again, or check \
+               it first with {.fn prior_check}."
+        ),
+        parent = e, call = call
+      )
+    }
+  )
+}
+
 #' The SBC generator: one prior draw, one simulated data set
 #'
 #' `SBC::generate_datasets()` calls the function with no arguments, once
@@ -798,16 +848,9 @@ sbc_generator <- function(draws, rank, model, layout, correlated, group,
     }
     row <- values[row_number, ]
 
-    simulation <- simulate_recovery(
-      model,
-      pars = stats::setNames(unname(row[population]), free),
-      n_subjects = layout$n_subjects,
-      n_trials = layout$n_trials,
-      sds = if (length(sds) > 0L) {
-        stats::setNames(unname(row[sds]), varying)
-      },
-      cors = sbc_cor_matrix(row, pairs, varying),
-      seed = NULL
+    simulation <- simulate_from_draw(
+      row, row_number, model, layout, population, free, sds, varying,
+      pairs, call
     )
     data <- simulation$data
     # simulate_recovery() always calls the column `id`; the formula may

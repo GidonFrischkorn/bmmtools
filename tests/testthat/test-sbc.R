@@ -1206,3 +1206,29 @@ test_that("sbc_cor_names finds the pair in whichever order brms wrote it", {
 test_that("check_group_ids leaves a missing column to sbc_layout", {
   expect_silent(check_group_ids(data.frame(y = 1:3), "id"))
 })
+
+test_that("a draw the model cannot generate from names the draw", {
+  # measured 2026-09-16 on the first real Stan run: bmm's own default
+  # half-student_t(3, 0, 2.5) on the group-level SD of `kappa` draws
+  # values near 9.5 on the log scale, and `rmixture2p()` then dies with
+  # `node stack overflow`, naming neither the simulation nor a parameter
+  skip_if_not_installed("bmm")
+  model <- bmm::mixture2p(resp_error = "y")
+  draws <- posterior::as_draws_matrix(cbind(
+    b_kappa_Intercept = c(1.4, 1.4),
+    b_thetat_Intercept = c(0.8, 0.8),
+    sd_id__kappa_Intercept = c(0.3, -1)
+  ))
+  generator <- sbc_generator(
+    draws, c("b_kappa_Intercept", "b_thetat_Intercept"), model,
+    list(n_subjects = 2L, n_trials = 3L, group = "id"),
+    correlated = FALSE, group = "id"
+  )
+
+  expect_silent(generator$f())
+  err <- expect_error(generator$f())
+  message <- conditionMessage(err)
+  expect_match(message, "data set 2")
+  expect_match(message, "sd_id__kappa_Intercept")
+  expect_match(message, "prior")
+})
