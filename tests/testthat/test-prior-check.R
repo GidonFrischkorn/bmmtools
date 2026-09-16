@@ -530,3 +530,77 @@ test_that("two prior sets give a colour scale with two levels", {
 
   expect_length(unique(built$data[[1L]]$colour), 2L)
 })
+
+# check_improper_priors() ------------------------------------------------
+
+#' A formula with cell means on one parameter, so brms writes coefficient
+#' rows that a class-level prior can cover.
+task_prior_data <- function() {
+  data.frame(
+    id = rep(1:3, each = 4L),
+    y = rep(c(-0.5, 0.1, 0.4, -0.2), times = 3L),
+    task = rep(c("task1", "task2"), length.out = 12L)
+  )
+}
+
+test_that("a class-level prior covers its coefficient rows", {
+  skip_if_not_installed("bmm")
+
+  expect_no_warning(
+    check_improper_priors(
+      bmm::bmf(kappa ~ 0 + task + (1 | id), thetat ~ 1 + (1 | id)),
+      task_prior_data(),
+      bmm::mixture2p(resp_error = "y"),
+      list(covered = brms::set_prior(
+        "normal(0, 1)", class = "b", nlpar = "kappa"
+      ))
+    )
+  )
+})
+
+test_that("a coefficient with no prior at either level is still flat", {
+  skip_if_not_installed("bmm")
+
+  expect_warning(
+    check_improper_priors(
+      bmm::bmf(kappa ~ 0 + task + (1 | id), thetat ~ 1 + (1 | id)),
+      task_prior_data(),
+      bmm::mixture2p(resp_error = "y"),
+      list(none = NULL)
+    ),
+    "tasktask1"
+  )
+})
+
+test_that("a class-level prior covers its own parameter only", {
+  skip_if_not_installed("bmm")
+
+  expect_warning(
+    check_improper_priors(
+      bmm::bmf(kappa ~ 0 + task + (1 | id), thetat ~ 0 + task + (1 | id)),
+      task_prior_data(),
+      bmm::mixture2p(resp_error = "y"),
+      list(half = brms::set_prior(
+        "normal(0, 1)", class = "b", nlpar = "kappa"
+      ))
+    ),
+    "thetat"
+  )
+})
+
+test_that("per-coefficient priors are covered as before", {
+  skip_if_not_installed("bmm")
+
+  expect_no_warning(
+    check_improper_priors(
+      bmm::bmf(kappa ~ 0 + task + (1 | id), thetat ~ 1 + (1 | id)),
+      task_prior_data(),
+      bmm::mixture2p(resp_error = "y"),
+      list(per_coef = brms::set_prior(
+        "normal(0, 1)", class = "b", coef = "tasktask1", nlpar = "kappa"
+      ) + brms::set_prior(
+        "normal(0, 1)", class = "b", coef = "tasktask2", nlpar = "kappa"
+      ))
+    )
+  )
+})

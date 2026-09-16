@@ -227,12 +227,33 @@ check_summary_result <- function(out, set, call = rlang::caller_env()) {
   invisible(out)
 }
 
+#' The class a prior row belongs to, as one string
+#'
+#' A coefficient row and the class-level row that covers it agree on
+#' class, group, parameter and distributional parameter, and differ only
+#' in `coef`. Pasting those four gives a key the two share. Columns brms
+#' did not return count as empty, so a table without `nlpar` still keys.
+#'
+#' @noRd
+prior_class_key <- function(priors) {
+  cols <- c("class", "group", "nlpar", "dpar")
+  parts <- lapply(cols, function(col) {
+    if (col %in% names(priors)) as.character(priors[[col]]) else ""
+  })
+  do.call(paste, c(parts, list(sep = "\r")))
+}
+
 #' Warn about population-level slopes with no proper prior
 #'
 #' `sample_prior = "only"` samples every parameter, so a flat slope has
 #' nothing to sample from. Whether brms refuses outright was not measured
 #' --- establishing it needs a compile, which no test here may do --- so
 #' this warns and lets the fitter have the last word.
+#'
+#' brms leaves a coefficient row's `prior` empty when the class-level row
+#' of the same class carries the prior, so an empty string alone does not
+#' mean flat. A coefficient is flat only when nothing at its own level and
+#' nothing at its class level is proper.
 #'
 #' @noRd
 check_improper_priors <- function(formula, data, model, sets) {
@@ -250,8 +271,11 @@ check_improper_priors <- function(formula, data, model, sets) {
     if (is.null(priors) || !all(needed %in% names(priors))) {
       next
     }
+    proper <- nzchar(priors$prior) & priors$prior != "(flat)"
+    key <- prior_class_key(priors)
+    covered <- key %in% key[proper & !nzchar(priors$coef)]
     flat <- priors$class == "b" & nzchar(priors$coef) &
-      priors$coef != "Intercept" & priors$prior %in% c("", "(flat)")
+      priors$coef != "Intercept" & !proper & !covered
     parameter <- priors$nlpar[flat] %||% rep("", sum(flat))
     slopes <- ifelse(
       nzchar(parameter),
