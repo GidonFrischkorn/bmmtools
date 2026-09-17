@@ -29,7 +29,7 @@ cell_paths <- function(dir, row, rep) {
   stem <- file.path(dir, sprintf("cell-%d-rep-%d", row, rep))
   list(
     sim = paste0(stem, "-sim.rds"), fit = stem,
-    est = paste0(stem, "-est.rds")
+    est = paste0(stem, "-est.rds"), ml = paste0(stem, "-ml")
   )
 }
 
@@ -363,15 +363,164 @@ bmmtools_version <- function() {
 }
 
 #' What the grid extracts from every fit
+#'
+#' `ml` is `NULL`, or the record [ml_request()] makes of the `fit_ml()`
+#' arguments: what a sidecar has to match before its ML rows are reused.
+#'
 #' @noRd
 extraction_request <- function(levels = c("population", "subject"),
                                correlations = NULL,
                                cor_scale = "link",
-                               links = NULL) {
+                               links = NULL,
+                               ml = NULL) {
   list(
     levels = levels, correlations = correlations, cor_scale = cor_scale,
-    links = links
+    links = links, ml = ml
   )
+}
+
+#' The `fit_ml()` arguments the grid owns and refuses in `ml`
+#' @noRd
+grid_owned_ml_args <- function() {
+  c("model", "data", "file", "refit", "seed", "by")
+}
+
+#' Validate `ml` of recovery_grid() into a list of `fit_ml()` arguments
+#'
+#' `FALSE` is no ML fit; `TRUE` is [fit_ml()] with its defaults; a named
+#' list gives arguments to it, and a name [fit_ml()] has no formal for
+#' goes through its `...` to the fitter (`refresh`, `silent`, ...). The
+#' grid supplies `model`, `data`, `file`, `refit` and `seed` itself and
+#' its subjects are always `id`, so those are refused; `method` and
+#' `prior` are checked here, before any cell runs, because [fit_ml()]
+#' would otherwise refuse them once per cell.
+#'
+#' @return `NULL`, or a named list of arguments for [fit_ml()].
+#' @noRd
+check_ml_arg <- function(ml, levels, call = rlang::caller_env()) {
+  if (isFALSE(ml)) {
+    return(NULL)
+  }
+  if (isTRUE(ml)) {
+    ml <- list()
+  }
+  is_arg_list <- is.list(ml) && !is.data.frame(ml) &&
+    (length(ml) == 0L || !is.null(names(ml)) && all(nzchar(names(ml))))
+  if (!is_arg_list) {
+    cli::cli_abort(
+      "{.arg ml} must be {.code TRUE}, {.code FALSE} or a named list of \\
+       arguments for {.fn fit_ml}, not {.obj_type_friendly {ml}}.",
+      call = call
+    )
+  }
+  owned <- intersect(names(ml), grid_owned_ml_args())
+  if (length(owned) > 0L) {
+    cli::cli_abort(
+      c(
+        "{.arg ml} cannot set {.arg {owned}}; the grid supplies \\
+         {?it/them}.",
+        i = "Each cell is fitted on its own simulated data, cached next \\
+             to the cell's files, under the cell's seed, by {.val id}."
+      ),
+      call = call
+    )
+  }
+  if (!is.null(ml$method)) {
+    ml$method <- rlang::arg_match0(
+      ml$method, c("stan", "optim"),
+      error_call = call
+    )
+  }
+  if (!is.null(ml$prior)) {
+    ml$prior <- rlang::arg_match0(
+      ml$prior, c("flat", "default"),
+      error_call = call
+    )
+  }
+  # each value is legal on its own; what the grid must catch is a pair
+  # that is not, because fit_ml() refuses it once per cell --- after every
+  # hierarchical fit of the design has already run
+  wrong_route <- if (identical(ml$method, "optim")) {
+    c(
+      if (identical(ml$prior, "default")) "prior",
+      intersect(names(ml), c("formula", ".fitter", "draws"))
+    )
+  } else {
+    intersect(names(ml), "nll")
+  }
+  if (length(wrong_route) > 0L) {
+    # nolint next: object_usage_linter. Used by cli's glue interpolation.
+    other <- if (identical(ml$method, "optim")) "stan" else "optim"
+    cli::cli_abort(
+      c(
+        "{.arg {wrong_route}} {?belongs/belong} to \\
+         {.code method = \"{other}\"}, not to \\
+         {.code method = \"{ml$method %||% \"stan\"}\"}.",
+        i = "{cli::qty(length(wrong_route))}{.fn fit_ml} would refuse \\
+             {?it/them} once per cell, after every hierarchical fit had \\
+             run."
+      ),
+      call = call
+    )
+  }
+  # nothing consumes the dots on the optim route, so an unknown name there
+  # is a typo that would reach nothing and say nothing
+  if (identical(ml$method, "optim")) {
+    unknown <- setdiff(names(ml), names(formals(fit_ml)))
+    if (length(unknown) > 0L) {
+      cli::cli_abort(
+        c(
+          "{.arg ml} has no argument{?s} {.val {unknown}} for \\
+           {.code method = \"optim\"}.",
+          i = "Unknown names reach the Stan optimiser through \\
+               {.fn fit_ml}'s dots; the optim route calls no fitter."
+        ),
+        call = call
+      )
+    }
+  }
+  if (!"subject" %in% levels) {
+    cli::cli_abort(
+      c(
+        "{.arg ml} needs the {.val subject} level, but {.arg levels} \\
+         does not include it.",
+        i = "A subject-wise ML fit has estimates at the subject level \\
+             only."
+      ),
+      call = call
+    )
+  }
+  ml
+}
+
+#' The record of an ML request a sidecar stores and has to match
+#'
+#' Every argument that changes the ML rows, at its `fit_ml()` default
+#' when not given, so that `ml = TRUE` and `ml = list(prior = "flat")`
+#' make the same record. The fit itself is cached by its own key; this
+#' record also covers what is applied after the fit (`ci_level`,
+#' `max_abs_link`), so a change there re-extracts from the cached fit.
+#' A formula enters deparsed, as in the cache key. `.fitter` is not part
+#' of what the rows are.
+#'
+#' @return `NULL` when `ml` is, else a named list of plain values.
+#' @noRd
+ml_request <- function(ml) {
+  if (is.null(ml)) {
+    return(NULL)
+  }
+  record <- list(
+    formula = NULL, method = "stan", prior = "flat", ci_level = 0.95,
+    draws = 1000, max_abs_link = 20, start = NULL, nll = NULL
+  )
+  given <- intersect(names(ml), names(record))
+  # `[<-` with a list keeps a NULL element where `$<-` would drop it
+  record[given] <- ml[given]
+  record["formula"] <- list(formula_key(record$formula))
+  # as for `init` in the cache key: a closure differs in every environment
+  # it is built in, so what enters is its text
+  record["nll"] <- list(function_key(record$nll))
+  record
 }
 
 #' Validate `levels`, `correlations` and `cor_scale` of recovery_grid()
@@ -424,8 +573,9 @@ check_extraction_args <- function(levels, correlations, cor_scale,
 #' Read a cell's sidecar when it matches the cell and the request
 #'
 #' It matches when its key is the cell's cache key, it was written by this
-#' version of bmmtools, and it holds every requested level and estimator
-#' (and, for correlations, the requested scale). What it holds beyond the
+#' version of bmmtools, it holds every requested level and estimator
+#' (and, for correlations, the requested scale), and, with an ML fit
+#' requested, its ML record is the request's. What it holds beyond the
 #' request is dropped, so that the result is what a fresh extraction
 #' would give. An unreadable file counts as no sidecar.
 #'
@@ -453,6 +603,19 @@ read_sidecar <- function(path, key, request, key_field = "key") {
   estimates <- stored$estimates
   if (!is.null(estimates)) {
     stored$estimates <- estimates[estimates$level %in% request$levels, ]
+  }
+  # `[["ml"]]`, not `$ml`: `$` on a list matches partially, so a sidecar
+  # holding `ml_estimates` and no `ml` would answer with the rows
+  if (is.null(request$ml)) {
+    stored["ml_estimates"] <- list(NULL)
+  } else if (!identical(stored[["ml"]], request$ml)) {
+    # the ML record is stale or absent while the hierarchical extraction
+    # is current. Dropping the whole sidecar would refit the hierarchical
+    # model too --- and once the fit files have been deleted, as
+    # ?recovery_grid says they may be, that is the whole design resampled
+    # to change `max_abs_link`. The caller runs ML alone.
+    stored["ml"] <- list(NULL)
+    stored["ml_estimates"] <- list(NULL)
   }
   if (is.null(request$correlations)) {
     stored["cor_estimates"] <- list(NULL)
@@ -483,6 +646,9 @@ write_sidecar <- function(path, keys, request, extracted, levels = TRUE) {
       correlations = request$correlations,
       cor_scale = request$cor_scale
     ),
+    # only when ML rows are stored, so a sidecar without them keeps the
+    # shape it had before there was an ML fit
+    if (!is.null(request$ml)) list(ml = request$ml),
     extracted
   )
   write_atomic(path, function(tmp) saveRDS(sidecar, tmp))
@@ -522,13 +688,49 @@ extract_cell <- function(fit, sim, request) {
   )
 }
 
+#' The subject-wise ML fit of one cell, on the same simulated data
+#'
+#' One [fit_ml()] call per cell, cached at `path` under the cell's seed,
+#' so a resume reuses the ML fit as it reuses the hierarchical one. A
+#' failure is the cell's ML status, not the grid's: the hierarchical fit
+#' of the cell is still scored.
+#'
+#' @return A list with `status`, `message`, `estimates` (a `bmmtools_ml`,
+#'   or `NULL`) and `elapsed`.
+#' @noRd
+run_cell_ml <- function(sim, model, path, seed, ml) {
+  args <- c(
+    list(model = model, data = sim$data, file = path, refit = "on_change"),
+    if (!is.na(seed)) list(seed = seed),
+    ml
+  )
+  started <- Sys.time()
+  result <- tryCatch(
+    list(
+      status = "ok", message = NA_character_,
+      estimates = rlang::exec(fit_ml, !!!args)
+    ),
+    error = function(e) {
+      list(status = "error", message = conditionMessage(e), estimates = NULL)
+    }
+  )
+  result$elapsed <- as.double(difftime(Sys.time(), started, units = "secs"))
+  result
+}
+
 #' Fit one cell and extract its estimates, or read them from its sidecar
 #'
+#' With `ml` (a list of [fit_ml()] arguments), the cell's ML fit follows
+#' the hierarchical one and its rows go into the sidecar with the ML
+#' record, so that a resume reads both or neither. When the ML fit fails
+#' the sidecar is written without it and a resume tries the ML fit again.
+#'
 #' @return A list with `status`, `message`, `estimates`, `cor_estimates`,
-#'   `subject_means`, `elapsed`, `converged`.
+#'   `subject_means`, `elapsed`, `converged`, and with `ml` also
+#'   `ml_estimates`, `ml_status`, `ml_message` and `ml_elapsed`.
 #' @noRd
 run_cell <- function(sim, model, formula, prior, paths, seed, dots, fitter,
-                     request = extraction_request()) {
+                     request = extraction_request(), ml = NULL) {
   fit_dots <- c(if (!is.na(seed)) list(seed = seed), dots)
   cache_args <- c(
     list(
@@ -536,6 +738,11 @@ run_cell <- function(sim, model, formula, prior, paths, seed, dots, fitter,
       file = paths$fit, prior = prior, .fitter = fitter
     ),
     fit_dots
+  )
+  # a cell whose hierarchical fit fails has no ML status: it is not scored
+  ml_run <- list(
+    status = NA_character_, message = NA_character_, estimates = NULL,
+    elapsed = NA_real_
   )
   started <- Sys.time()
   result <- tryCatch(
@@ -545,7 +752,33 @@ run_cell <- function(sim, model, formula, prior, paths, seed, dots, fitter,
       if (is.null(extracted)) {
         fit <- rlang::exec(fit_cached, !!!cache_args)
         extracted <- extract_cell(fit, sim, request)
-        write_sidecar(paths$est, list(key = key), request, extracted)
+        written <- request
+        if (!is.null(ml)) {
+          ml_run <- run_cell_ml(sim, model, paths$ml, seed, ml)
+          extracted["ml_estimates"] <- list(ml_run$estimates)
+          if (!identical(ml_run$status, "ok")) written["ml"] <- list(NULL)
+        }
+        write_sidecar(paths$est, list(key = key), written, extracted)
+      } else if (!is.null(ml) && is.null(extracted$ml_estimates)) {
+        # the hierarchical rows are current and the ML ones are not: run
+        # the ML fit alone and rewrite the sidecar around the rows already
+        # there, rather than refitting a model nothing asked about
+        ml_run <- run_cell_ml(sim, model, paths$ml, seed, ml)
+        extracted["ml_estimates"] <- list(ml_run$estimates)
+        written <- request
+        if (!identical(ml_run$status, "ok")) written["ml"] <- list(NULL)
+        write_sidecar(
+          paths$est, list(key = key), written,
+          extracted[c(
+            "estimates", "cor_estimates", "subject_means", "ml_estimates"
+          )]
+        )
+      } else if (!is.null(ml)) {
+        # the sidecar matched the ML record, so its ML rows are current
+        ml_run <- list(
+          status = "ok", message = NA_character_,
+          estimates = extracted$ml_estimates, elapsed = 0
+        )
       }
       list(
         status = "ok", message = NA_character_,
@@ -562,6 +795,12 @@ run_cell <- function(sim, model, formula, prior, paths, seed, dots, fitter,
   result$converged <- NA
   if (!is.null(result$estimates) && nrow(result$estimates) > 0L) {
     result$converged <- result$estimates$converged[[1L]]
+  }
+  if (!is.null(ml)) {
+    result["ml_estimates"] <- list(ml_run$estimates)
+    result$ml_status <- ml_run$status
+    result$ml_message <- ml_run$message
+    result$ml_elapsed <- ml_run$elapsed
   }
   result
 }
@@ -631,11 +870,31 @@ score_cells <- function(runs, sims, cells, links, scale = "natural",
     )
   }
   if ("subject" %in% request$levels && nrow(truth_sub) > 0L) {
+    subjects <- estimates[estimates$level == "subject", ]
+    if (!is.null(request$ml)) {
+      # the ML rows are subject rows and nothing else: an ML fit has no
+      # population or sd level. They are bound here, before scoring, so
+      # that both estimators meet one truth and summary() groups them.
+      # The natural scale needs `links`, which the ML rows do not carry.
+      has_ml <- ok[vapply(ok, function(i) {
+        !is.null(runs[[i]]$ml_estimates)
+      }, logical(1))]
+      ml_rows <- bind_cells(has_ml, cells, function(i) {
+        tibble::as_tibble(runs[[i]]$ml_estimates)
+      })
+      subjects <- dplyr::bind_rows(subjects, ml_rows)
+    }
     pieces$subjects <- recover_subjects(
-      estimates[estimates$level == "subject", ],
-      truth_sub,
+      subjects, truth_sub,
       scale = scale, links = links
     )
+  } else if (!is.null(request$ml)) {
+    cli::cli_abort(c(
+      "{.arg ml} was requested, but there is no subject level to score \\
+       it at.",
+      i = "The ML rows are subject rows; nothing varies between subjects \\
+           in this grid."
+    ))
   }
   truth_sd <- truth_of("sd")
   if ("sd" %in% request$levels && nrow(truth_sd) > 0L) {
@@ -824,6 +1083,16 @@ grid_formula <- function(formula, row, i, model, re_cor, task_col,
 #' @param cor_scale The scale the correlations are extracted and scored
 #'   on, `"link"` or `"natural"`. The `"model"` estimator exists on the
 #'   link scale only.
+#' @param ml `FALSE`, the default, fits every cell hierarchically only.
+#'   `TRUE` also fits every cell subject by subject with [fit_ml()] on
+#'   the same simulated data, and scores both estimators against one
+#'   truth at the subject level; the ML rows carry `estimator = "ml"`. A
+#'   named list gives arguments to [fit_ml()] (`prior`, `draws`,
+#'   `max_abs_link`, `ci_level`, `formula`, `.fitter`, and through its
+#'   `...` the fitter's own, such as `refresh = 0, silent = 2` to quiet
+#'   the optimiser); `model`, `data`, `file`, `refit`, `seed` and `by`
+#'   are the grid's. Needs `"subject"` in `levels`. See the section
+#'   "Subject-wise ML".
 #' @param smoke `TRUE` runs the first two rows with two replications
 #'   into `<dir>/smoke`, so a smoke run never overwrites a full one.
 #' @param preflight Run the first cell once with one chain and 200
@@ -851,6 +1120,10 @@ grid_formula <- function(formula, row, i, model, re_cor, task_col,
 #'     covariate's value is its own mean, median and true value). Its
 #'     attribute `links` is the model's link table. [subject_table()]
 #'     turns it into one row per subject.
+#'   * `ml_cells`: with `ml`, a tibble with one row per cell (`condition`,
+#'     `replication`, `status`, `elapsed`, `n_subjects`, `n_converged`,
+#'     `converged`, `file`) for the ML fit; see "Subject-wise ML".
+#'     `cells` stays one row per cell and describes the hierarchical fit.
 #'
 #' @details
 #' A cell whose fit errors is recorded with `status = "error"` and the
@@ -871,6 +1144,37 @@ grid_formula <- function(formula, row, i, model, re_cor, task_col,
 #' requested level and estimator, so the fit files may be deleted once a
 #' grid has run. Otherwise the cell goes through [fit_cached()] again,
 #' which reuses a cached fit, and the sidecar is rewritten.
+#'
+#' @section Subject-wise ML:
+#' With `ml`, every cell is fitted twice on the same simulated data: the
+#' hierarchical fit, and one [fit_ml()] call with no pooling, cached as
+#' `cell-<row>-rep-<rep>-ml.rds` under the cell's seed. The ML rows are
+#' bound to the hierarchical subject rows before scoring, so the result
+#' has both estimators at the subject level, `"bayes"` and `"ml"`,
+#' against one truth; `summary()` reports them as separate rows and
+#' `plot_recovery(color_by = "estimator")` colours them. An ML fit has no
+#' population or `sd` level, so those levels stay hierarchical only, and
+#' its subject means are not added to `subject_means`. The `...` of the
+#' grid (`chains`, `iter`, `backend`, `refresh`, ...) belong to the
+#' hierarchical fit and do not reach [fit_ml()]; `ml = list(draws = ,
+#' refresh = 0)` and the other [fit_ml()] arguments do.
+#'
+#' The sidecar records the ML request (its prior, draws, interval level,
+#' link-scale range and formula) with the ML rows, and a resume reuses
+#' them only when the request is the same; a change to `max_abs_link` or
+#' `ci_level` re-extracts from the cached ML fit without refitting, and a
+#' change to `prior`, `draws` or `formula` refits through [fit_cached()].
+#' A cell whose ML fit fails keeps its hierarchical rows, is recorded
+#' with `status = "error"` in `ml_cells`, and is named in a warning at
+#' the end; its sidecar is written without ML rows, so a resume tries the
+#' ML fit again. There is no ML preflight: a compile error of the
+#' no-pooling model shows up as every cell's ML status.
+#'
+#' Within a cell, a subject whose ML estimate leaves the link-scale range
+#' keeps its row with `estimate = NA` and `converged = FALSE`, as
+#' [fit_ml()] documents; the recovery rows carry that verdict per subject
+#' and term, and `ml_cells` counts the subjects per cell. Report `n` next
+#' to any comparison of the two estimators.
 #'
 #' @section Components:
 #' With `model` a list of [recovery_component()]s (or a `function(row)`
@@ -960,6 +1264,7 @@ recovery_grid <- function(model,
                           levels = c("population", "subject"),
                           correlations = NULL,
                           cor_scale = "link",
+                          ml = FALSE,
                           smoke = FALSE,
                           preflight = TRUE,
                           ...,
@@ -977,8 +1282,9 @@ recovery_grid <- function(model,
       dir = dir, reps = reps, cors = cors, covariates = covariates,
       prior = prior, seed = seed, subjects = subjects, scale = scale,
       levels = levels, correlations = correlations, cor_scale = cor_scale,
-      smoke = smoke, preflight = preflight, dots = rlang::list2(...),
-      fitter = .fitter, given = names(given)[given]
+      ml = ml, smoke = smoke, preflight = preflight,
+      dots = rlang::list2(...), fitter = .fitter,
+      given = names(given)[given]
     ))
   }
   subjects <- rlang::arg_match(subjects)
@@ -986,6 +1292,7 @@ recovery_grid <- function(model,
   scale <- rlang::arg_match(scale)
   extraction <- check_extraction_args(levels, correlations, cor_scale)
   check_model_correlations(extraction$correlations, formula, re_cor, tasks)
+  ml_args <- check_ml_arg(ml, extraction$levels)
   check_grid(grid)
   dots <- rlang::list2(...)
   setup <- grid_run_setup(grid, reps, dir, smoke, preflight)
@@ -1062,7 +1369,7 @@ recovery_grid <- function(model,
   }
   request <- extraction_request(
     extraction$levels, extraction$correlations, extraction$cor_scale,
-    links = unlist(links)
+    links = unlist(links), ml = ml_request(ml_args)
   )
 
   first_paths <- cell_paths(dir, 1L, 1L)
@@ -1095,7 +1402,8 @@ recovery_grid <- function(model,
     runs[[i]] <- run_cell(
       sims[[i]], model_for(cells$row[[i]]), formula_for(cells$row[[i]]),
       prior, cell_paths(dir, cells$row[[i]], cells$rep[[i]]),
-      cells$seed[[i]], dots, .fitter, request
+      cells$seed[[i]], dots, .fitter, request,
+      ml = ml_args
     )
   }
 
@@ -1105,6 +1413,14 @@ recovery_grid <- function(model,
     sprintf("row-%d rep %d", cells$row[failed], cells$rep[failed]),
     if (length(failed) > 0L) runs[[failed[[1L]]]]$message
   )
+  if (!is.null(ml_args)) {
+    ml_status <- vapply(runs, function(r) r$ml_status, character(1))
+    ml_failed <- which(ml_status %in% "error")
+    warn_failed_ml_cells(
+      sprintf("row-%d rep %d", cells$row[ml_failed], cells$rep[ml_failed]),
+      if (length(ml_failed) > 0L) runs[[ml_failed[[1L]]]]$ml_message
+    )
+  }
 
   out <- score_cells(runs, sims, cells, unlist(links), scale, request)
   attr(out, "cells") <- tibble::tibble(
@@ -1121,5 +1437,65 @@ recovery_grid <- function(model,
     converged = vapply(runs, function(r) as.logical(r$converged), logical(1))
   )
   attr(out, "grid") <- grid
+  if (!is.null(ml_args)) {
+    attr(out, "ml_cells") <- ml_cell_table(runs, cells, dir, ml_args)
+  }
   out
+}
+
+#' Warn at the end of a grid about the cells whose ML fit failed
+#' @param labels One label per cell whose ML fit failed.
+#' @param message The first failure's message.
+#' @noRd
+warn_failed_ml_cells <- function(labels, message) {
+  if (length(labels) == 0L) {
+    return(invisible(NULL))
+  }
+  cli::cli_warn(c(
+    "{.fn fit_ml} failed in {length(labels)} cell{?s}: {.val {labels}}.",
+    i = "The first message: {message}",
+    i = "{cli::qty(length(labels))}The hierarchical rows of \\
+         {?that cell/those cells} are scored; the ML rows are missing, \\
+         and {.code attr(x, \"ml_cells\")} says where."
+  ))
+}
+
+#' One row per cell for the ML fit, beside `cells`
+#'
+#' `n_subjects` and `n_converged` count the subjects of the cell's ML
+#' fit, from its `ml_cells` attribute; a subject converged when every one
+#' of its terms did. A cell whose ML fit failed, or was not attempted
+#' because the hierarchical fit failed, has `NA` counts.
+#'
+#' `file` names the cell's cached ML fit, and is `NA` on the `optim`
+#' route, which does not cache: a path to a file that will never exist is
+#' worse than saying there is none.
+#'
+#' @noRd
+ml_cell_table <- function(runs, cells, dir, ml = NULL) {
+  count <- function(r, what) {
+    rows <- attr(r$ml_estimates, "ml_cells")
+    if (is.null(rows)) {
+      return(NA_integer_)
+    }
+    if (identical(what, "n")) nrow(rows) else sum(rows$converged %in% TRUE)
+  }
+  n_subjects <- vapply(runs, count, integer(1), what = "n")
+  n_converged <- vapply(runs, count, integer(1), what = "converged")
+  tibble::tibble(
+    condition = sprintf("row-%d", cells$row),
+    replication = cells$rep,
+    status = vapply(runs, function(r) r$ml_status, character(1)),
+    elapsed = vapply(runs, function(r) r$ml_elapsed, numeric(1)),
+    n_subjects = n_subjects,
+    n_converged = n_converged,
+    converged = n_converged == n_subjects,
+    file = if (identical(ml$method, "optim")) {
+      rep(NA_character_, nrow(cells))
+    } else {
+      paste0(vapply(seq_len(nrow(cells)), function(i) {
+        cell_paths(dir, cells$row[[i]], cells$rep[[i]])$ml
+      }, character(1)), ".rds")
+    }
+  )
 }

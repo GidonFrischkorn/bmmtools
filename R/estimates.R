@@ -27,7 +27,8 @@ estimates_contract <- function() {
     ess_tail = "double",
     level = "character",
     id = "character",
-    converged = "logical"
+    converged = "logical",
+    estimator = "character"
   )
 }
 
@@ -35,10 +36,13 @@ estimates_contract <- function() {
 #'
 #' `converged` is filled by [extract_estimates()] and optional on input,
 #' so a hand-built tibble with the other eleven columns still scores.
+#' `estimator` is optional for the same reason: a tibble that does not say
+#' which estimator produced it is a posterior, which is what `"bayes"`
+#' means (milestone 8, decision 35).
 #'
 #' @noRd
 estimates_required_columns <- function() {
-  setdiff(names(estimates_contract()), "converged")
+  setdiff(names(estimates_contract()), c("converged", "estimator"))
 }
 
 #' An empty estimates tibble
@@ -220,7 +224,8 @@ summarise_selected <- function(draws, ci_level) {
 
 #' Turn a summarised table into contract rows
 #' @noRd
-as_estimates <- function(x, level, ci_level, ci_method) {
+as_estimates <- function(x, level, ci_level, ci_method,
+                         estimator = "bayes") {
   tibble::tibble(
     term = x$term,
     estimate = as.double(x$estimate),
@@ -233,8 +238,30 @@ as_estimates <- function(x, level, ci_level, ci_method) {
     ess_tail = x$ess_tail,
     level = level,
     id = as.character(x$id),
-    converged = NA
+    converged = NA,
+    estimator = as.character(estimator)
   )
+}
+
+#' Validate the `estimator` argument: one non-missing string
+#'
+#' The vocabulary is open --- `"bayes"` and `"ml"` are what the package
+#' produces, but a user comparing three of their own estimators names them
+#' whatever they like. What is refused is a missing or non-scalar label,
+#' which would silently split or merge summary rows.
+#'
+#' @noRd
+check_estimator <- function(estimator, call = rlang::caller_env()) {
+  bad <- !is.character(estimator) || length(estimator) != 1L ||
+    is.na(estimator) || !nzchar(estimator)
+  if (bad) {
+    cli::cli_abort(
+      "{.arg estimator} must be a single non-empty string, \\
+       not {.obj_type_friendly {estimator}}.",
+      call = call
+    )
+  }
+  estimator
 }
 
 #' Validate the `converged` argument: one logical, `NA` allowed
@@ -682,8 +709,10 @@ estimates_from_draws <- function(draws,
                                  drop_constants = TRUE,
                                  converged = NA,
                                  ranef = NULL,
+                                 estimator = "bayes",
                                  call = rlang::caller_env()) {
   converged <- check_converged(converged, call = call)
+  estimator <- check_estimator(estimator, call = call)
   level <- rlang::arg_match(
     level, c("population", "subject", "sd", "cor"),
     multiple = TRUE,
@@ -757,6 +786,7 @@ estimates_from_draws <- function(draws,
     return(empty_estimates())
   }
   out$converged <- rep(converged, nrow(out))
+  out$estimator <- rep(estimator, nrow(out))
   out
 }
 
@@ -810,13 +840,22 @@ fit_converged <- function(fit, draws) {
 #'   default thresholds; a logical scalar is used as given, so a verdict
 #'   from [check_convergence()] with other thresholds can be passed in;
 #'   `NA` marks it unknown.
+#' @param estimator A label for how the estimates were produced, carried
+#'   into the `estimator` column and used by [recover()] to keep two
+#'   estimators of the same parameter apart in `summary()` and in
+#'   [plot_recovery()]. `"bayes"`, the default, is the posterior of a
+#'   sampled fit. Pass another label --- `"ml"` for a maximum-likelihood
+#'   fit, or any name of your own --- when scoring several estimators
+#'   against one truth. Without it, rows from two estimators would be
+#'   pooled into a single bias and RMSE.
 #' @param ... Not used. Present so the generic can gain arguments later;
 #'   anything passed is an error.
 #'
 #' @return A tibble with the columns `term`, `estimate`, `ci_low`,
 #'   `ci_high`, `ci_method`, `ci_level`, `rhat`, `ess_bulk`, `ess_tail`,
-#'   `level`, `id` and `converged`, in that order. `id` is `NA` except on
-#'   subject rows; `converged` is the same value on every row of a fit.
+#'   `level`, `id`, `converged` and `estimator`, in that order. `id` is
+#'   `NA` except on subject rows; `converged` and `estimator` are the same
+#'   value on every row of a fit.
 #'
 #' @details
 #' Subject-level estimates are the **per-draw sum** of the population
@@ -869,6 +908,7 @@ extract_estimates.brmsfit <- function(fit,
                                       ci_method = "eti",
                                       drop_constants = TRUE,
                                       converged = NULL,
+                                      estimator = "bayes",
                                       ...) {
   rlang::check_installed("brms", "to extract estimates from a fit.")
   rlang::check_dots_empty()
@@ -887,6 +927,7 @@ extract_estimates.brmsfit <- function(fit,
     ci_method = ci_method,
     drop_constants = drop_constants,
     converged = converged,
+    estimator = estimator,
     ranef = fit$ranef,
     # so a bad argument is reported against extract_estimates(), not
     # against the internal helper that happened to inspect it

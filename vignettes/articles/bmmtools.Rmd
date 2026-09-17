@@ -159,6 +159,12 @@ posterior draw. One fit now gives 40 pairs per parameter, so the
 correlations are defined. `summary()` returns one row per parameter;
 [Recovery summary columns](metrics.html) defines every column.
 
+Each of those estimates borrows strength from the other 39 subjects.
+`fit_ml()` fits the same data with no pooling at all, so the two can be
+scored against the same truth and the difference read off;
+[Hierarchical estimation against subject-wise maximum
+likelihood](hierarchical-vs-ml.html) does that.
+
 ## Plot
 
 ```{r plot, eval = FALSE, code = shown("plot", "vignettes/articles/precompute/bmmtools.R")}
@@ -343,6 +349,7 @@ and a reference with its own interval would draw a horizontal one.
 | fit | `fit_cached()` | the fit, reused while nothing changed |
 | gate | `check_convergence()` | one row of diagnostics and a verdict |
 | score | `recover()`, `recover_subjects()` | a `bmmtools_recovery` tibble |
+| compare | `fit_ml()` | subject-wise ML estimates, in the same shape |
 | summarise | `summary()` | one row per parameter (and condition) |
 | plot | `plot_recovery()`, `plot_prior_check()` | a ggplot |
 | loop | `recovery_grid()` | all of the above over a design grid |

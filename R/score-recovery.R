@@ -57,6 +57,11 @@ as_estimates_input <- function(fits, level, group, ci_level, drop_constants,
     if (!"replication" %in% names(out)) out$replication <- 1L
     # a hand-built tibble carries no verdict; an unknown is not a failure
     if (!"converged" %in% names(out)) out$converged <- NA
+    # a tibble that does not say which estimator produced it is a
+    # posterior (milestone 8, decision 35). NA is filled too, not only a
+    # missing column: binding a labelled tibble to an unlabelled one
+    # leaves NA, and an NA estimator would become its own summary group.
+    out$estimator <- fill_estimator(out)
     return(out)
   }
 
@@ -249,6 +254,11 @@ to_natural_scale <- function(x, links, values = c("estimate", "true_value"),
     rows <- x$term == term
 
     spans_zero <- x$ci_low[rows] < 0 & x$ci_high[rows] > 0
+    # a row with no interval --- a failed ML fit keeps its row with
+    # estimate and bounds NA (decision 40) --- neither spans zero nor
+    # does not. Left NA it would both index NA rows here and make
+    # `any()` return NA, which `if ()` refuses.
+    spans_zero[is.na(spans_zero)] <- FALSE
     low <- inverse_link(x$ci_low[rows], link)
     high <- inverse_link(x$ci_high[rows], link)
     if (identical(link, "sqrt") && any(spans_zero)) {
@@ -390,6 +400,7 @@ score_recovery <- function(fits, truth, level, group, scale, links,
     ))
   }
   joined <- dplyr::bind_rows(pieces)
+  check_estimator_balance(joined)
 
   new_bmmtools_recovery(
     joined,
@@ -398,6 +409,73 @@ score_recovery <- function(fits, truth, level, group, scale, links,
     call = call,
     error_call = error_call
   )
+}
+
+#' Warn when two estimators were not scored on the same subjects
+#'
+#' Comparing two estimators is only meaningful when both were scored on
+#' the same people: `metric_bias()` and `metric_rmse()` drop incomplete
+#' pairs in silence, so an estimator that failed on the hard subjects
+#' would otherwise report a flattering bias computed on the easy ones and
+#' nothing would say so (milestone 8, decision 40).
+#'
+#' What counts is the pair a metric can use, not the row. Decision 40
+#' keeps a failed ML subject *as a row* with `estimate = NA`, so comparing
+#' which ids are present finds nothing --- the id is always there and the
+#' estimate is what went missing.
+#'
+#' The comparison is also keyed by the cell and the parameter, not pooled.
+#' Subject ids repeat in every cell of a grid, so a whole cell's failed ML
+#' fit would intersect away against the same ids in another cell.
+#'
+#' @noRd
+check_estimator_balance <- function(x) {
+  subjects <- x[x$level == "subject" & !is.na(x$id), , drop = FALSE]
+  estimators <- unique(subjects$estimator)
+  if (length(estimators) < 2L) {
+    return(invisible(x))
+  }
+  usable <- subjects[
+    !is.na(subjects$estimate) & !is.na(subjects$true_value), ,
+    drop = FALSE
+  ]
+  # `condition` is filled by fill_optional_columns() inside the
+  # constructor, which has not run yet, so the cell keys are read
+  # defensively and always contribute a field
+  part <- function(nm) {
+    if (nm %in% names(usable)) {
+      as.character(usable[[nm]])
+    } else {
+      rep("", nrow(usable))
+    }
+  }
+  key <- paste(
+    part("condition"), part("replication"), usable$term, usable$id,
+    sep = "\r"
+  )
+  keys <- lapply(estimators, function(e) unique(key[usable$estimator == e]))
+  shared <- Reduce(intersect, keys)
+  unbalanced <- setdiff(unique(unlist(keys)), shared)
+  if (length(unbalanced) > 0L) {
+    # nolint next: object_usage_linter. Used by cli's glue interpolation.
+    ids <- unique(vapply(strsplit(unbalanced, "\r", fixed = TRUE), function(p) {
+      p[[4L]]
+    }, character(1)))
+    cells <- length(unique(vapply(
+      strsplit(unbalanced, "\r", fixed = TRUE),
+      function(p) paste(p[1:2], collapse = "\r"), character(1)
+    )))
+    cli::cli_warn(c(
+      "The estimators were not scored on the same subjects.",
+      i = "Missing from at least one estimator: {.val {ids}}.",
+      if (cells > 1L) {
+        c(i = "In {cells} cells of the grid.")
+      },
+      i = "Metrics drop incomplete pairs, so the rows are not comparable \\
+           until you filter to the subjects every estimator has."
+    ))
+  }
+  invisible(x)
 }
 
 #' Score parameter recovery against known generating values
@@ -449,12 +527,23 @@ score_recovery <- function(fits, truth, level, group, scale, links,
 #' @return A `bmmtools_recovery` object: a tibble subclass with the
 #'   columns `term`, `estimate`, `ci_low`, `ci_high`, `ci_method`,
 #'   `ci_level`, `rhat`, `ess_bulk`, `ess_tail`, `true_value`, `bias`,
-#'   `covered`, `scale`, `level`, `id`, `converged` and `replication`.
+#'   `covered`, `scale`, `level`, `id`, `converged`, `condition`,
+#'   `estimator` and `replication`.
 #'   `converged` is the verdict of [check_convergence()] with its
 #'   default thresholds when `fits` are fit objects; to gate with other
 #'   thresholds, call [extract_estimates()] with `converged =` first and
 #'   pass the tibble. Call [summary()] on it for the per-parameter
 #'   metrics.
+#'
+#'   `estimator` names how each row was produced and defaults to
+#'   `"bayes"`. [summary()] groups by it, so two estimators of the same
+#'   parameter --- a hierarchical posterior and a subject-wise
+#'   maximum-likelihood fit, say --- can be bound together and scored
+#'   against one truth without being pooled into a single bias and RMSE.
+#'   Set it with `extract_estimates(estimator = )` or as a column on a
+#'   hand-built tibble, then `dplyr::bind_rows()` the two and pass the
+#'   result here. Note that this `estimator` is unrelated to the one in
+#'   [extract_correlations()], which names how a *correlation* was read.
 #'
 #' @details
 #' Standard deviations are always scored on the link scale, the scale

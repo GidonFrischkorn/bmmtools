@@ -25,6 +25,7 @@ recovery_grid(
   levels = c("population", "subject"),
   correlations = NULL,
   cor_scale = "link",
+  ml = FALSE,
   smoke = FALSE,
   preflight = TRUE,
   ...,
@@ -106,6 +107,17 @@ correlations of every cell, pairs with covariates included.}
 on, \code{"link"} or \code{"natural"}. The \code{"model"} estimator exists on the
 link scale only.}
 
+\item{ml}{\code{FALSE}, the default, fits every cell hierarchically only.
+\code{TRUE} also fits every cell subject by subject with \code{\link[=fit_ml]{fit_ml()}} on
+the same simulated data, and scores both estimators against one
+truth at the subject level; the ML rows carry \code{estimator = "ml"}. A
+named list gives arguments to \code{\link[=fit_ml]{fit_ml()}} (\code{prior}, \code{draws},
+\code{max_abs_link}, \code{ci_level}, \code{formula}, \code{.fitter}, and through its
+\code{...} the fitter's own, such as \verb{refresh = 0, silent = 2} to quiet
+the optimiser); \code{model}, \code{data}, \code{file}, \code{refit}, \code{seed} and \code{by}
+are the grid's. Needs \code{"subject"} in \code{levels}. See the section
+"Subject-wise ML".}
+
 \item{smoke}{\code{TRUE} runs the first two rows with two replications
 into \verb{<dir>/smoke}, so a smoke run never overwrites a full one.}
 
@@ -138,6 +150,10 @@ scale, and \code{true_value}, the generating value on the link scale (a
 covariate's value is its own mean, median and true value). Its
 attribute \code{links} is the model's link table. \code{\link[=subject_table]{subject_table()}}
 turns it into one row per subject.
+\item \code{ml_cells}: with \code{ml}, a tibble with one row per cell (\code{condition},
+\code{replication}, \code{status}, \code{elapsed}, \code{n_subjects}, \code{n_converged},
+\code{converged}, \code{file}) for the ML fit; see "Subject-wise ML".
+\code{cells} stays one row per cell and describes the hierarchical fit.
 }
 }
 \description{
@@ -169,6 +185,38 @@ requested level and estimator, so the fit files may be deleted once a
 grid has run. Otherwise the cell goes through \code{\link[=fit_cached]{fit_cached()}} again,
 which reuses a cached fit, and the sidecar is rewritten.
 }
+\section{Subject-wise ML}{
+
+With \code{ml}, every cell is fitted twice on the same simulated data: the
+hierarchical fit, and one \code{\link[=fit_ml]{fit_ml()}} call with no pooling, cached as
+\verb{cell-<row>-rep-<rep>-ml.rds} under the cell's seed. The ML rows are
+bound to the hierarchical subject rows before scoring, so the result
+has both estimators at the subject level, \code{"bayes"} and \code{"ml"},
+against one truth; \code{summary()} reports them as separate rows and
+\code{plot_recovery(color_by = "estimator")} colours them. An ML fit has no
+population or \code{sd} level, so those levels stay hierarchical only, and
+its subject means are not added to \code{subject_means}. The \code{...} of the
+grid (\code{chains}, \code{iter}, \code{backend}, \code{refresh}, ...) belong to the
+hierarchical fit and do not reach \code{\link[=fit_ml]{fit_ml()}}; \code{ml = list(draws = , refresh = 0)} and the other \code{\link[=fit_ml]{fit_ml()}} arguments do.
+
+The sidecar records the ML request (its prior, draws, interval level,
+link-scale range and formula) with the ML rows, and a resume reuses
+them only when the request is the same; a change to \code{max_abs_link} or
+\code{ci_level} re-extracts from the cached ML fit without refitting, and a
+change to \code{prior}, \code{draws} or \code{formula} refits through \code{\link[=fit_cached]{fit_cached()}}.
+A cell whose ML fit fails keeps its hierarchical rows, is recorded
+with \code{status = "error"} in \code{ml_cells}, and is named in a warning at
+the end; its sidecar is written without ML rows, so a resume tries the
+ML fit again. There is no ML preflight: a compile error of the
+no-pooling model shows up as every cell's ML status.
+
+Within a cell, a subject whose ML estimate leaves the link-scale range
+keeps its row with \code{estimate = NA} and \code{converged = FALSE}, as
+\code{\link[=fit_ml]{fit_ml()}} documents; the recovery rows carry that verdict per subject
+and term, and \code{ml_cells} counts the subjects per cell. Report \code{n} next
+to any comparison of the two estimators.
+}
+
 \section{Components}{
 
 With \code{model} a list of \code{\link[=recovery_component]{recovery_component()}}s (or a \verb{function(row)}

@@ -18,6 +18,7 @@ extract_estimates(fit, ...)
   ci_method = "eti",
   drop_constants = TRUE,
   converged = NULL,
+  estimator = "bayes",
   ...
 )
 }
@@ -53,12 +54,22 @@ the default, computes it as \code{check_convergence(fit)$pass} with the
 default thresholds; a logical scalar is used as given, so a verdict
 from \code{\link[=check_convergence]{check_convergence()}} with other thresholds can be passed in;
 \code{NA} marks it unknown.}
+
+\item{estimator}{A label for how the estimates were produced, carried
+into the \code{estimator} column and used by \code{\link[=recover]{recover()}} to keep two
+estimators of the same parameter apart in \code{summary()} and in
+\code{\link[=plot_recovery]{plot_recovery()}}. \code{"bayes"}, the default, is the posterior of a
+sampled fit. Pass another label --- \code{"ml"} for a maximum-likelihood
+fit, or any name of your own --- when scoring several estimators
+against one truth. Without it, rows from two estimators would be
+pooled into a single bias and RMSE.}
 }
 \value{
 A tibble with the columns \code{term}, \code{estimate}, \code{ci_low},
 \code{ci_high}, \code{ci_method}, \code{ci_level}, \code{rhat}, \code{ess_bulk}, \code{ess_tail},
-\code{level}, \code{id} and \code{converged}, in that order. \code{id} is \code{NA} except on
-subject rows; \code{converged} is the same value on every row of a fit.
+\code{level}, \code{id}, \code{converged} and \code{estimator}, in that order. \code{id} is
+\code{NA} except on subject rows; \code{converged} and \code{estimator} are the same
+value on every row of a fit.
 }
 \description{
 The bridge between a fitted model and everything bmmtools scores. It

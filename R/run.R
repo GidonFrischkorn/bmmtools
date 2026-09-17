@@ -122,6 +122,11 @@ cache_key <- function(formula, data, model, prior, dots) {
   names(sampler) <- cache_key_args()
   # `[<-` with list(), not `$<-`: assigning NULL would drop the element
   sampler["init"] <- list(function_key(sampler$init))
+  # `draws` is to a Laplace or variational fit what `iter` is to sampling.
+  # It enters only when given: a component added unconditionally would
+  # differ from every key file written before it existed and refit every
+  # cached sampling fit for a change that never touched it.
+  if (!is.null(dots$draws)) sampler$draws <- dots$draws
   parts <- c(
     list(
       formula = formula_key(formula),
@@ -337,9 +342,11 @@ cache_announce <- function(paths, lookup, refit) {
 #'   and warns if it is stale; `"always"` fits and overwrites.
 #' @param ... Passed to the fitter. `seed`, `chains`, `iter`, `warmup`,
 #'   `thin`, `control`, `init`, `backend`, `sample_prior`, `algorithm`
-#'   and `stanvars` enter the key; anything else (`cores`, `refresh`,
-#'   `silent`, ...) changes how the fit is run, not what it is, and does
-#'   not. An `init` given as a function enters the key by its text, so a
+#'   and `stanvars` enter the key, and so does `draws` (the number of
+#'   draws of a Laplace or variational fit) when it is given; anything
+#'   else (`cores`, `refresh`, `silent`, ...) changes how the fit is run,
+#'   not what it is, and does not. An `init` given as a function enters
+#'   the key by its text, so a
 #'   closure built afresh in every iteration of a loop still matches.
 #'   brms's `file_refit` and `file_compress` are refused: there is one
 #'   cache, not two.

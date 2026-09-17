@@ -17,7 +17,8 @@
 }
 \value{
 A \code{bmmtools_recovery_summary} tibble with the columns \code{term},
-\code{level}, \code{scale}, \code{n}, \code{n_replications}, \code{n_converged}, \code{bias},
+\code{estimator}, \code{level}, \code{scale}, \code{n}, \code{n_replications}, \code{n_converged},
+\code{bias},
 \code{rmse}, \code{coverage}, \code{ci_width}, \code{r}, \code{r_low}, \code{r_high}, \code{rank_r},
 \code{ccc}, \code{ccc_low}, \code{ccc_high}, \code{ccc_accuracy}, \code{ccc_scale_shift},
 \code{ccc_location_shift}, \code{calibration_slope} and \code{truth_sd}, the
@@ -51,6 +52,12 @@ coefficient of exactly 0 or 1); \code{ccc_scale_shift} and
 \code{calibration_slope} as geometric means; \code{ccc_accuracy} and
 \code{ccc_location_shift} as means; \code{truth_sd} as the root mean variance.
 At this level \code{ccc = r * ccc_accuracy} holds only approximately.
+
+Rows are grouped by \code{estimator} as well as by term and level, so two
+estimators of the same parameter scored against one truth give two
+rows rather than one pooled bias and RMSE. Their \code{n} may differ when
+one of them failed on a subject the other estimated; \code{\link[=recover]{recover()}} warns
+when it does.
 
 \code{n_converged} is the number of replications whose fit passed
 \code{\link[=check_convergence]{check_convergence()}}, read from the \code{converged} column that

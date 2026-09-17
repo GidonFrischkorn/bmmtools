@@ -1,3 +1,84 @@
+# bmmtools (development version)
+
+## Comparing estimators
+
+* `fit_ml()` estimates a model subject by subject with no pooling and
+  returns the estimates in the same tibble shape a hierarchical fit
+  gives, so `recover_subjects()` can score both against one truth. It
+  optimises bmm's own generated likelihood through
+  `algorithm = "laplace"` and re-implements no model. Flat priors are the
+  default, so the mode is a maximum-likelihood estimate rather than a
+  penalised one; `prior = "default"` keeps bmm's priors. It exists to
+  measure what hierarchical estimation buys, not to recommend maximum
+  likelihood for inference.
+* `fit_ml(method = "optim")` is a second route to the same estimates,
+  maximising bmm's R density for the model directly with `optim()` and
+  taking its interval from the Hessian (`ci_method = "wald"`). It needs
+  no compiler and no Stan, which makes it the route that runs anywhere,
+  and it optimises each subject independently, so one subject at a
+  boundary cannot stall the rest. It is capped at the models bmmtools
+  carries a density for --- the same six the simulation adapters cover
+  --- and `nll` supplies one for anything else. Measured against the
+  Stan route on 40 subjects of `mixture2p`: the same estimates to Monte
+  Carlo error, standard errors agreeing to a mean ratio of 1.000, and
+  the same `coverage` and `calibration_slope` to three decimals, in 0.35
+  s against 8 s.
+* With `method = "stan"`, the default, `fit_ml()` runs **one** fit for
+  the whole data set rather than one per subject. Under `p ~ 0 + id` the
+  log posterior is a sum of per-subject terms, so the joint mode is the
+  vector of per-subject modes; this was checked against independent
+  optimisation of bmm's own density and agreed to 3e-06 on the link
+  scale.
+* A subject whose estimate leaves a finite range on the link scale, or
+  whose optimiser reports failure on the `optim` route, is reported with
+  `estimate = NA` and `converged = FALSE`, never dropped:
+  the recovery metrics drop incomplete pairs silently, so dropping would
+  score maximum likelihood on the easiest subjects and the hierarchical
+  fit on all of them. `attr(x, "ml_cells")` and `print()` carry the
+  per-subject counts.
+* `recovery_grid(ml = TRUE)` fits every cell subject by subject as well,
+  on the same simulated data, and scores both estimators against one
+  truth at the subject level, so the shrinkage comparison can be read
+  over a whole design rather than one data set. A Stan-route ML fit is
+  cached beside the cell's other files; either route's rows go into the
+  sidecar with the request that made them, and a resume reads them back
+  without refitting. A cell whose ML fit
+  fails keeps its hierarchical rows and is named in a warning, with the
+  per-cell record in `attr(x, "ml_cells")`. `ml = list(...)` passes
+  arguments to `fit_ml()`, so `ml = list(method = "optim")` runs the
+  whole design without a compiler. The sidecar records which route made
+  its rows and a resume that asks for the other one refits.
+
+* A new article, "Hierarchical estimation against subject-wise maximum
+  likelihood", runs the comparison end to end on `mixture2p`: one data
+  set fitted both ways and scored against one truth, then the same
+  contrast over a grid of trial counts. It is where the estimator table
+  of "Recovery summary columns" stops being a conjugate toy.
+* Recovery objects carry an `estimator` column, and `summary()` groups by
+  it. Two estimators of the same parameter — a hierarchical posterior and
+  a subject-wise maximum-likelihood fit, say — can be bound together and
+  scored against one truth without being pooled into a single bias and
+  RMSE. `extract_estimates()` gains an `estimator` argument (default
+  `"bayes"`), and a hand-built estimates tibble may carry the column
+  itself.
+* `plot_recovery(color_by = "estimator", annotate = TRUE)` labels each
+  panel once per estimator instead of refusing to annotate it.
+* `recover_subjects()` warns when two estimators were not scored on the
+  same subjects, because the metrics drop incomplete pairs in silence and
+  the rows would otherwise not be comparable.
+
+### Breaking
+
+* `summary()` on a recovery object now returns its rows in the order the
+  estimates arrived rather than sorted by term, so that adding a second
+  estimator does not reshuffle the rows of the first. A summary of one
+  estimator holds the same numbers as before, in a different order.
+* `estimator` is a required column of the recovery contract, so a
+  `bmmtools_recovery` object saved by 0.1.0 no longer satisfies it.
+  Restore one with `dplyr::mutate(old, estimator = "bayes")`. Objects
+  built by `recover()`, `recover_subjects()` and `recovery_grid()` are
+  filled automatically and are unaffected.
+
 # bmmtools 0.1.0
 
 First release. bmmtools validates cognitive measurement models fitted

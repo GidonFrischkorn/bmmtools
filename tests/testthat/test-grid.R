@@ -417,7 +417,8 @@ test_that("a row-wise model must keep one link table across rows", {
 # the sidecar, sd level and correlations (spec 5, section 5.3, D31) -----
 
 grid_fit_files <- function(dir) {
-  list.files(dir, pattern = "^(cell-[0-9]+-rep-[0-9]+|preflight)\\.rds$",
+  list.files(dir,
+    pattern = "^(cell-[0-9]+-rep-[0-9]+|preflight)\\.rds$",
     full.names = TRUE
   )
 }
@@ -965,4 +966,488 @@ test_that("an older simulation file gains NULL tasks on resume", {
   expect_true(all(c("tasks", "task_col") %in% names(sim)))
   expect_null(sim$tasks)
   expect_identical(sim$truth, old$truth)
+})
+
+# subject-wise ML (milestone 8, stage 8.4) ---------------------------------
+
+# the Bayesian mock is `mock`; the ML mock goes in through `ml = list(.fitter)`
+# because the grid's `.fitter` returns fits whose coefficients are not the
+# `<par>_id<level>` shape a no-pooling fit has
+ml_grid_run <- function(dir, mock = grid_mock_fitter(),
+                        ml_mock = ml_mock_fitter(), ml_args = list(),
+                        reps = 2L, ...) {
+  quietly(suppressMessages(grid_run(
+    dir, mock,
+    reps = reps,
+    ml = c(list(.fitter = ml_mock$fitter), ml_args),
+    ...
+  )))
+}
+
+#' Muffle the balance warning, and only it
+#'
+#' These fixtures fit at 10 and 20 trials a subject, where some MLEs run to
+#' the boundary, so two estimators really are scored on different subjects
+#' and the warning is the right answer --- it is asserted on its own below.
+#' Every other warning still surfaces.
+#'
+#' @noRd
+quietly <- function(expr) {
+  withCallingHandlers(expr, warning = function(w) {
+    if (grepl("same subjects", conditionMessage(w), fixed = TRUE)) {
+      invokeRestart("muffleWarning")
+    }
+  })
+}
+
+test_that("the grid runs the optim route with no ML fitter at all", {
+  skip_if_not_installed("bmm")
+  dir <- withr::local_tempdir()
+  mock <- grid_mock_fitter()
+  # no `.fitter` in the ml list: the optim route calls no fitter, so this
+  # is the one ML path a runner can exercise end to end. The hierarchical
+  # side is still the mock.
+  out <- quietly(suppressMessages(
+    grid_run(dir, mock, ml = list(method = "optim"))
+  ))
+
+  expect_setequal(out$estimator, c("bayes", "ml"))
+  expect_setequal(out$estimator[out$level == "population"], "bayes")
+  cells <- attr(out, "ml_cells")
+  expect_equal(nrow(cells), 4L)
+  # the fit ran in every cell; whether every subject converged is another
+  # question, and at this grid's 10 and 20 trials the answer is no
+  expect_true(all(cells$status == "ok"))
+  expect_equal(cells$n_subjects, c(3L, 4L, 3L, 4L))
+  expect_true(all(cells$n_converged <= cells$n_subjects))
+
+  # decision 40 through the grid: a subject whose MLE runs to the boundary
+  # keeps its row with estimate NA, so the two estimators are scored on the
+  # same subjects and the difference between them is not selection
+  sub <- out[out$level == "subject", ]
+  expect_equal(sum(sub$estimator == "ml"), sum(sub$estimator == "bayes"))
+  failed <- sub[sub$estimator == "ml" & !sub$converged, ]
+  expect_true(all(is.na(failed$estimate)))
+})
+
+test_that("changing the ML route re-fits rather than reusing the sidecar", {
+  skip_if_not_installed("bmm")
+  dir <- withr::local_tempdir()
+  first <- quietly(suppressMessages(
+    grid_run(dir, grid_mock_fitter(), ml = list(method = "optim"))
+  ))
+  # the sidecar records `method`, so the same directory asked for the other
+  # route must not answer with the rows it already has
+  again <- quietly(suppressMessages(
+    grid_run(dir, grid_mock_fitter(), ml = list(method = "optim"))
+  ))
+  # the rows, not the attributes: `elapsed` is 0 on the resume precisely
+  # because nothing was fitted, so as.data.frame() is not enough --- a
+  # tibble subclass carries its attributes through it
+  plain <- function(x) as.data.frame(lapply(x, identity))
+  expect_equal(plain(first), plain(again))
+  expect_true(all(attr(again, "ml_cells")$elapsed == 0))
+
+  ml_mock <- ml_mock_fitter()
+  switched <- quietly(suppressMessages(grid_run(
+    dir, grid_mock_fitter(),
+    ml = list(method = "stan", .fitter = ml_mock$fitter)
+  )))
+  expect_true(ml_mock$calls$n > 0L)
+  expect_false(identical(
+    first$estimate[first$estimator == "ml"],
+    switched$estimate[switched$estimator == "ml"]
+  ))
+})
+
+test_that("ml = TRUE scores both estimators at the subject level", {
+  skip_if_not_installed("bmm")
+  dir <- withr::local_tempdir()
+  mock <- grid_mock_fitter()
+  ml_mock <- ml_mock_fitter(estimates = c(kappa_id1 = 0.4, thetat_id2 = -0.3))
+
+  out <- ml_grid_run(dir, mock, ml_mock)
+
+  expect_s3_class(out, "bmmtools_recovery")
+  expect_setequal(out$estimator, c("bayes", "ml"))
+  # an ML fit has no population level: those rows stay hierarchical only
+  expect_setequal(out$estimator[out$level == "population"], "bayes")
+  expect_setequal(out$estimator[out$level == "subject"], c("bayes", "ml"))
+  # every cell has as many ML subject rows as Bayesian ones
+  sub <- out[out$level == "subject", ]
+  counts <- table(sub$condition, sub$replication, sub$estimator)
+  expect_equal(unname(counts[, , "ml"]), unname(counts[, , "bayes"]))
+  # the ML rows are what fit_ml() produced, scored against the same truth
+  ml <- sub[sub$estimator == "ml", ]
+  expect_true(all(ml$ci_method == "laplace"))
+  expect_true(all(is.na(ml$rhat)))
+  bayes <- sub[sub$estimator == "bayes", ]
+  key <- c("condition", "replication", "id", "term")
+  merged <- merge(
+    ml[c(key, "true_value")], bayes[c(key, "true_value")],
+    by = key
+  )
+  expect_equal(merged$true_value.x, merged$true_value.y)
+  # one ML fit per cell, none for the preflight
+  expect_identical(ml_mock$calls$n, 4L)
+  expect_identical(mock$calls$n, 5L)
+  # the ML fit is cached beside the cell's other files
+  expect_true(all(file.exists(
+    file.path(dir, sprintf(
+      "cell-%d-rep-%d-ml.rds", c(1, 2, 1, 2), c(1, 1, 2, 2)
+    ))
+  )))
+
+  s <- summary(out)
+  expect_true("estimator" %in% names(s))
+  expect_setequal(s$estimator[s$level == "subject"], c("bayes", "ml"))
+  expect_setequal(s$estimator[s$level == "population"], "bayes")
+})
+
+test_that("ml = TRUE leaves the cells attribute as it was", {
+  skip_if_not_installed("bmm")
+  dir <- withr::local_tempdir()
+  out <- ml_grid_run(dir)
+  cells <- attr(out, "cells")
+  expect_equal(nrow(cells), 4L)
+  expect_named(cells, c(
+    "condition", "replication", "n_subjects", "n_trials", "seed", "file",
+    "status", "elapsed", "converged"
+  ))
+})
+
+test_that("ml_cells has one row per cell with the subject counts", {
+  skip_if_not_installed("bmm")
+  dir <- withr::local_tempdir()
+  # subject 2's kappa leaves the link range in every cell
+  out <- ml_grid_run(
+    dir,
+    ml_mock = ml_mock_fitter(estimates = c(kappa_id2 = 50))
+  )
+
+  ml_cells <- attr(out, "ml_cells")
+  expect_s3_class(ml_cells, "tbl_df")
+  expect_named(ml_cells, c(
+    "condition", "replication", "status", "elapsed", "n_subjects",
+    "n_converged", "converged", "file"
+  ))
+  expect_equal(ml_cells$condition, c("row-1", "row-2", "row-1", "row-2"))
+  expect_equal(ml_cells$replication, c(1L, 1L, 2L, 2L))
+  expect_true(all(ml_cells$status == "ok"))
+  expect_equal(ml_cells$n_subjects, c(3L, 4L, 3L, 4L))
+  expect_equal(ml_cells$n_converged, c(2L, 3L, 2L, 3L))
+  expect_false(any(ml_cells$converged))
+  expect_true(all(file.exists(ml_cells$file)))
+
+  # the failed subject keeps its row, unscored, so n differs visibly
+  ml <- out[out$estimator == "ml" & out$term == "kappa", ]
+  expect_true(all(is.na(ml$estimate[ml$id == "2"])))
+  expect_false(any(ml$converged[ml$id == "2"]))
+  expect_true(all(ml$converged[ml$id != "2"]))
+
+  # without ml there is no such attribute
+  out2 <- suppressMessages(grid_run(withr::local_tempdir(), grid_mock_fitter()))
+  expect_null(attr(out2, "ml_cells"))
+})
+
+test_that("the sidecar stores the ML record and rows; a resume reads them", {
+  skip_if_not_installed("bmm")
+  dir <- withr::local_tempdir()
+  first <- ml_grid_run(dir, ml_args = list(draws = 200))
+
+  sidecar <- readRDS(file.path(dir, "cell-2-rep-1-est.rds"))
+  expect_named(sidecar, c(
+    "key", "bmmtools_version", "levels", "correlations", "cor_scale", "ml",
+    "estimates", "cor_estimates", "subject_means", "ml_estimates"
+  ))
+  # every fit_ml() argument that changes the rows, at its default when not
+  # given --- `start` and `nll` belong to the optim route and are NULL here
+  expect_equal(sidecar$ml, list(
+    formula = NULL, method = "stan", prior = "flat", ci_level = 0.95,
+    draws = 200, max_abs_link = 20, start = NULL, nll = NULL
+  ))
+  expect_s3_class(sidecar$ml_estimates, "bmmtools_ml")
+  expect_equal(nrow(sidecar$ml_estimates), 4L * 2L)
+
+  # with every fit deleted, both mocks stay idle and the result is the same
+  unlink(grid_fit_files(dir))
+  unlink(list.files(dir, pattern = "-ml\\.(rds|key)$", full.names = TRUE))
+  mock <- grid_mock_fitter()
+  ml_mock <- ml_mock_fitter()
+  second <- ml_grid_run(dir, mock, ml_mock, ml_args = list(draws = 200))
+  expect_identical(mock$calls$n, 0L)
+  expect_identical(ml_mock$calls$n, 0L)
+  expect_identical(grid_result_parts(second), grid_result_parts(first))
+  ml_cells <- attr(second, "ml_cells")
+  expect_true(all(ml_cells$status == "ok"))
+  expect_true(all(ml_cells$elapsed == 0))
+})
+
+test_that("ml added to a finished grid fits ML only; dropped, it is trimmed", {
+  skip_if_not_installed("bmm")
+  dir <- withr::local_tempdir()
+  suppressMessages(grid_run(dir, grid_mock_fitter()))
+  expect_false("ml" %in% names(readRDS(file.path(dir, "cell-1-rep-1-est.rds"))))
+
+  # the hierarchical fits are cached, so only the ML mock works
+  mock <- grid_mock_fitter()
+  ml_mock <- ml_mock_fitter()
+  with_ml <- ml_grid_run(dir, mock, ml_mock)
+  expect_identical(mock$calls$n, 0L)
+  expect_identical(ml_mock$calls$n, 4L)
+  expect_setequal(with_ml$estimator, c("bayes", "ml"))
+  expect_true(
+    "ml_estimates" %in%
+      names(readRDS(file.path(dir, "cell-1-rep-1-est.rds")))
+  )
+
+  # a run without ml reads the same sidecars and drops the ML rows
+  mock <- grid_mock_fitter()
+  without <- suppressMessages(grid_run(dir, mock))
+  expect_identical(mock$calls$n, 0L)
+  expect_setequal(without$estimator, "bayes")
+  expect_null(attr(without, "ml_cells"))
+})
+
+test_that("a changed ML request re-extracts from the cached ML fit", {
+  skip_if_not_installed("bmm")
+  dir <- withr::local_tempdir()
+  ml_mock <- ml_mock_fitter(estimates = c(kappa_id2 = 50))
+  strict <- ml_grid_run(dir, ml_mock = ml_mock)
+  expect_equal(attr(strict, "ml_cells")$n_converged, c(2L, 3L, 2L, 3L))
+
+  # max_abs_link is applied after the fit: the fit is reused, the rows redone
+  lenient <- ml_grid_run(
+    dir,
+    ml_mock = ml_mock, ml_args = list(max_abs_link = 100)
+  )
+  expect_identical(ml_mock$calls$n, 4L)
+  expect_equal(attr(lenient, "ml_cells")$n_converged, c(3L, 4L, 3L, 4L))
+  at <- lenient$estimator == "ml" & lenient$term == "kappa" & lenient$id == "2"
+  ml <- lenient[at, ]
+  expect_true(all(is.finite(ml$estimate)))
+  sidecar <- readRDS(file.path(dir, "cell-1-rep-1-est.rds"))
+  expect_equal(sidecar$ml$max_abs_link, 100)
+
+  # draws enters the ML fit's own cache key, so it refits
+  ml_grid_run(dir, ml_mock = ml_mock, ml_args = list(draws = 50))
+  expect_identical(ml_mock$calls$n, 8L)
+})
+
+test_that("an ML failure is recorded per cell and retried on resume", {
+  skip_if_not_installed("bmm")
+  dir <- withr::local_tempdir()
+  calls <- new.env()
+  calls$n <- 0L
+  inner <- ml_mock_fitter()
+  # the second ML fit (row-2 rep 1) fails
+  flaky <- function(formula, data, model, prior = NULL, ...) {
+    calls$n <- calls$n + 1L
+    if (calls$n == 2L) stop("mock laplace failure")
+    inner$fitter(formula, data, model, prior, ...)
+  }
+  mock <- grid_mock_fitter()
+
+  # two warnings, both right: the cell whose ML fit failed, and --- because
+  # that cell then has no ML rows at all while its ids appear in every
+  # other cell --- the balance check, which only sees this because it is
+  # keyed by the cell rather than pooled over ids
+  expect_warning(
+    expect_warning(
+      out <- suppressMessages(grid_run(dir, mock, ml = list(.fitter = flaky))),
+      "row-2 rep 1"
+    ),
+    "same subjects"
+  )
+  ml_cells <- attr(out, "ml_cells")
+  expect_equal(ml_cells$status, c("ok", "error", "ok", "ok"))
+  expect_true(is.na(ml_cells$n_subjects[[2L]]))
+  # the hierarchical rows of that cell are scored; its ML rows are absent
+  expect_true(all(attr(out, "cells")$status == "ok"))
+  at <- out$condition == "row-2" & out$replication == 1L
+  expect_setequal(out$estimator[at], "bayes")
+  expect_setequal(out$estimator[!at], c("bayes", "ml"))
+  # its sidecar has no ML record, so a resume tries again, once
+  expect_false("ml" %in% names(readRDS(file.path(dir, "cell-2-rep-1-est.rds"))))
+  expect_true("ml" %in% names(readRDS(file.path(dir, "cell-1-rep-1-est.rds"))))
+
+  mock2 <- grid_mock_fitter()
+  again <- suppressMessages(grid_run(dir, mock2, ml = list(.fitter = flaky)))
+  expect_identical(calls$n, 5L)
+  expect_identical(mock2$calls$n, 0L)
+  expect_true(all(attr(again, "ml_cells")$status == "ok"))
+  at <- again$condition == "row-2" & again$replication == 1L
+  expect_setequal(again$estimator[at], c("bayes", "ml"))
+})
+
+test_that("a cell whose hierarchical fit fails has no ML status", {
+  skip_if_not_installed("bmm")
+  dir <- withr::local_tempdir()
+  failing <- grid_mock_fitter(fail_on = function(n, data, dots) n == 3L)
+  ml_mock <- ml_mock_fitter()
+  expect_warning(
+    out <- ml_grid_run(dir, failing, ml_mock, reps = 1L),
+    "row-2"
+  )
+  expect_identical(ml_mock$calls$n, 1L)
+  ml_cells <- attr(out, "ml_cells")
+  expect_equal(ml_cells$status, c("ok", NA_character_))
+  expect_true(is.na(ml_cells$elapsed[[2L]]))
+})
+
+test_that("the ML fit gets the cell's data and seed, and flat priors", {
+  skip_if_not_installed("bmm")
+  skip_if_not_installed("brms")
+  dir <- withr::local_tempdir()
+  ml_mock <- ml_mock_fitter()
+  ml_grid_run(dir, ml_mock = ml_mock, reps = 1L, ml_args = list(refresh = 0))
+  last <- ml_mock$calls$last
+  # the last cell is row-2 rep 1: four subjects at twenty trials
+  expect_equal(nrow(last$data), 4L * 20L)
+  expect_equal(last$dots$seed, cell_seed(100, 2L, 1L))
+  expect_equal(last$dots$algorithm, "laplace")
+  # the grid's sampler arguments do not reach the ML fit; the list's do
+  expect_null(last$dots$chains)
+  expect_null(last$dots$iter)
+  expect_equal(last$dots$refresh, 0)
+  expect_s3_class(last$prior, "brmsprior")
+  expect_true(all(!nzchar(last$prior$prior)))
+
+  ml_grid_run(
+    withr::local_tempdir(),
+    ml_mock = ml_mock, reps = 1L, ml_args = list(prior = "default")
+  )
+  expect_null(ml_mock$calls$last$prior)
+})
+
+test_that("ml is validated before any cell runs", {
+  skip_if_not_installed("bmm")
+  dir <- withr::local_tempdir()
+  mock <- grid_mock_fitter()
+  run <- function(...) grid_run(dir, mock, ...)
+
+  expect_error(run(ml = "yes"), "ml")
+  expect_error(run(ml = list(1, 2)), "named list")
+  expect_error(run(ml = list(model = 1)), "grid supplies")
+  expect_error(run(ml = list(by = "id")), "grid supplies")
+  expect_error(run(ml = list(method = "laplace")), "method")
+  expect_error(run(ml = list(prior = "steep")), "prior")
+  expect_error(run(ml = TRUE, levels = "population"), "subject")
+  expect_identical(mock$calls$n, 0L)
+})
+
+test_that("ml with nothing varying between subjects is an error, not silence", {
+  skip_if_not_installed("bmm")
+  dir <- withr::local_tempdir()
+  expect_error(
+    suppressMessages(recovery_grid(
+      bmm::mixture2p(resp_error = "y"),
+      grid = small_grid()[1, ],
+      pars = c(kappa = log(8), thetat = stats::qlogis(0.75)),
+      dir = dir, reps = 1L, seed = 1, preflight = FALSE,
+      ml = list(.fitter = ml_mock_fitter()$fitter),
+      .fitter = grid_mock_fitter()$fitter
+    )),
+    "subject level"
+  )
+})
+
+test_that("ml is refused with components", {
+  skip_if_not_installed("bmm")
+  comps <- list(
+    a = recovery_component(
+      bmm::mixture2p(resp_error = "y"), c(kappa = 2, thetat = 1),
+      n_trials = 5L, sds = c(kappa = 0.3), name = "a"
+    )
+  )
+  expect_error(
+    recovery_grid(
+      comps,
+      grid = data.frame(n_subjects = 3L),
+      dir = withr::local_tempdir(), ml = TRUE,
+      .fitter = grid_mock_fitter()$fitter
+    ),
+    "components"
+  )
+})
+
+# what the review of milestone 8 found ------------------------------------
+
+test_that("an ml route clash is refused before any cell is fitted", {
+  dir <- withr::local_tempdir()
+  mock <- grid_mock_fitter()
+  run <- function(ml) {
+    suppressMessages(grid_run(dir, mock, ml = ml))
+  }
+  # check_ml_arg() matches `method` and `prior` one at a time, so the pair
+  # clears the gate and fit_ml() refuses it once per cell --- after every
+  # hierarchical fit of the design has run
+  expect_error(run(list(method = "optim", prior = "default")), "prior")
+  expect_identical(mock$calls$n, 0L)
+  expect_error(run(list(method = "optim", draws = 50)), "draws")
+  expect_error(run(list(nll = function(pars, data, model) 0)), "nll")
+  expect_identical(mock$calls$n, 0L)
+})
+
+test_that("ml_cells names no file on the optim route, which does not cache", {
+  skip_if_not_installed("bmm")
+  dir <- withr::local_tempdir()
+  out <- quietly(suppressMessages(
+    grid_run(dir, grid_mock_fitter(), ml = list(method = "optim"))
+  ))
+  cells <- attr(out, "ml_cells")
+  expect_true(all(is.na(cells$file)))
+})
+
+test_that("a changed ml record keeps the hierarchical extraction", {
+  skip_if_not_installed("bmm")
+  dir <- withr::local_tempdir()
+  ml_mock <- ml_mock_fitter()
+  ml_grid_run(dir, ml_mock = ml_mock)
+  # ?recovery_grid says the fit files may be deleted once a grid has run
+  unlink(list.files(
+    dir,
+    pattern = "^cell-.*-rep-[0-9]+\\.rds$", full.names = TRUE
+  ))
+
+  # only the ML record changes, so the hierarchical rows in the sidecar are
+  # still current and nothing should be sampled again
+  mock <- grid_mock_fitter()
+  again <- ml_grid_run(
+    dir, mock,
+    ml_mock = ml_mock_fitter(), ml_args = list(max_abs_link = 100)
+  )
+  expect_identical(mock$calls$n, 0L)
+  expect_setequal(again$estimator, c("bayes", "ml"))
+})
+
+test_that("a grid whose ML fit fails on some subjects says so", {
+  skip_if_not_installed("bmm")
+  dir <- withr::local_tempdir()
+  # 10 and 20 trials a subject is far too little for a stable mixture2p
+  # MLE, so some subjects come back NA (decision 40 keeps their rows) and
+  # the two estimators are not scored on the same people. That is the one
+  # thing the user has to be told, because the metrics drop the pairs in
+  # silence.
+  expect_warning(
+    suppressMessages(
+      grid_run(dir, grid_mock_fitter(), ml = list(method = "optim"))
+    ),
+    "same subjects"
+  )
+})
+
+test_that("an unknown ml name is refused on the optim route", {
+  dir <- withr::local_tempdir()
+  mock <- grid_mock_fitter()
+  # on the stan route an unknown name is deliberate: it reaches the Stan
+  # optimiser through fit_ml()'s dots. The optim route calls no fitter, so
+  # the same name reaches nothing and must not pass in silence.
+  expect_error(
+    suppressMessages(
+      grid_run(dir, mock, ml = list(method = "optim", ci_levl = 0.8))
+    ),
+    "ci_levl"
+  )
+  expect_identical(mock$calls$n, 0L)
 })

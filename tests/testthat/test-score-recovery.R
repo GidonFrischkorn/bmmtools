@@ -921,3 +921,26 @@ test_that("natural scale looks a term's link up by prefix", {
   )
   expect_equal(out$estimate, c(exp(1), 1))
 })
+
+test_that("a row with no interval does not stop a sqrt or inverse link", {
+  # fit_ml() reports a failed subject as estimate NA with no interval
+  # (decision 40), so `ci_low < 0 & ci_high > 0` is NA for that row and
+  # `if (any(...))` would raise "missing value where TRUE/FALSE needed"
+  estimates <- fake_estimates(
+    c("p", "p"),
+    estimate = c(1, NA_real_),
+    ci_low = c(0.5, NA_real_), ci_high = c(2, NA_real_),
+    level = "subject", id = c("s1", "s2")
+  )
+  truth <- fake_truth(c("p", "p"), true_value = c(1, 4), id = c("s1", "s2"))
+
+  for (link in c("sqrt", "inverse")) {
+    out <- recover_subjects(
+      estimates, truth,
+      scale = "natural", links = stats::setNames(link, "p")
+    )
+    expect_equal(nrow(out), 2L)
+    expect_true(is.na(out$ci_low[[2L]]))
+    expect_false(is.na(out$ci_low[[1L]]))
+  }
+})

@@ -31,7 +31,8 @@ recovery_contract <- function() {
     level = "character",
     id = "character",
     converged = "logical",
-    condition = "character"
+    condition = "character",
+    estimator = "character"
   )
 }
 
@@ -64,12 +65,36 @@ fill_optional_columns <- function(x) {
 #' @noRd
 recovery_summary_columns <- function() {
   c(
-    "term", "level", "scale", "n", "n_replications", "n_converged",
+    "term", "estimator", "level", "scale", "n", "n_replications",
+    "n_converged",
     "bias", "rmse", "coverage", "ci_width",
     "r", "r_low", "r_high", "rank_r",
     "ccc", "ccc_low", "ccc_high", "ccc_accuracy", "ccc_scale_shift",
     "ccc_location_shift", "calibration_slope", "truth_sd"
   )
+}
+
+#' Default a missing or `NA` estimator to `"bayes"`
+#'
+#' Deliberately *not* part of [fill_optional_columns()], which is shared
+#' with `new_bmmtools_cor_recovery()`: the correlation contract requires
+#' an `estimator` column of its own with a different vocabulary
+#' (`"model"`, `"draws"`, `"point"`), and filling it in the shared helper
+#' would stop a malformed correlation object from erroring and silently
+#' stamp it `"bayes"` (milestone 8, trap 2).
+#'
+#' `NA` is filled as well as a missing column, because binding a labelled
+#' tibble to an unlabelled one leaves `NA`, which would otherwise become
+#' its own summary group.
+#'
+#' @noRd
+fill_estimator <- function(x) {
+  if (!"estimator" %in% names(x)) {
+    return(rep("bayes", nrow(x)))
+  }
+  out <- as.character(x[["estimator"]])
+  out[is.na(out)] <- "bayes"
+  out
 }
 
 #' Construct a recovery object
@@ -91,6 +116,12 @@ new_bmmtools_recovery <- function(x,
   }
 
   x <- fill_optional_columns(x)
+  # Not in fill_optional_columns(): that helper is shared with
+  # new_bmmtools_cor_recovery(), whose contract *requires* an `estimator`
+  # column with a different vocabulary ("model", "draws", "point").
+  # Filling it there would stop a malformed correlation object from
+  # erroring and stamp it "bayes" instead (milestone 8, trap 2).
+  x$estimator <- fill_estimator(x)
   missing <- setdiff(recovery_contract_columns(), names(x))
   if (length(missing) > 0L) {
     cli::cli_abort(
@@ -468,7 +499,8 @@ summarise_subject <- function(rows) {
 #' @param ... Not used.
 #'
 #' @return A `bmmtools_recovery_summary` tibble with the columns `term`,
-#'   `level`, `scale`, `n`, `n_replications`, `n_converged`, `bias`,
+#'   `estimator`, `level`, `scale`, `n`, `n_replications`, `n_converged`,
+#'   `bias`,
 #'   `rmse`, `coverage`, `ci_width`, `r`, `r_low`, `r_high`, `rank_r`,
 #'   `ccc`, `ccc_low`, `ccc_high`, `ccc_accuracy`, `ccc_scale_shift`,
 #'   `ccc_location_shift`, `calibration_slope` and `truth_sd`, the
@@ -477,6 +509,12 @@ summarise_subject <- function(rows) {
 #'   at a similar spread.
 #'
 #' @details
+#' Rows are grouped by `estimator` as well as by term and level, so two
+#' estimators of the same parameter scored against one truth give two
+#' rows rather than one pooled bias and RMSE. Their `n` may differ when
+#' one of them failed on a subject the other estimated; [recover()] warns
+#' when it does.
+#'
 #' `n_converged` is the number of replications whose fit passed
 #' [check_convergence()], read from the `converged` column that
 #' [extract_estimates()] fills. It is `NA` when no fit carried a
@@ -503,9 +541,14 @@ summary.bmmtools_recovery <- function(object, ...) {
   # a grid carries its row label in `condition`; a plain recovery does
   # not, and the summary then has no such column
   by_condition <- !all(is.na(object$condition))
-  keys <- paste(object$level, object$term, sep = "\r")
+  keys <- paste(object$estimator, object$level, object$term, sep = "\r")
   if (by_condition) keys <- paste(object$condition, keys, sep = "\r")
-  pieces <- lapply(split(seq_len(nrow(object)), keys), function(i) {
+  # factor(levels = unique(keys)) so the row order follows the order the
+  # rows arrived in, rather than shifting to sort order the moment a
+  # second estimator appears. The cor summary already does this.
+  pieces <- lapply(split(
+    seq_len(nrow(object)), factor(keys, levels = unique(keys))
+  ), function(i) {
     rows <- object[i, ]
     body <- if (identical(rows$level[[1L]], "subject")) {
       summarise_subject(rows)
@@ -516,6 +559,7 @@ summary.bmmtools_recovery <- function(object, ...) {
       if (by_condition) list(condition = rows$condition[[1L]]),
       list(
         term = rows$term[[1L]],
+        estimator = rows$estimator[[1L]],
         level = rows$level[[1L]],
         scale = rows$scale[[1L]]
       ),
@@ -530,7 +574,8 @@ summary.bmmtools_recovery <- function(object, ...) {
 #' @noRd
 empty_recovery_summary <- function() {
   types <- c(
-    term = "character", level = "character", scale = "character",
+    term = "character", estimator = "character", level = "character",
+    scale = "character",
     n = "double", n_replications = "integer", n_converged = "integer",
     bias = "double", rmse = "double", coverage = "double",
     ci_width = "double", r = "double", r_low = "double",
@@ -577,6 +622,7 @@ format.bmmtools_recovery <- function(x, ...) {
   n_fits <- length(unique(x$replication))
   terms <- unique(x$term)
   levels <- unique(x$level)
+  estimators <- unique(x$estimator)
   summarised <- summary(x)
 
   header <- c(
@@ -592,6 +638,11 @@ format.bmmtools_recovery <- function(x, ...) {
       paste(levels, collapse = ", "), "."
     ),
     if ("sd" %in% levels) "SD rows are on the link scale.",
+    # named only when there is a comparison to make; one estimator is the
+    # ordinary case and saying "Estimators: bayes" is noise
+    if (length(estimators) > 1L) {
+      paste0("Estimators: ", paste(estimators, collapse = ", "), ".")
+    },
     ""
   )
 

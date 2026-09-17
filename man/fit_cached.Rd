@@ -31,9 +31,11 @@ and warns if it is stale; \code{"always"} fits and overwrites.}
 
 \item{...}{Passed to the fitter. \code{seed}, \code{chains}, \code{iter}, \code{warmup},
 \code{thin}, \code{control}, \code{init}, \code{backend}, \code{sample_prior}, \code{algorithm}
-and \code{stanvars} enter the key; anything else (\code{cores}, \code{refresh},
-\code{silent}, ...) changes how the fit is run, not what it is, and does
-not. An \code{init} given as a function enters the key by its text, so a
+and \code{stanvars} enter the key, and so does \code{draws} (the number of
+draws of a Laplace or variational fit) when it is given; anything
+else (\code{cores}, \code{refresh}, \code{silent}, ...) changes how the fit is run,
+not what it is, and does not. An \code{init} given as a function enters
+the key by its text, so a
 closure built afresh in every iteration of a loop still matches.
 brms's \code{file_refit} and \code{file_compress} are refused: there is one
 cache, not two.}

@@ -345,7 +345,8 @@ test_that("the natural scale gives no model rows and says why", {
   expect_setequal(out$estimator, c("draws", "point"))
 
   expect_no_message(
-    correlations_from_parts(x, cor_rows, estimator = "draws",
+    correlations_from_parts(x, cor_rows,
+      estimator = "draws",
       scale = "natural", links = c(kappa = "log")
     )
   )
@@ -921,6 +922,22 @@ test_that("the constructor checks the contract", {
   expect_error(new_bmmtools_cor_recovery(1, "link", 0.95), "data frame")
 })
 
+test_that("the estimator column is still required here, not defaulted", {
+  # The recovery contract gained an `estimator` column in milestone 8 with
+  # a different vocabulary ("bayes"/"ml"). Its fill deliberately sits in
+  # new_bmmtools_recovery() rather than in fill_optional_columns(), which
+  # is shared with this constructor --- a fill in the shared helper would
+  # stop this error and stamp a malformed correlation object "bayes".
+  input <- three_reps()
+  x <- tibble::as_tibble(recover_correlations(input$fits, input$truth))
+  incomplete <- x[setdiff(names(x), "estimator")]
+
+  expect_error(
+    new_bmmtools_cor_recovery(incomplete, "link", 0.95),
+    "estimator"
+  )
+})
+
 test_that("select() demotes the class and filter() keeps it", {
   input <- three_reps()
   out <- recover_correlations(input$fits, input$truth)
@@ -1092,7 +1109,8 @@ test_that("plot_recovery dispatches on both recovery classes", {
   expect_setequal(built$data[[point]]$y, cor_out$estimate)
   expect_match(p$labels$x, "In-sample")
 
-  true_plot <- plot_recovery(cor_out, truth = "true", intervals = FALSE,
+  true_plot <- plot_recovery(cor_out,
+    truth = "true", intervals = FALSE,
     identity_line = FALSE, color_by = NULL, facet_by = NULL
   )
   expect_match(true_plot$labels$x, "Generating")

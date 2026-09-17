@@ -1,0 +1,466 @@
+---
+title: "Hierarchical estimation against subject-wise maximum likelihood"
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 7,
+  fig.height = 3.5,
+  out.width = "100%"
+)
+options(width = 90)
+# paths relative to the package root, whether this renders from the
+# package root (pkgdown) or from vignettes/articles
+from_root <- function(path) {
+  if (dir.exists("vignettes")) path else file.path("..", "..", path)
+}
+# the code shown is read from the script that produced the results
+shown <- function(label, file) {
+  lines <- readLines(from_root(file))
+  markers <- grep("^## ---- ", lines)
+  start <- markers[lines[markers] == paste("## ----", label)]
+  end <- c(markers[markers > start], length(lines) + 1L)[[1L]] - 1L
+  code <- lines[(start + 1L):end]
+  while (length(code) > 0L && !nzchar(trimws(code[[length(code)]]))) {
+    code <- code[-length(code)]
+  }
+  code
+}
+library(bmmtools)
+res <- readRDS(from_root("vignettes/articles/assets/hierarchical-vs-ml.rds"))
+fmt <- function(x, digits = 3) sprintf(paste0("%.", digits, "f"), x)
+# every number in the prose comes from one table cell, and a selection
+# that does not match exactly one row is an error rather than the first
+# match: a change to the precompute must break the render, not the text
+one <- function(tab, keys, column) {
+  row <- Reduce(`&`, Map(function(k, v) tab[[k]] == v, names(keys), keys))
+  if (sum(row) != 1L) {
+    stop(sprintf(
+      "%s of %s matched %d rows, not 1",
+      column, paste(names(keys), unlist(keys), sep = " = ", collapse = ", "),
+      sum(row)
+    ))
+  }
+  tab[[column]][row]
+}
+pick <- function(tab, term, estimator, column) {
+  one(tab, list(term = term, estimator = estimator), column)
+}
+cell <- function(term, estimator, n_trials, column) {
+  one(
+    res$by_trials,
+    list(term = term, estimator = estimator, n_trials = n_trials),
+    column
+  )
+}
+link_summary <- summary(res$scored_link)
+nat <- summary(res$scored)
+```
+
+A hierarchical model estimates each subject partly from that subject's
+own data and partly from everyone else's. That this buys accuracy is
+easy to assert and rarely measured on the model in front of you. This
+article measures it for one bmm model: the same simulated data fitted
+twice, once hierarchically and once subject by subject with no pooling,
+and scored once against the generating values that produced it.
+
+`fit_ml()` is the second fit. It exists for this comparison and not for
+inference: bmm's own discussion of subject-wise maximum likelihood
+records the wish that users not apply it for inference, and bmmtools
+does not recommend it either. What it is good for is a baseline, and a
+baseline is what turns "hierarchical estimation helps" into a number.
+
+The comparison is the one
+[Recovery summary columns](metrics.html#reading-the-concordance) works
+through algebraically for a conjugate normal model. Here the same
+quantities come out of a real bmm model, a real sampler and the
+package's own scorers.
+
+## The data
+
+The data set is the one [Validating a new bmm model](bmmtools.html)
+walks through: `mixture2p`, 40 subjects, 100 trials each, subjects
+drawn around a population value on the link scale.
+
+```{r simulate, eval = FALSE, code = shown("simulate", "vignettes/articles/precompute/hierarchical-vs-ml.R")}
+```
+
+## Two fits of it
+
+The hierarchical fit gives every free parameter a random intercept over
+`id`, which is what `recovery_formula()` writes:
+
+```{r hierarchical, eval = FALSE, code = shown("hierarchical", "vignettes/articles/precompute/hierarchical-vs-ml.R")}
+```
+
+```{r, echo = FALSE}
+res$convergence
+```
+
+`fit_ml()` takes the hierarchy out. It writes `p ~ 0 + id` instead, so
+each subject gets an independent set of parameters and nothing is
+shared between them:
+
+```{r ml, eval = FALSE, code = shown("ml", "vignettes/articles/precompute/hierarchical-vs-ml.R")}
+```
+
+```{r, echo = FALSE}
+res$ml
+```
+
+Two things about that fit are what keep it a fair opponent rather than a
+straw man.
+
+**The priors are flat.** Under bmm's default priors the mode of a
+no-pooling fit is a penalised estimate, and the comparison would become
+hierarchical shrinkage against prior shrinkage, which is a different and
+much weaker claim. `prior = "default"` is available and documented as
+what it is.
+
+**It is one fit, not forty.** Under `p ~ 0 + id` every free parameter
+belongs to a single subject, so the log posterior is a sum of
+per-subject terms and the joint mode is the vector of per-subject
+modes. `?fit_ml` reports the check: the joint mode and independent
+optimisation of bmm's own density agreed to 3.0e-06 on the link scale.
+
+## One truth, two estimators
+
+There is no `compare_estimators()`. Both fits produce an estimates
+tibble with the same columns, the rows carry an `estimator` column, and
+binding them is the join:
+
+```{r bind, eval = FALSE, code = shown("bind", "vignettes/articles/precompute/hierarchical-vs-ml.R")}
+```
+
+```{r, echo = FALSE}
+res$bound
+```
+
+`recover_subjects()` then scores all `r nrow(res$scored_link)` rows
+against the one set of generating values, and `summary()` groups by
+`estimator` instead of pooling the two into a single bias and RMSE:
+
+```{r score-link, eval = FALSE, code = shown("score-link", "vignettes/articles/precompute/hierarchical-vs-ml.R")}
+```
+
+```{r, echo = FALSE}
+link_summary[c(
+  "term", "estimator", "n", "bias", "rmse", "coverage",
+  "ci_width", "r"
+)]
+link_summary[c(
+  "term", "estimator", "r", "ccc", "ccc_scale_shift",
+  "calibration_slope", "truth_sd"
+)]
+```
+
+That is one `summary()` object, printed twice over different columns;
+all 23 are defined in [Recovery summary columns](metrics.html).
+
+`scale = "link"` is deliberate here. The link scale is the one the model
+is estimated on and the one the shrinkage argument is about; the natural
+scale comes back below, and it does not tell the same story.
+
+## What the table says
+
+**RMSE falls and the correlation does not.** Subject-level RMSE goes
+from `r fmt(pick(link_summary, "kappa", "ml", "rmse"))` to
+`r fmt(pick(link_summary, "kappa", "bayes", "rmse"))` on `kappa` and
+from `r fmt(pick(link_summary, "thetat", "ml", "rmse"))` to
+`r fmt(pick(link_summary, "thetat", "bayes", "rmse"))` on `thetat`,
+while `r` moves from `r fmt(pick(link_summary, "kappa", "ml", "r"))` to
+`r fmt(pick(link_summary, "kappa", "bayes", "r"))` and from
+`r fmt(pick(link_summary, "thetat", "ml", "r"))` to
+`r fmt(pick(link_summary, "thetat", "bayes", "r"))`. This is the shape
+the conjugate table in [Recovery summary columns](metrics.html) shows
+with exact posterior means: the same ordering of subjects, recovered
+with less error.
+
+**They differ far more in spread than in rank.** `ccc_scale_shift`
+is the standard deviation of the estimates over the standard deviation
+of the truth. Printed rather than inferred:
+
+```{r spread, eval = FALSE, code = shown("spread", "vignettes/articles/precompute/hierarchical-vs-ml.R")}
+```
+
+```{r, echo = FALSE}
+res$spread
+```
+
+The maximum-likelihood estimates spread wider than the subjects they
+estimate, because each one carries its own measurement error and nothing
+pulls it back. The hierarchical estimates spread narrower, because each
+is pulled towards the population mean by an amount the model infers from
+how noisy that subject's data are.
+
+**`ccc` does not settle it, and that is a property of `ccc`.** On
+`kappa` Lin's concordance is
+`r fmt(pick(link_summary, "kappa", "ml", "ccc"))` for maximum likelihood
+against `r fmt(pick(link_summary, "kappa", "bayes", "ccc"))` for the
+hierarchical fit, the wrong way round from the RMSE. Lin's
+bias-correction factor treats a scale shift of $v$ and one of $1/v$
+alike, so $\rho_c$ cannot distinguish calibrated shrinkage from none and
+mildly rewards too little of it. [Recovery summary
+columns](metrics.html#reading-the-concordance) derives this for the
+conjugate case, where it shows up as .691 against .657; here it survives
+contact with a real model. Read `ccc` next to `rmse`, never instead of
+it.
+
+**One replication is a coarse instrument for `calibration_slope`.** For
+a calibrated posterior mean the slope of truth on estimate is 1.
+Measured here it is `r fmt(pick(link_summary, "kappa", "bayes", "calibration_slope"))`
+on `kappa` and `r fmt(pick(link_summary, "thetat", "bayes", "calibration_slope"))`
+on `thetat`, against
+`r fmt(pick(link_summary, "kappa", "ml", "calibration_slope"))` and
+`r fmt(pick(link_summary, "thetat", "ml", "calibration_slope"))` for
+maximum likelihood. The direction is unambiguous and the distance from 1
+is not: the slope is $r / v$, and both are estimated from
+`r pick(link_summary, "kappa", "bayes", "n")` subjects in a single
+simulated data set. The design grid below is where that number becomes
+readable.
+
+A warning that applies to the whole table. `ccc_scale_shift` near 1 is
+**not** the target for the hierarchical estimator. A calibrated
+posterior mean has $v = r$, not $v = 1$; `calibration_slope` $= r/v$ is
+the column to read against 1. This is documented in `?recovery_ccc` and
+derived in [Recovery summary
+columns](metrics.html#reading-the-concordance).
+
+```{r plot, eval = FALSE, code = shown("plot", "vignettes/articles/precompute/hierarchical-vs-ml.R")}
+```
+
+```{r, echo = FALSE, fig.height = 4}
+plot_recovery(res$scored_link, color_by = "estimator", annotate = TRUE)
+```
+
+Both clouds sit on the identity line. The maximum-likelihood cloud is
+longer along it and its intervals are wider.
+
+## On the scale a reader interprets
+
+The link scale is the honest one for comparing estimators. It is not the
+one results are reported on. `kappa` is a concentration and `thetat` a
+probability, and the hierarchical fit records its own link table while a
+`fit_ml()` result does not, so scoring a bound tibble on the natural
+scale needs the links supplied:
+
+```{r links, eval = FALSE, code = shown("links", "vignettes/articles/precompute/hierarchical-vs-ml.R")}
+```
+
+```{r, echo = FALSE}
+res$links
+```
+
+```{r score-natural, eval = FALSE, code = shown("score-natural", "vignettes/articles/precompute/hierarchical-vs-ml.R")}
+```
+
+```{r, echo = FALSE}
+nat[c(
+  "term", "estimator", "n", "bias", "rmse",
+  "coverage", "r", "calibration_slope"
+)]
+```
+
+`bias` on `kappa` is where the two scales part company. On the link
+scale both estimators are near-unbiased,
+`r fmt(pick(link_summary, "kappa", "ml", "bias"), 4)` and
+`r fmt(pick(link_summary, "kappa", "bayes", "bias"), 4)`. On the natural
+scale they are biased in opposite directions,
+`r fmt(pick(nat, "kappa", "ml", "bias"))` for maximum likelihood and
+`r fmt(pick(nat, "kappa", "bayes", "bias"))` for the hierarchical fit.
+
+Nothing has gone wrong; this is Jensen's inequality and the spread
+column above. `kappa` has a log link and `exp()` is convex, so the mean
+of the transformed estimates depends on their spread as well as their
+centre. The unpooled estimates spread `r fmt(pick(res$spread, "kappa", "ml", "ratio"), 2)`
+times as wide as the truth and come out too high; the shrunk ones spread
+`r fmt(pick(res$spread, "kappa", "bayes", "ratio"), 2)` times as wide
+and come out too low. RMSE still prefers the hierarchical fit on this
+scale, `r fmt(pick(nat, "kappa", "bayes", "rmse"), 2)` against
+`r fmt(pick(nat, "kappa", "ml", "rmse"), 2)`. Report the scale next to
+the number, and read bias on the scale the model was estimated on.
+
+## What maximum likelihood cannot be scored on
+
+The hierarchical fit also estimates the population, and there is nothing
+in the no-pooling fit to compare it against:
+
+```{r population, eval = FALSE, code = shown("population", "vignettes/articles/precompute/hierarchical-vs-ml.R")}
+```
+
+```{r, echo = FALSE}
+res$population
+```
+
+With one fit there is one estimate per parameter, so `rmse` is the
+absolute bias, `coverage` is 0 or 1, and the correlations are `NA`.
+Averaging the subject-wise estimates would produce a number, but not one
+with an interval that accounts for how well each subject was measured.
+That is a second thing hierarchical estimation buys, and it is not in
+the table above because it cannot be.
+
+## The same answer without a compiler
+
+`method = "optim"` maximises bmm's R density for the model directly and
+takes its interval from the Hessian. It needs no CmdStan and no
+compilation:
+
+```{r optim, eval = FALSE, code = shown("optim", "vignettes/articles/precompute/hierarchical-vs-ml.R")}
+```
+
+```{r, echo = FALSE}
+res$optim_summary[c(
+  "term", "estimator", "n", "bias", "rmse",
+  "coverage", "r", "calibration_slope"
+)]
+```
+
+The maximum-likelihood rows are the same rows to the Monte Carlo error
+of the Laplace draws:
+`r fmt(pick(res$optim_summary, "kappa", "ml", "rmse"))` against
+`r fmt(pick(link_summary, "kappa", "ml", "rmse"))` on RMSE and
+`r fmt(pick(res$optim_summary, "kappa", "ml", "calibration_slope"))`
+against
+`r fmt(pick(link_summary, "kappa", "ml", "calibration_slope"))` on the
+calibration slope, both for `kappa`. `coverage` moves by one subject in
+each parameter. Row by row, exactly two of the 80 rows change their
+verdict, and in both the generating value lies within 0.01 of an
+interval bound: the Laplace interval is quantiles of 1000 draws and the
+Wald interval is analytic, so the two do not agree to the last digit and
+a borderline subject can fall either side. The route is a cost, not a moderator of the
+result: `?fit_ml` records the check that the Wald and Laplace standard
+errors agree to a mean ratio of 1.000 over the same 40 subjects. It is capped at the models bmmtools carries a density for, the
+same six the simulation adapters cover, and `nll` supplies one for
+anything else.
+
+## Over a design
+
+One data set gives one number per cell of the table. `recovery_grid()`
+runs the whole comparison over a design, fitting both estimators on the
+same simulated data in every cell, and `ml = list(...)` passes arguments
+to `fit_ml()`. The design below varies the quantity the shrinkage
+argument is about, how much data each subject contributes:
+
+```{r grid, eval = FALSE, code = shown("grid", "vignettes/articles/precompute/hierarchical-vs-ml.R")}
+```
+
+`ml = list(method = "optim")` means the whole maximum-likelihood side of
+this grid needs no compiler. Of the
+`r fmt(res$grid_secs + res$grid_ml_secs, 0)` seconds the cells took,
+`r fmt(res$grid_ml_secs, 1)` were the ML fits.
+
+The grid scores on the natural scale by default. Running it again with
+`scale = "link"` re-reads the stored per-cell estimates and refits
+nothing:
+
+```{r grid-link, eval = FALSE, code = shown("grid-link", "vignettes/articles/precompute/hierarchical-vs-ml.R")}
+```
+
+```{r grid-summary, eval = FALSE, code = shown("grid-summary", "vignettes/articles/precompute/hierarchical-vs-ml.R")}
+```
+
+```{r, echo = FALSE}
+res$by_trials[c(
+  "term", "estimator", "n_trials", "n", "n_converged",
+  "bias", "rmse", "r", "coverage", "calibration_slope"
+)]
+```
+
+Three things in that table are the point of running a grid at all.
+
+**The gap is a function of how much each subject contributes.** On
+`kappa`, RMSE runs `r fmt(cell("kappa", "ml", 25, "rmse"))` against
+`r fmt(cell("kappa", "bayes", 25, "rmse"))` at 25 trials and
+`r fmt(cell("kappa", "ml", 100, "rmse"))` against
+`r fmt(cell("kappa", "bayes", 100, "rmse"))` at 100. Pooling buys most
+where each subject is measured worst, which is what it is for, and the
+two estimators converge as the per-subject data grow.
+
+**The calibration slope now reads.** For maximum likelihood it climbs
+from `r fmt(cell("kappa", "ml", 25, "calibration_slope"))` at 25 trials
+to `r fmt(cell("kappa", "ml", 100, "calibration_slope"))` at 100, all of
+them far below 1: noisy estimates spread wider than the subjects they
+describe, and less so as the noise falls. The hierarchical slopes sit
+either side of 1 with no trend. Neither statement could be made from the
+single fit above.
+
+**All `r nrow(res$cells)` hierarchical fits converged; the ML fits did
+not.** The `n` column is
+`r cell("kappa", "ml", 25, "n")` subjects per replication for maximum
+likelihood at 25 trials against `r cell("kappa", "bayes", 25, "n")` for
+the hierarchical fit.
+
+```{r grid-plot, eval = FALSE, code = shown("grid-plot", "vignettes/articles/precompute/hierarchical-vs-ml.R")}
+```
+
+```{r, echo = FALSE, fig.height = 3.5}
+library(ggplot2)
+ggplot(res$by_trials, aes(factor(n_trials), rmse, colour = estimator)) +
+  geom_point(size = 2.5) +
+  geom_line(aes(group = estimator)) +
+  facet_wrap(~term, scales = "free_y") +
+  labs(
+    x = "Trials per subject", y = "Subject-level RMSE (link scale)",
+    colour = "Estimator"
+  )
+```
+
+## When a subject's fit fails
+
+A subject whose estimate leaves a finite range on the link scale, or
+whose optimiser reports failure, keeps its row with `estimate = NA` and
+`converged = FALSE`. It is not dropped, and the reason matters: the
+recovery metrics drop incomplete pairs silently, so dropping the failures
+would compare the hierarchical fit on every subject against maximum
+likelihood on the subjects it found easy, and report the difference as
+the estimator's.
+
+What that leaves is a comparison on unequal `n`, which is why `n` sits
+in the summary next to `bias` and `rmse` and why the per-cell counts are
+kept:
+
+```{r ml-cells, eval = FALSE, code = shown("ml-cells", "vignettes/articles/precompute/hierarchical-vs-ml.R")}
+```
+
+```{r, echo = FALSE}
+res$ml_cells
+```
+
+`attr(x, "cells")` is the hierarchical side of the same table, with the
+seed, file, runtime and convergence verdict per cell.
+
+Which way the missing subjects push matters. A subject whose maximum
+likelihood estimate runs to a boundary is a subject whose data were
+least informative, and a metric that drops it is computed on the
+subjects maximum likelihood found easiest while the hierarchical row
+beside it uses all
+`r cell("kappa", "bayes", 25, "n")`. The 25-trial comparison above
+therefore **understates** the gap rather than inventing it. There is no
+setting in which dropping them would have been the safer choice, which
+is why `fit_ml()` has none.
+
+## What this is not
+
+**It is not a recommendation.** Nothing here says to fit models subject
+by subject. It says what you give up if you do, on this model, at these
+sample sizes.
+
+**It is not a general result.** The size of the gap depends on the
+model, on how much data each subject provides, on how much subjects
+really differ, and on whether the generating values come from the
+population the hierarchical model assumes. Here they do, by
+construction, which is the most favourable case for shrinkage.
+`recovery_grid()` is how you find out what happens for your own model
+and design.
+
+**A single replication settles less than it looks.** With 40 subjects,
+`r` and the scale shift are both noisy, so `calibration_slope` is noisy
+twice over. Read it from a grid with replications, not from one fit.
+
+**Coverage is not the whole of calibration.** A Laplace or Wald interval
+around a maximum-likelihood estimate can cover the generating value at
+close to its nominal rate while the point estimate is far worse, and in
+this data set it does. Coverage says the interval is honest about the
+estimate's own uncertainty, not that the estimate is good.

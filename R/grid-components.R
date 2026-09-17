@@ -33,10 +33,19 @@ component_cell_paths <- function(dir, row, rep, components) {
   )
 }
 
-#' Refuse the arguments that belong to the components
+#' Refuse the arguments that belong to the components, and `ml`
 #' @noRd
-check_component_grid_args <- function(given, subjects,
+check_component_grid_args <- function(given, subjects, ml = FALSE,
                                       call = rlang::caller_env()) {
+  if (!isFALSE(ml)) {
+    cli::cli_abort(
+      c(
+        "{.arg ml} is not supported for components yet.",
+        i = "Use {.code ml = FALSE}, or a single model."
+      ),
+      call = call
+    )
+  }
   if (length(given) > 0L) {
     cli::cli_abort(
       c(
@@ -595,10 +604,10 @@ component_score_input <- function(cell, set) {
 #' @noRd
 recovery_grid_components <- function(model, first, grid, dir, reps, cors,
                                      covariates, prior, seed, subjects, scale,
-                                     levels, correlations, cor_scale, smoke,
-                                     preflight, dots, fitter, given,
+                                     levels, correlations, cor_scale, ml,
+                                     smoke, preflight, dots, fitter, given,
                                      call = rlang::caller_env()) {
-  check_component_grid_args(given, subjects, call = call)
+  check_component_grid_args(given, subjects, ml, call = call)
   scale <- rlang::arg_match(scale, c("natural", "link"), error_call = call)
   extraction <- check_extraction_args(levels, correlations, cor_scale,
     call = call
@@ -644,7 +653,8 @@ recovery_grid_components <- function(model, first, grid, dir, reps, cors,
     sims[1L] <- list(component_preflight(
       sims[[1L]], simulate_cell, formulas_for(1L), prior,
       component_cell_paths(dir, 1L, 1L, comps), cells$seed[[1L]], request,
-      dir, dots, fitter, n_cells = nrow(cells), call = call
+      dir, dots, fitter,
+      n_cells = nrow(cells), call = call
     ))
   }
 
@@ -722,12 +732,15 @@ component_preflight <- function(sim, simulate_cell, formulas, prior, paths,
   elapsed <- 0
   for (nm in comps) {
     part <- sim$components[[nm]]
-    elapsed <- elapsed + in_component(nm, {
-      run_preflight(
-        part, part$model, formulas[[nm]], prior[[nm]], dir, dots, fitter,
-        file = paste0("preflight-", nm), call = call
-      )
-    }, call = call)
+    elapsed <- elapsed + in_component(nm,
+      {
+        run_preflight(
+          part, part$model, formulas[[nm]], prior[[nm]], dir, dots, fitter,
+          file = paste0("preflight-", nm), call = call
+        )
+      },
+      call = call
+    )
   }
   cli::cli_inform(
     "Preflight passed in {round(elapsed, 1)} s; running {n_cells} cell{?s}."

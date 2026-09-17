@@ -221,6 +221,13 @@ is worse. It does detect too much shrinkage and a shifted location.
 Read `ccc` together with `rmse` and `calibration_slope`, and use `r`
 when only the rank order of subjects matters.
 
+The table above is a conjugate toy, where the posterior means are exact
+and the algebra therefore holds to the last decimal.
+[Hierarchical estimation against subject-wise maximum
+likelihood](hierarchical-vs-ml.html) is the same contrast for a real bmm
+model, sampled rather than derived: `mixture2p` fitted hierarchically
+and subject by subject on one data set, and again over a grid.
+
 Two caveats. The identities above assume that the generating values
 are drawn from the population the model estimates; with generating
 values from a hand-picked uniform range they hold only roughly. And

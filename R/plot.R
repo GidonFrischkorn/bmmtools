@@ -49,8 +49,21 @@ format_metric <- function(x) {
 #' Each panel must correspond to exactly one summary row; otherwise the
 #' label would show a number for a group the panel does not isolate.
 #'
+#' `color_by` is the exception: a panel deliberately split by colour --- a
+#' hierarchical and an ML estimator of the same parameter, say --- holds
+#' one summary row per colour, and the honest label is one line per
+#' colour rather than an error. Only a `color_by` that `summary()` groups
+#' by counts; colouring by anything else still cannot be annotated,
+#' because the summary would not isolate the coloured groups.
+#'
 #' @noRd
-recovery_panel_labels <- function(x, facet_by, call = rlang::caller_env()) {
+recovery_panel_labels <- function(x, facet_by, color_by = NULL,
+                                  call = rlang::caller_env()) {
+  # the columns summary() splits on; colouring by one of these gives one
+  # summary row per colour, which is a label rather than an ambiguity
+  grouping <- c("estimator", "level", "term", "condition")
+  split_colour <- !is.null(color_by) && color_by %in% grouping &&
+    !identical(color_by, facet_by)
   # facet_wrap() draws NA as a panel of its own, so NA is kept as a group
   groups <- if (is.null(facet_by)) {
     list(seq_len(nrow(x)))
@@ -65,6 +78,24 @@ recovery_panel_labels <- function(x, facet_by, call = rlang::caller_env()) {
   labels <- lapply(groups, function(rows) {
     piece <- x[rows, ]
     summarised <- summary(piece)
+    # summary() omits `condition` when every value is NA, so a colour by
+    # that column has no name to print and would label the panel " : r ="
+    has_colour <- split_colour && !is.null(summarised[[color_by]])
+    if (has_colour && nrow(summarised) == length(unique(piece[[color_by]]))) {
+      out <- tibble::tibble(
+        label = paste(
+          paste0(
+            " ", summarised[[color_by]],
+            # format_metric() takes one value at a time
+            ": r = ", vapply(summarised$r, format_metric, character(1)),
+            ", CCC = ", vapply(summarised$ccc, format_metric, character(1))
+          ),
+          collapse = "\n"
+        )
+      )
+      if (!is.null(facet_by)) out[[facet_by]] <- piece[[facet_by]][[1L]]
+      return(out)
+    }
     if (nrow(summarised) != 1L) {
       problem <- if (is.null(facet_by)) {
         "The plot mixes terms, levels or conditions."
@@ -78,7 +109,8 @@ recovery_panel_labels <- function(x, facet_by, call = rlang::caller_env()) {
           "Cannot annotate a panel that holds {nrow(summarised)} summary rows.",
           x = problem,
           i = "Use {.fn dplyr::filter} on {.field level} or \\
-               {.field condition} first, or facet by another column."
+               {.field condition} first, facet by another column, or \\
+               set {.arg color_by} to the column that splits them."
         ),
         call = call
       )
@@ -219,7 +251,7 @@ plot_recovery.bmmtools_recovery <- function(x,
 
   if (annotate) {
     p <- p + ggplot2::geom_text(
-      data = recovery_panel_labels(x, facet_by),
+      data = recovery_panel_labels(x, facet_by, color_by),
       mapping = ggplot2::aes(label = .data$label),
       x = -Inf, y = Inf, hjust = 0, vjust = 1.2,
       size = 3.2, lineheight = 0.9, inherit.aes = FALSE

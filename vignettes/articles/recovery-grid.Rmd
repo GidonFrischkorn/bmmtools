@@ -127,6 +127,18 @@ the first error message. A cell whose data cannot be generated stops the
 grid instead, since that is an error in the design rather than in the
 sampler.
 
+## Two estimators in one grid
+
+`ml = TRUE` fits every cell a second time subject by subject with no
+pooling, on the same simulated data, and scores both estimators against
+the same truth at the subject level, so `summary()` returns a row per
+estimator. `ml = list(...)` passes arguments to `fit_ml()`, and
+`ml = list(method = "optim")` runs the second fit without a compiler.
+The per-cell record is `attr(x, "ml_cells")`, and a cell whose ML fit
+fails keeps its hierarchical rows. [Hierarchical estimation against
+subject-wise maximum likelihood](hierarchical-vs-ml.html) works through
+the comparison and what its columns mean.
+
 ## The result
 
 The grid returns a single `bmmtools_recovery` object with population and
@@ -159,21 +171,27 @@ subject_summary <- summary(recovery_mixture2p) |>
   dplyr::filter(level == "subject") |>
   dplyr::left_join(design, by = "condition")
 
-subject_summary[c("term", "n_subjects", "n_trials", "n_converged",
-                  "bias", "rmse", "coverage", "r", "r_low", "r_high")]
+subject_summary[c(
+  "term", "n_subjects", "n_trials", "n_converged",
+  "bias", "rmse", "coverage", "r", "r_low", "r_high"
+)]
 ```
 
 ```{r, fig.height = 3.5}
 library(ggplot2)
 ggplot(
   subject_summary,
-  aes(factor(n_trials), r, ymin = r_low, ymax = r_high,
-      colour = factor(n_subjects))
+  aes(factor(n_trials), r,
+    ymin = r_low, ymax = r_high,
+    colour = factor(n_subjects)
+  )
 ) +
   geom_pointrange(position = position_dodge(width = 0.4)) +
   facet_wrap(~term) +
-  labs(x = "Trials per subject", y = "Subject-level r (95% CI)",
-       colour = "Subjects")
+  labs(
+    x = "Trials per subject", y = "Subject-level r (95% CI)",
+    colour = "Subjects"
+  )
 ```
 
 Because the object keeps its class through dplyr verbs, a single cell

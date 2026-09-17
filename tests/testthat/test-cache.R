@@ -94,6 +94,37 @@ test_that("a changed sampler argument, prior, data or formula refits", {
   }
 })
 
+test_that("draws enters the key when given, and only then", {
+  dir <- withr::local_tempdir()
+  mock <- mock_fitter()
+  file <- file.path(dir, "cell")
+  suppressMessages(cache_call(mock, file, seed = 1, algorithm = "laplace"))
+  # a key written without `draws` has no such component, so a fit cached
+  # before the component existed still matches
+  key_components <- function() {
+    names(read_cache_key(paste0(file, ".key"))$components)
+  }
+  expect_false("draws" %in% key_components())
+  suppressMessages(cache_call(mock, file, seed = 1, algorithm = "laplace"))
+  expect_identical(mock$calls$n, 1L)
+
+  expect_message(
+    cache_call(mock, file, seed = 1, algorithm = "laplace", draws = 500),
+    "draws"
+  )
+  expect_identical(mock$calls$n, 2L)
+  expect_true("draws" %in% key_components())
+  suppressMessages(
+    cache_call(mock, file, seed = 1, algorithm = "laplace", draws = 500)
+  )
+  expect_identical(mock$calls$n, 2L)
+  expect_message(
+    cache_call(mock, file, seed = 1, algorithm = "laplace", draws = 1000),
+    "draws"
+  )
+  expect_identical(mock$calls$n, 3L)
+})
+
 test_that("arguments that do not determine the fit do not refit", {
   dir <- withr::local_tempdir()
   mock <- mock_fitter()

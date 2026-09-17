@@ -38,6 +38,7 @@ reference:
   contents:
   - fit_cached
   - fit_components
+  - fit_ml
   - check_convergence
   - recovery_grid
 
@@ -87,6 +88,7 @@ reference:
   - '`[.bmmtools_cor_recovery`'
   - '`[.bmmtools_cross_check`'
   - '`[.bmmtools_prior_check`'
+  - '`[.bmmtools_ml`'
   - starts_with("dplyr_reconstruct.")
 
 articles:
@@ -101,6 +103,7 @@ articles:
   - articles/recovery-grid
   - articles/correlation-recovery
   - articles/prior-check
+  - articles/hierarchical-vs-ml
 
 - title: For model developers
   navbar: For model developers
