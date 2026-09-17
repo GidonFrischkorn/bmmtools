@@ -189,3 +189,85 @@ cor_size_mb <- file.size(cor_file) / 1024^2
 cat(sprintf("mixture2p-cor-draws.rds: %.3f MB\n", cor_size_mb))
 cat("variables:\n")
 print(posterior::variables(cor_draws))
+
+# ---- mixture2p-effect-fit.rds (Milestone 9.3f) -------------------------
+#
+# The first fixture built under coding = "contrast" and the first place
+# any of Milestone 9.3's design meets real brms draws --- 9.3a-e were all
+# built and tested against the mock fitter. The draw names the extractor
+# side assumes (b_<par>_<task_col>1, r_id__<par>[i,<task_col>1],
+# sd_id__<par>_<task_col>1) come from a make_standata() measurement
+# recorded in the spec, not from a fit; this fixture is what pins them.
+#
+# A separate block with its own seed, so rebuilding it does not touch the
+# random stream of the fixtures above, and generated through
+# simulate_recovery()/recovery_formula() themselves (unlike the fixtures
+# above, which are hand-rolled) because what is under test here is the
+# extractor's reading of real draws, not the generation math --- that is
+# already covered by test-contrasts.R's hand and Monte-Carlo checks.
+
+devtools::load_all()
+library(bmmtools)
+library(bayestestR)
+
+set.seed(20260917)
+
+effect_fixture_dir <- "tests/testthat/fixtures"
+stopifnot(dir.exists(effect_fixture_dir))
+
+effect_n_subjects <- 10L
+effect_n_trials <- 20L
+
+effect_sim <- simulate_recovery(
+  bmm::mixture2p(resp_error = "y"),
+  pars = c(
+    kappa_task1 = log(8), kappa_task2 = log(5),
+    thetat_task1 = stats::qlogis(0.75), thetat_task2 = stats::qlogis(0.6)
+  ),
+  sds = c(kappa = 0.25, thetat = 0.35),
+  n_subjects = effect_n_subjects, n_trials = effect_n_trials,
+  tasks = c("1", "2"), task_col = "task",
+  coding = "contrast", contrasts = bayestestR::contr.equalprior,
+  seed = 20260917
+)
+
+effect_formula <- recovery_formula(
+  effect_sim$model,
+  task_col = "task", coding = "contrast"
+)
+
+effect_fit <- bmm::bmm(
+  formula = effect_formula,
+  data = effect_sim$data,
+  model = effect_sim$model,
+  chains = 2,
+  iter = 400,
+  warmup = 200,
+  refresh = 0,
+  backend = "cmdstanr",
+  cores = 2,
+  seed = 20260917
+)
+
+saveRDS(
+  effect_fit,
+  file.path(effect_fixture_dir, "mixture2p-effect-fit.rds"),
+  compress = "xz"
+)
+saveRDS(
+  effect_sim,
+  file.path(effect_fixture_dir, "mixture2p-effect-sim.rds"),
+  compress = "xz"
+)
+
+effect_fit_path <- file.path(effect_fixture_dir, "mixture2p-effect-fit.rds")
+effect_size_mb <- file.size(effect_fit_path) / 1024^2
+cat(sprintf("mixture2p-effect-fit.rds: %.3f MB\n", effect_size_mb))
+if (effect_size_mb > 1) {
+  cat(
+    "Fixture exceeds the 1 MB target. Thin it with",
+    "posterior::thin_draws() before committing.\n"
+  )
+}
+cat("variables:\n")
+print(posterior::variables(posterior::as_draws_array(effect_fit)))

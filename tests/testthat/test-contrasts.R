@@ -164,3 +164,89 @@ test_that("contrast_truth handles several parameters and three tasks", {
   # the two parameters are transformed independently: no cross term
   expect_equal(out$cors["kappa", "thetat"], 0)
 })
+
+# ---- 9.3f: the extractor against a real contrast-coded fit ------------
+#
+# Everything above is built and checked against the mock fitter or by hand.
+# This is where the design meets real brms draws for the first time: the
+# fixture pins b_<par>_<task_col>1, r_id__<par>[i,<task_col>1] and
+# sd_id__<par>_<task_col>1, the names `coefficient_terms()` and
+# `coefficient_kinds()` assume rather than measure.
+
+test_that("the extractor reads a real contrast-coded fit's terms and levels", {
+  skip_if_not_installed("brms")
+  fit <- mixture2p_effect_fit()
+
+  population <- extract_estimates(fit, level = "population")
+  expect_setequal(population$term, c("kappa", "thetat"))
+  expect_true(all(population$level == "population"))
+
+  effect <- extract_estimates(fit, level = "effect")
+  expect_setequal(effect$term, c("kappa_task1", "thetat_task1"))
+  expect_true(all(effect$level == "effect"))
+
+  subject <- extract_estimates(fit, level = "subject")
+  expect_setequal(
+    subject$term, c("kappa", "kappa_task1", "thetat", "thetat_task1")
+  )
+  expect_equal(nrow(subject), 40L)
+  expect_equal(length(unique(subject$id)), 10L)
+
+  sd <- extract_estimates(fit, level = "sd")
+  expect_setequal(
+    sd$term, c("kappa", "kappa_task1", "thetat", "thetat_task1")
+  )
+  expect_equal(nrow(sd), 4L)
+})
+
+test_that("a contrast fit's estimates join the truth with no fan-out", {
+  skip_if_not_installed("brms")
+  fit <- mixture2p_effect_fit()
+  sim <- mixture2p_effect_sim()
+
+  population <- extract_estimates(fit, level = "population")
+  joined <- recover(
+    population, sim$truth$population,
+    level = "population", scale = "link"
+  )
+  expect_equal(nrow(joined), nrow(population))
+  expect_false(anyNA(joined$true_value))
+
+  effect <- extract_estimates(fit, level = "effect")
+  joined_effect <- recover(
+    effect, sim$truth$effect,
+    level = "effect", scale = "link"
+  )
+  expect_equal(nrow(joined_effect), nrow(effect))
+  expect_false(anyNA(joined_effect$true_value))
+
+  subject <- extract_estimates(fit, level = "subject")
+  joined_subject <- recover_subjects(
+    subject, sim$truth$subjects,
+    scale = "link"
+  )
+  expect_equal(nrow(joined_subject), nrow(subject))
+  expect_false(anyNA(joined_subject$true_value))
+
+  sd <- extract_estimates(fit, level = "sd")
+  joined_sd <- recover(sd, sim$truth$sd, level = "sd", scale = "link")
+  expect_equal(nrow(joined_sd), nrow(sd))
+  expect_false(anyNA(joined_sd$true_value))
+})
+
+test_that("the contrast attribute survives a saveRDS/readRDS round trip", {
+  skip_if_not_installed("bayestestR")
+  sim <- mixture2p_effect_sim()
+  expect_equal(
+    unname(stats::contrasts(sim$data$task)),
+    unname(bayestestR::contr.equalprior(2))
+  )
+
+  # the round trip itself: what a cell's -sim.rds sidecar goes through
+  tmp <- withr::local_tempfile(fileext = ".rds")
+  saveRDS(sim, tmp)
+  reread <- readRDS(tmp)
+  expect_identical(
+    stats::contrasts(reread$data$task), stats::contrasts(sim$data$task)
+  )
+})

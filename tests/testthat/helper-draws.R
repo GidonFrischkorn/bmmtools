@@ -46,6 +46,29 @@ mixture2p_truth <- function() {
   readRDS(test_path("fixtures", "mixture2p-truth.rds"))
 }
 
+#' The saved contrast-coded mixture2p fixture (Milestone 9.3f)
+#'
+#' A real fit under `coding = "contrast"`, `bayestestR::contr.equalprior(2)`:
+#' 10 subjects x 2 tasks x 20 trials, 2 chains x 400. Built by the third
+#' block of `fixtures/make-fixtures.R`; the suite reads it and compiles
+#' nothing.
+#'
+#' @noRd
+mixture2p_effect_fit <- function() {
+  readRDS(test_path("fixtures", "mixture2p-effect-fit.rds"))
+}
+
+#' The `simulate_recovery()` object the effect fixture was fitted from
+#'
+#' Its `truth` is what [recover()] and [recover_subjects()] score the
+#' fixture's estimates against; its `data$task` carries the contrast
+#' matrix, which is what the sidecar round-trip test reads back.
+#'
+#' @noRd
+mixture2p_effect_sim <- function() {
+  readRDS(test_path("fixtures", "mixture2p-effect-sim.rds"))
+}
+
 #' The saved draws of a mixture2p fit with correlated random intercepts
 #'
 #' `list(draws, ranef, links)`: the `b_`, `sd_` and `cor_` draws of a fit
