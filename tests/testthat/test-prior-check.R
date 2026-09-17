@@ -61,6 +61,7 @@ test_that("an unknown range gives NA rates and finite quantiles", {
 
 test_that("response_range knows the count models by their own columns", {
   skip_if_not_installed("bmm")
+  skip_if_no_bmm_sdt()
   model <- bmm::sdt_mafc(response = "k", n_trials = "n", m = 4L)
   data <- data.frame(k = c(1, 2), n = c(10, 20))
 
@@ -96,6 +97,7 @@ test_that("response_range says NA where it has no boundary to give", {
 
 test_that("a count model without its n_trials column degrades to NA", {
   skip_if_not_installed("bmm")
+  skip_if_no_bmm_sdt()
   model <- bmm::sdt_mafc(response = "k", n_trials = "n", m = 4L)
 
   expect_message(out <- response_range(model, data.frame(k = 1)))

@@ -104,6 +104,7 @@ test_that("subject_pars are used verbatim instead of drawn", {
 
 test_that("the generator receives natural-scale values, fixed ones too", {
   skip_if_not_installed("bmm")
+  skip_if_no_bmm_sdt()
   seen <- new.env()
   recorder <- function(pars, n_trials, model) {
     seen$pars <- pars
@@ -136,6 +137,7 @@ test_that("the generator receives natural-scale values, fixed ones too", {
 
 test_that("every adapter's data passes bmm's checks (mock backend)", {
   skip_if_not_installed("bmm")
+  skip_if_no_bmm_sdt()
   skip_if_not_installed("brms")
   cases <- list(
     list(
@@ -176,6 +178,7 @@ test_that("every adapter's data passes bmm's checks (mock backend)", {
 
 test_that("adapters lay trials out the way each model expects", {
   skip_if_not_installed("bmm")
+  skip_if_no_bmm_sdt()
   yn <- simulate_recovery(
     bmm::sdt_yn(response = "hits", stimulus = "stim", n_trials = "n"),
     c(d = 1.5, criterion = 0.2),
@@ -348,6 +351,7 @@ test_that("a covariate adds a data column and leaves the parameters alone", {
 
 test_that("the truth gains sd, cor and covariate tables", {
   skip_if_not_installed("bmm")
+  skip_if_no_bmm_sdt()
   model <- bmm::sdt_yn(response = "hits", stimulus = "stim", n_trials = "n")
   sim <- simulate_recovery(
     model, c(d = 1, criterion = 0.3),
@@ -498,6 +502,7 @@ test_that("print names covariates and nonzero correlations", {
 
 test_that("re_cor = 'all' correlates every random intercept", {
   skip_if_not_installed("bmm")
+  skip_if_no_bmm_sdt()
   skip_if_not_installed("brms")
   model <- bmm::mixture2p(resp_error = "y")
   f <- recovery_formula(model, re_cor = "all")
@@ -537,6 +542,7 @@ test_that("recovery_formula gives every free parameter a random intercept", {
 
 test_that("generator_for knows six models and nothing else", {
   skip_if_not_installed("bmm")
+  skip_if_no_bmm_sdt()
   models <- list(
     bmm::sdt_yn(response = "hits", stimulus = "stim", n_trials = "n"),
     bmm::sdt_mafc(response = "k", n_trials = "n", m = 4),
@@ -832,6 +838,7 @@ test_that("bad tasks, task_col and task terms are refused by name", {
 
 test_that("task formulas are cell means with three random-effect structures", {
   skip_if_not_installed("bmm")
+  skip_if_no_bmm_sdt()
   model <- bmm::mixture2p(resp_error = "y")
   f <- function(re_cor) {
     recovery_formula(model, re_cor = re_cor, task_col = "task")
