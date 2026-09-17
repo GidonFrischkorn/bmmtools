@@ -79,6 +79,41 @@ metric_coverage <- function(truth, ci_low, ci_high) {
   mean(truth[keep] >= ci_low[keep] & truth[keep] <= ci_high[keep])
 }
 
+#' The share of replications whose interval excludes zero
+#'
+#' What the number means depends on the truth it sits next to, which is
+#' why it is one column and not two. At a true value of zero it is the
+#' false-positive rate. At a true effect it is power. On a parameter whose
+#' true effect is zero while another parameter carries one, it is the rate
+#' at which an effect leaks into a parameter that has none --- the
+#' quantity a recovery study of a multi-parameter model is run to measure.
+#'
+#' @noRd
+metric_detected <- function(ci_low, ci_high) {
+  keep <- !is.na(ci_low) & !is.na(ci_high)
+  if (!any(keep)) {
+    return(NA_real_)
+  }
+  mean(ci_low[keep] > 0 | ci_high[keep] < 0)
+}
+
+#' The share of replications whose estimate has the truth's sign
+#'
+#' `NA` when the truth is zero: zero has no sign, and a "recovered sign"
+#' against it would be a coin flip reported as a score. Replications whose
+#' own truth is zero are left out rather than counted as failures, so a
+#' term whose truth changes across conditions still reports the ones it
+#' can.
+#'
+#' @noRd
+metric_sign_recovery <- function(estimate, truth) {
+  keep <- !is.na(estimate) & !is.na(truth) & truth != 0
+  if (!any(keep)) {
+    return(NA_real_)
+  }
+  mean(sign(estimate[keep]) == sign(truth[keep]))
+}
+
 #' Mean credible-interval width
 #' @noRd
 metric_ci_width <- function(ci_low, ci_high) {

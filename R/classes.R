@@ -68,6 +68,7 @@ recovery_summary_columns <- function() {
     "term", "estimator", "level", "scale", "n", "n_replications",
     "n_converged",
     "bias", "rmse", "coverage", "ci_width",
+    "detected", "sign_recovery",
     "r", "r_low", "r_high", "rank_r",
     "ccc", "ccc_low", "ccc_high", "ccc_accuracy", "ccc_scale_shift",
     "ccc_location_shift", "calibration_slope", "truth_sd"
@@ -397,6 +398,8 @@ summarise_population <- function(rows) {
     ),
     summarise_errors(rows),
     list(
+      detected = metric_detected(rows$ci_low, rows$ci_high),
+      sign_recovery = metric_sign_recovery(rows$estimate, rows$true_value),
       r = r$r,
       r_low = r$r_low,
       r_high = r$r_high,
@@ -448,6 +451,12 @@ summarise_subject <- function(rows) {
     ),
     summarise_errors(rows),
     list(
+      # both are statements about one estimate against one truth, so they
+      # belong to a population or effect row; a subject row is a
+      # correlation across people, where "the interval excludes zero"
+      # would be a different question asked of every subject at once
+      detected = NA_real_,
+      sign_recovery = NA_real_,
       r = combined$r,
       r_low = combined$r_low,
       r_high = combined$r_high,
@@ -501,7 +510,8 @@ summarise_subject <- function(rows) {
 #' @return A `bmmtools_recovery_summary` tibble with the columns `term`,
 #'   `estimator`, `level`, `scale`, `n`, `n_replications`, `n_converged`,
 #'   `bias`,
-#'   `rmse`, `coverage`, `ci_width`, `r`, `r_low`, `r_high`, `rank_r`,
+#'   `rmse`, `coverage`, `ci_width`, `detected`, `sign_recovery`, `r`,
+#'   `r_low`, `r_high`, `rank_r`,
 #'   `ccc`, `ccc_low`, `ccc_high`, `ccc_accuracy`, `ccc_scale_shift`,
 #'   `ccc_location_shift`, `calibration_slope` and `truth_sd`, the
 #'   standard deviation of the generating values. `r` and `ccc` both grow
@@ -514,6 +524,16 @@ summarise_subject <- function(rows) {
 #' rows rather than one pooled bias and RMSE. Their `n` may differ when
 #' one of them failed on a subject the other estimated; [recover()] warns
 #' when it does.
+#'
+#' `detected` is the share of replications whose interval excludes zero
+#' and `sign_recovery` the share whose estimate has the truth's sign. What
+#' `detected` measures depends on the truth beside it: a false-positive
+#' rate at a true value of zero, power at a true effect, and on a
+#' parameter whose true effect is zero while another carries one, the rate
+#' at which an effect leaks into a parameter that has none.
+#' `sign_recovery` is `NA` when the truth is zero, which has no sign. Both
+#' are `NA` at the subject level, where a row summarises a correlation
+#' across people rather than one estimate against one truth.
 #'
 #' `n_converged` is the number of replications whose fit passed
 #' [check_convergence()], read from the `converged` column that
@@ -578,7 +598,8 @@ empty_recovery_summary <- function() {
     scale = "character",
     n = "double", n_replications = "integer", n_converged = "integer",
     bias = "double", rmse = "double", coverage = "double",
-    ci_width = "double", r = "double", r_low = "double",
+    ci_width = "double", detected = "double", sign_recovery = "double",
+    r = "double", r_low = "double",
     r_high = "double", rank_r = "double", ccc = "double",
     ccc_low = "double", ccc_high = "double", ccc_accuracy = "double",
     ccc_scale_shift = "double", ccc_location_shift = "double",

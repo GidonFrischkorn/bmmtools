@@ -12,7 +12,7 @@ extract_estimates(fit, ...)
 
 \method{extract_estimates}{brmsfit}(
   fit,
-  level = c("population", "subject", "sd", "cor"),
+  level = c("population", "subject", "effect", "sd", "cor"),
   group = NULL,
   ci_level = 0.95,
   ci_method = "eti",
@@ -29,9 +29,15 @@ extract_estimates(fit, ...)
 anything passed is an error.}
 
 \item{level}{Which estimates to return: \code{"population"}, \code{"subject"},
-\code{"sd"} (the group-level standard deviations), \code{"cor"} (the
-group-level correlations), or several, in which case they are
-stacked and the \code{level} column separates them.}
+\code{"effect"} (the contrasts of a \code{1 + task} design, see
+\code{\link[=simulate_recovery]{simulate_recovery()}}'s \code{coding}), \code{"sd"} (the group-level standard
+deviations), \code{"cor"} (the group-level correlations), or several, in
+which case they are stacked and the \code{level} column separates them.
+
+\code{"population"} and \code{"effect"} split the same \code{b_} coefficients: a
+parameter whose coefficients include an \code{Intercept} has that
+intercept as its population value and every other coefficient as an
+effect. A fit with no such parameter has no \code{"effect"} rows.}
 
 \item{group}{The grouping factor subject-level, SD and correlation
 estimates come from. \code{NULL} uses the fit's only grouping factor and

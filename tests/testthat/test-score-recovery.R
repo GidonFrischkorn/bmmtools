@@ -944,3 +944,65 @@ test_that("a row with no interval does not stop a sqrt or inverse link", {
     expect_false(is.na(out$ci_low[[1L]]))
   }
 })
+
+# detected and sign_recovery (spec 9.3e) ---------------------------------
+
+test_that("detected is the share of replications whose interval misses zero", {
+  # four replications of a term whose true effect is zero: two intervals
+  # exclude zero, so the false-positive rate is 0.5
+  estimates <- fake_estimates(
+    term = rep("kappa_task1", 4L),
+    estimate = c(0.2, 1.5, -1.4, 0.1),
+    ci_low = c(-0.8, 0.5, -2.4, -0.9),
+    ci_high = c(1.2, 2.5, -0.4, 1.1),
+    replication = 1:4
+  )
+  truth <- fake_truth("kappa_task1", 0)
+  out <- summary(recover(estimates, truth, scale = "link"))
+  expect_equal(out$detected, 0.5)
+  # zero has no sign, so there is no sign to recover
+  expect_true(is.na(out$sign_recovery))
+})
+
+test_that("sign_recovery is the share of estimates on the truth's side", {
+  estimates <- fake_estimates(
+    term = rep("kappa_task1", 4L),
+    estimate = c(0.8, 0.6, -0.2, 0.9),
+    replication = 1:4
+  )
+  out <- summary(recover(estimates, fake_truth("kappa_task1", 0.7),
+    scale = "link"
+  ))
+  expect_equal(out$sign_recovery, 0.75)
+  # every interval is estimate +- 1, so only the 0.8 and 0.9 ones miss zero
+  expect_equal(out$detected, 0)
+
+  # a negative truth is recovered by negative estimates
+  flipped <- summary(recover(estimates, fake_truth("kappa_task1", -0.7),
+    scale = "link"
+  ))
+  expect_equal(flipped$sign_recovery, 0.25)
+})
+
+test_that("both columns are NA at the subject level", {
+  estimates <- fake_estimates(
+    term = rep("kappa", 4L),
+    estimate = c(1, 2, 3, 4),
+    level = "subject",
+    id = as.character(1:4)
+  )
+  truth <- fake_truth("kappa", c(1.1, 2.2, 2.9, 3.6), id = as.character(1:4))
+  out <- summary(recover_subjects(estimates, truth, scale = "link"))
+  expect_true(is.na(out$detected))
+  expect_true(is.na(out$sign_recovery))
+})
+
+test_that("both columns are in the summary contract and its empty shape", {
+  expect_true(all(
+    c("detected", "sign_recovery") %in% recovery_summary_columns()
+  ))
+  empty <- empty_recovery_summary()
+  expect_true(all(c("detected", "sign_recovery") %in% names(empty)))
+  expect_type(empty$detected, "double")
+  expect_type(empty$sign_recovery, "double")
+})

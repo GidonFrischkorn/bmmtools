@@ -19,7 +19,8 @@
 A \code{bmmtools_recovery_summary} tibble with the columns \code{term},
 \code{estimator}, \code{level}, \code{scale}, \code{n}, \code{n_replications}, \code{n_converged},
 \code{bias},
-\code{rmse}, \code{coverage}, \code{ci_width}, \code{r}, \code{r_low}, \code{r_high}, \code{rank_r},
+\code{rmse}, \code{coverage}, \code{ci_width}, \code{detected}, \code{sign_recovery}, \code{r},
+\code{r_low}, \code{r_high}, \code{rank_r},
 \code{ccc}, \code{ccc_low}, \code{ccc_high}, \code{ccc_accuracy}, \code{ccc_scale_shift},
 \code{ccc_location_shift}, \code{calibration_slope} and \code{truth_sd}, the
 standard deviation of the generating values. \code{r} and \code{ccc} both grow
@@ -58,6 +59,16 @@ estimators of the same parameter scored against one truth give two
 rows rather than one pooled bias and RMSE. Their \code{n} may differ when
 one of them failed on a subject the other estimated; \code{\link[=recover]{recover()}} warns
 when it does.
+
+\code{detected} is the share of replications whose interval excludes zero
+and \code{sign_recovery} the share whose estimate has the truth's sign. What
+\code{detected} measures depends on the truth beside it: a false-positive
+rate at a true value of zero, power at a true effect, and on a
+parameter whose true effect is zero while another carries one, the rate
+at which an effect leaks into a parameter that has none.
+\code{sign_recovery} is \code{NA} when the truth is zero, which has no sign. Both
+are \code{NA} at the subject level, where a row summarises a correlation
+across people rather than one estimate against one truth.
 
 \code{n_converged} is the number of replications whose fit passed
 \code{\link[=check_convergence]{check_convergence()}}, read from the \code{converged} column that

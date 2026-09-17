@@ -14,6 +14,8 @@ simulate_recovery(
   covariates = NULL,
   tasks = NULL,
   task_col = "task",
+  coding = c("cell", "contrast"),
+  contrasts = NULL,
   subject_pars = NULL,
   generator = NULL,
   seed = NULL
@@ -56,6 +58,30 @@ name for \code{0 + task}. See the details.}
 
 \item{task_col}{The name of the task column in \code{data}, \code{"task"} by
 default. Used only with \code{tasks}.}
+
+\item{coding}{What the task column means to a fit. \code{"cell"}, the
+default, leaves it as it was: a fit of \code{0 + task} estimates one value
+per task and the truth is those values. \code{"contrast"} attaches
+\code{contrasts} to the task column, so a fit of \code{1 + task} estimates an
+intercept and \code{length(tasks) - 1} contrasts, and \code{truth} holds those
+instead: \verb{<parameter>} for the intercept and
+\verb{<parameter>_<task_col><j>} for the contrasts, with the SD and
+correlation truths transformed with them.
+
+\strong{What is drawn does not change.} Subject values are drawn around
+the cell means exactly as under \code{"cell"}, from the same RNG stream, so
+\code{sds}, \code{cors} and \code{subject_pars} keep their meaning and a simulation
+is comparable across codings. Only the design the fit sees, and the
+truth it is scored against, differ.}
+
+\item{contrasts}{The contrast matrix for \code{coding = "contrast"}:
+\code{length(tasks)} rows and one column fewer, or a function \code{(n)}
+returning one. \link[stats:contr.treatment]{stats::contr.treatment} by default, so the intercept
+is the first task and each contrast a difference from it. For a study
+in which bmm's default prior should mean the same for every task, use
+an orthonormal coding such as \code{bayestestR::contr.equalprior}, whose
+intercept is the grand mean and whose contrasts are uncorrelated with
+it. Ignored under \code{coding = "cell"}.}
 
 \item{subject_pars}{A data frame \code{id}, \code{term}, \code{true_value} (link
 scale) of subject values to use instead of drawing them, so that

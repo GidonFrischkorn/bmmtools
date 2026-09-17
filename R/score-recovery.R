@@ -293,9 +293,11 @@ to_natural_scale <- function(x, links, values = c("estimate", "true_value"),
 
 #' Score the estimates of one level against its truth
 #'
-#' `sd` rows are kept on the link scale whatever `resolved$scale` says,
-#' because the SD of a link-scale random effect has no natural-scale
-#' counterpart that one inverse link would give.
+#' `sd` and `effect` rows are kept on the link scale whatever
+#' `resolved$scale` says, because neither the SD of a link-scale random
+#' effect nor a contrast between link-scale values has a natural-scale
+#' counterpart that one inverse link would give: a difference of two
+#' values is not the difference of their inverse links.
 #'
 #' @noRd
 score_level <- function(estimates, truth, level, resolved, error_call) {
@@ -306,7 +308,7 @@ score_level <- function(estimates, truth, level, resolved, error_call) {
 
   joined <- join_truth(estimates, truth, keys, call = error_call)
 
-  scale <- if (identical(level, "sd")) "link" else resolved$scale
+  scale <- if (level %in% c("sd", "effect")) "link" else resolved$scale
   if (identical(scale, "natural")) {
     joined <- to_natural_scale(joined, resolved$links)
   }
@@ -393,9 +395,14 @@ score_recovery <- function(fits, truth, level, group, scale, links,
   pieces <- lapply(level, function(lv) {
     score_level(estimates, truths[[lv]], lv, resolved, error_call)
   })
-  if ("sd" %in% level && identical(resolved$scale, "natural")) {
+  link_only <- intersect(c("sd", "effect"), level)
+  if (length(link_only) > 0L && identical(resolved$scale, "natural")) {
+    # nolint next: object_usage_linter. Used by cli's glue interpolation.
+    what <- unname(c(
+      sd = "Standard deviations", effect = "Effects"
+    )[link_only])
     cli::cli_inform(c(
-      "Standard deviations are scored on the link scale.",
+      "{.or {what}} are scored on the link scale.",
       i = "Their {.field scale} column reads {.val link}."
     ))
   }
@@ -503,8 +510,10 @@ check_estimator_balance <- function(x) {
 #'   `recover()` scores several levels, a named list with a data frame for
 #'   each, such as the `truth` of a `bmmtools_simulation`.
 #' @param level The levels `recover()` scores: `"population"` (the
-#'   default), `"sd"` (the between-subject standard deviations), or
-#'   `c("population", "sd")` for both.
+#'   default), `"sd"` (the between-subject standard deviations),
+#'   `"effect"` (the contrasts of a `coding = "contrast"` design), or
+#'   several of them. `"sd"` and `"effect"` are always scored on the link
+#'   scale, whatever `scale` says.
 #' @param group The grouping factor subject-level estimates come from.
 #' @param scale `"natural"` scores on the scale a reader interprets,
 #'   `"link"` on the scale the model was estimated on. The choice
@@ -583,7 +592,10 @@ recover <- function(fits,
                     drop_constants = TRUE,
                     ...) {
   rlang::check_dots_empty()
-  level <- rlang::arg_match(level, c("population", "sd"), multiple = TRUE)
+  level <- rlang::arg_match(
+    level, c("population", "effect", "sd"),
+    multiple = TRUE
+  )
   scale <- rlang::arg_match(scale)
   score_recovery(
     fits, truth,

@@ -292,13 +292,51 @@ test_that("a lone coefficient keeps the bare parameter name", {
 })
 
 test_that("terms that do not reduce to unique names are an error", {
-  # A design-structure fit: two coefficients collapse onto "kappa". A
-  # silent dplyr fan-out at the join is the failure mode this prevents.
+  # Two coefficients collapse onto "kappa". A silent dplyr fan-out at the
+  # join is the failure mode this prevents.
+  draws <- fake_draws(list(
+    b_kappa = seq_len(80) / 10,
+    b_kappa_Intercept = stats::rnorm(80)
+  ))
+  expect_error(estimates_from_draws(draws, groups = character(0)), "kappa")
+})
+
+test_that("an intercept with other coefficients is a contrast design", {
+  # what `coding = "contrast"` fits: the intercept is the parameter's
+  # population value and every other coefficient is an effect
   draws <- fake_draws(list(
     b_kappa_Intercept = seq_len(80) / 10,
     b_kappa_setsize2 = stats::rnorm(80)
   ))
-  expect_error(estimates_from_draws(draws, groups = character(0)), "kappa")
+  out <- estimates_from_draws(
+    draws,
+    groups = character(0), level = c("population", "effect")
+  )
+  expect_equal(out$term, c("kappa", "kappa_setsize2"))
+  expect_equal(out$level, c("population", "effect"))
+
+  # each level selects its own rows, and neither counts the other as a
+  # parameter it found and dropped
+  population <- estimates_from_draws(draws, groups = character(0))
+  expect_equal(population$term, "kappa")
+  effect <- estimates_from_draws(
+    draws,
+    groups = character(0), level = "effect"
+  )
+  expect_equal(effect$term, "kappa_setsize2")
+
+  # a cell-means fit has no effects, and asking for them is not a warning
+  # about everything having been dropped
+  cells <- fake_draws(list(
+    b_kappa_task1 = stats::rnorm(80), b_kappa_task2 = stats::rnorm(80)
+  ))
+  expect_silent(
+    none <- estimates_from_draws(
+      cells,
+      groups = character(0), level = "effect"
+    )
+  )
+  expect_equal(nrow(none), 0L)
 })
 
 # argument checking -----------------------------------------------------
@@ -621,7 +659,7 @@ test_that("a resp column is part of the brms name", {
   expect_equal(out$term, "kappa")
 })
 
-test_that("a parameter with several coefficients is an error at sd", {
+test_that("a contrast design names its SDs and correlations", {
   withr::local_seed(12)
   draws <- fake_draws(list(
     sd_id__kappa_Intercept = abs(stats::rnorm(80)),
@@ -632,15 +670,19 @@ test_that("a parameter with several coefficients is an error at sd", {
     c("kappa", "kappa"),
     coef = c("Intercept", "setsize2")
   )
-  expect_error(
-    estimates_from_draws(draws, "id", level = "sd", ranef = ranef),
-    "kappa"
+  # the SD of the intercept is the SD of the parameter, the SD of the
+  # contrast the SD of the effect: the terms contrast_truth() transforms to
+  sds <- estimates_from_draws(draws, "id", level = "sd", ranef = ranef)
+  expect_equal(sds$term, c("kappa", "kappa_setsize2"))
+  expect_equal(unique(sds$level), "sd")
+
+  cors <- estimates_from_draws(draws, "id", level = "cor", ranef = ranef)
+  expect_equal(cors$term, "kappa__kappa_setsize2")
+
+  expect_equal(
+    estimates_from_draws(draws, "id", level = "sd")$term,
+    c("kappa", "kappa_setsize2")
   )
-  expect_error(
-    estimates_from_draws(draws, "id", level = "cor", ranef = ranef),
-    "kappa"
-  )
-  expect_error(estimates_from_draws(draws, "id", level = "sd"), "kappa")
 })
 
 test_that("a malformed ranef table is refused", {
@@ -786,7 +828,7 @@ test_that("the subject-draws array names its terms per task", {
   expect_equal(unique(cors$term), "kappa_task1__kappa_task2")
 })
 
-test_that("an intercept together with a contrast is an error", {
+test_that("an intercept together with a contrast is scored at every level", {
   withr::local_seed(22)
   draws <- fake_draws(list(
     b_kappa_Intercept = stats::rnorm(80),
@@ -798,23 +840,29 @@ test_that("an intercept together with a contrast is an error", {
     cor_id__kappa_Intercept__kappa_task2 = stats::runif(80, -1, 1)
   ))
   ranef <- fake_ranef(c("kappa", "kappa"), coef = c("Intercept", "task2"))
-  for (level in c("population", "subject", "sd", "cor")) {
+  expected <- list(
+    population = "kappa",
+    effect = "kappa_task2",
+    subject = c("kappa", "kappa_task2"),
+    sd = c("kappa", "kappa_task2"),
+    cor = "kappa__kappa_task2"
+  )
+  for (level in names(expected)) {
     for (rf in list(NULL, ranef)) {
-      err <- expect_error(
-        estimates_from_draws(draws, "id", level = level, ranef = rf),
-        "kappa"
-      )
-      message <- conditionMessage(err)
-      expect_match(message, "contrasts")
-      expect_match(message, "0 + task", fixed = TRUE)
-      expect_no_match(message, "Milestone")
-      expect_no_match(message, "D22")
+      out <- estimates_from_draws(draws, "id", level = level, ranef = rf)
+      expect_equal(unique(out$term), expected[[level]])
+      expect_equal(unique(out$level), level)
     }
   }
-  expect_error(subject_draws_from_draws(draws, "id"), "intercept")
+  # the subject rows are the per-draw sum of each coefficient and its own
+  # deviation, so the slope is a slope and not the parameter again
+  expect_equal(
+    dimnames(subject_draws_from_draws(draws, "id"))$term,
+    c("kappa", "kappa_task2")
+  )
 })
 
-test_that("the duplicate-term error no longer names a milestone", {
+test_that("the duplicate-term error says what it prevents", {
   withr::local_seed(23)
   draws <- fake_draws(list(
     sd_id__kappa = abs(stats::rnorm(80)),
@@ -822,7 +870,7 @@ test_that("the duplicate-term error no longer names a milestone", {
   ))
   err <- expect_error(estimates_from_draws(draws, "id", level = "sd"), "kappa")
   expect_no_match(conditionMessage(err), "Milestone")
-  expect_match(conditionMessage(err), "cell-means")
+  expect_match(conditionMessage(err), "fan out")
 })
 
 test_that("a task term takes the link of its parameter", {

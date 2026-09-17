@@ -8,7 +8,8 @@ recovery_formula(
   model,
   group = "id",
   re_cor = c("none", "within", "all"),
-  task_col = NULL
+  task_col = NULL,
+  coding = c("cell", "contrast")
 )
 }
 \arguments{
@@ -29,6 +30,15 @@ correlation recovery reads.}
 population value per task, \verb{<parameter> ~ 0 + task}, and one
 subject-level effect per task: cell means, whose terms match the truth
 of the simulation.}
+
+\item{coding}{How the tasks enter the formula. \code{"cell"}, the default,
+is cell means, \verb{<parameter> ~ 0 + task}: one population value per
+task. \code{"contrast"} writes \verb{<parameter> ~ 1 + task} instead, an
+intercept and a contrast per task beyond the first, which is what a
+study of \emph{effects} wants. It needs \code{task_col}. The contrast matrix
+itself is carried by the data, not by the formula: give it to
+\code{\link[=simulate_recovery]{simulate_recovery()}} or \code{\link[=recovery_grid]{recovery_grid()}} as \code{contrasts}, which
+attaches it to the task column so brms builds the matching design.}
 }
 \value{
 A \code{bmmformula}.

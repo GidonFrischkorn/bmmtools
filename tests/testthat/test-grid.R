@@ -929,6 +929,70 @@ test_that("tasks change the data and so the cache key", {
   ))
 })
 
+test_that("a contrast grid scores an intercept and an effect", {
+  skip_if_not_installed("bmm")
+  skip_if_not_installed("bayestestR")
+  dir <- withr::local_tempdir()
+  seen <- new.env()
+  mock <- grid_mock_fitter()
+  fitter <- function(formula, data, model, prior = NULL, ...) {
+    seen$formula <- formula
+    seen$contrasts <- stats::contrasts(data$task)
+    mock$fitter(formula, data, model, prior, ...)
+  }
+  out <- task_grid_run(
+    dir, list(fitter = fitter),
+    coding = "contrast",
+    contrasts = bayestestR::contr.equalprior,
+    levels = c("population", "effect", "subject")
+  )
+
+  # the fit sees `1 + task` and the contrast matrix the call asked for
+  expect_equal(
+    deparse(seen$formula$kappa), "kappa ~ 1 + task + (1 + task || id)"
+  )
+  expect_equal(unname(seen$contrasts), bayestestR::contr.equalprior(2))
+
+  expect_setequal(out$level, c("population", "effect", "subject"))
+  expect_setequal(
+    out$term[out$level == "population"], c("kappa", "thetat")
+  )
+  expect_setequal(
+    out$term[out$level == "effect"], c("kappa_task1", "thetat_task1")
+  )
+  # effects are scored on the link scale whatever the grid's scale is
+  expect_equal(unique(out$scale[out$level == "effect"]), "link")
+  expect_equal(unique(out$scale[out$level == "population"]), "natural")
+
+  # the truth the effects are scored against is the transform of the cells,
+  # not the cell means themselves
+  effect_truth <- unique(
+    out$true_value[out$level == "effect" & out$term == "kappa_task1"]
+  )
+  expect_equal(effect_truth, (log(4) - log(8)) / sqrt(2))
+  intercept_truth <- unique(
+    out$true_value[out$level == "population" & out$term == "kappa"]
+  )
+  expect_equal(intercept_truth, exp(mean(c(log(8), log(4)))))
+})
+
+test_that("a contrast grid needs tasks and a usable contrast matrix", {
+  skip_if_not_installed("bmm")
+  mock <- grid_mock_fitter()
+  expect_error(
+    grid_run(withr::local_tempdir(), mock, coding = "contrast"),
+    "tasks"
+  )
+  expect_error(
+    task_grid_run(
+      withr::local_tempdir(), mock,
+      coding = "contrast", contrasts = matrix(1, 3L, 1L)
+    ),
+    "row"
+  )
+  expect_identical(mock$calls$n, 0L)
+})
+
 test_that("grid argument checks know about tasks and re_cor = 'within'", {
   skip_if_not_installed("bmm")
   mock <- grid_mock_fitter()
@@ -1569,7 +1633,8 @@ test_that("convergence gives check_convergence() its thresholds", {
 
   # a valid set is accepted and recorded
   out <- suppressMessages(grid_run(
-    dir, grid_mock_fitter(), reps = 1L,
+    dir, grid_mock_fitter(),
+    reps = 1L,
     convergence = list(rhat_max = 1.01, ess_tail_min = 400)
   ))
   record <- readRDS(file.path(dir, "grid.rds"))

@@ -24,8 +24,9 @@ Imports:
     rlang,
     tibble,
     withr
-Suggests: 
+Suggests:
     bayesplot,
+    bayestestR,
     bmm,
     brms,
     cmdstanr,

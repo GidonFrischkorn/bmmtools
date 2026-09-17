@@ -568,6 +568,28 @@ truth_tables <- function(pars, sds, values, cors = NULL, covariates = NULL) {
 #'   name for `0 + task`. See the details.
 #' @param task_col The name of the task column in `data`, `"task"` by
 #'   default. Used only with `tasks`.
+#' @param coding What the task column means to a fit. `"cell"`, the
+#'   default, leaves it as it was: a fit of `0 + task` estimates one value
+#'   per task and the truth is those values. `"contrast"` attaches
+#'   `contrasts` to the task column, so a fit of `1 + task` estimates an
+#'   intercept and `length(tasks) - 1` contrasts, and `truth` holds those
+#'   instead: `<parameter>` for the intercept and
+#'   `<parameter>_<task_col><j>` for the contrasts, with the SD and
+#'   correlation truths transformed with them.
+#'
+#'   **What is drawn does not change.** Subject values are drawn around
+#'   the cell means exactly as under `"cell"`, from the same RNG stream, so
+#'   `sds`, `cors` and `subject_pars` keep their meaning and a simulation
+#'   is comparable across codings. Only the design the fit sees, and the
+#'   truth it is scored against, differ.
+#' @param contrasts The contrast matrix for `coding = "contrast"`:
+#'   `length(tasks)` rows and one column fewer, or a function `(n)`
+#'   returning one. [stats::contr.treatment] by default, so the intercept
+#'   is the first task and each contrast a difference from it. For a study
+#'   in which bmm's default prior should mean the same for every task, use
+#'   an orthonormal coding such as `bayestestR::contr.equalprior`, whose
+#'   intercept is the grand mean and whose contrasts are uncorrelated with
+#'   it. Ignored under `coding = "cell"`.
 #' @param subject_pars A data frame `id`, `term`, `true_value` (link
 #'   scale) of subject values to use instead of drawing them, so that
 #'   replications can share the same simulated people. With `covariates`
@@ -659,10 +681,13 @@ simulate_recovery <- function(model,
                               covariates = NULL,
                               tasks = NULL,
                               task_col = "task",
+                              coding = c("cell", "contrast"),
+                              contrasts = NULL,
                               subject_pars = NULL,
                               generator = NULL,
                               seed = NULL) {
   check_model(model)
+  coding <- rlang::arg_match(coding)
   n_subjects <- check_count(n_subjects, "n_subjects")
   n_trials <- check_count(n_trials, "n_trials")
   if (!is.null(seed) && (!is.numeric(seed) || length(seed) != 1L)) {
@@ -694,6 +719,18 @@ simulate_recovery <- function(model,
   design <- check_tasks(tasks, task_col, model, covariates)
   tasks <- design$tasks
   task_col <- design$task_col
+  if (identical(coding, "contrast")) {
+    if (is.null(tasks)) {
+      cli::cli_abort(c(
+        "{.code coding = \"contrast\"} needs {.arg tasks}.",
+        i = "A contrast is a comparison between tasks; without tasks there \\
+             is nothing to contrast."
+      ))
+    }
+    contrasts <- check_contrasts(contrasts, length(tasks))
+  } else {
+    contrasts <- NULL
+  }
 
   # functions first, under the seed and in a fixed order, so that random
   # hyperparameters continue the stream the subject draws then take
@@ -736,12 +773,45 @@ simulate_recovery <- function(model,
     )
   })
 
+  # the generating truth, always over the cells the data were drawn from
+  cell_truth <- truth_tables(
+    out$pars, out$sds, out$values, out$cors, covariates
+  )
+  truth <- cell_truth
+  data <- out$data
+  if (identical(coding, "contrast")) {
+    # bind_rows() does not carry a factor's contrasts through, so the
+    # matrix is attached to the finished column
+    stats::contrasts(data[[task_col]]) <- contrasts
+    effects <- contrast_truth(
+      out$pars, out$sds, out$values, out$cors,
+      contrasts = contrasts, tasks = tasks, task_col = task_col,
+      covariates = covariates
+    )
+    truth <- truth_tables(
+      effects$pars, effects$sds, effects$values, effects$cors, covariates
+    )
+    # one truth table per level, as `recover(level = )` reads it: the
+    # intercepts are the parameter's population values and the contrasts
+    # are its effects, scored apart from them
+    is_effect <- truth$population$term %in% effects$effects
+    truth <- c(
+      truth[c("population", "subjects", "sd", "cor", "covariates")],
+      list(effect = truth$population[is_effect, , drop = FALSE])
+    )
+    truth$population <- truth$population[!is_effect, , drop = FALSE]
+  }
+
   structure(
     list(
-      data = out$data,
-      truth = truth_tables(
-        out$pars, out$sds, out$values, out$cors, covariates
-      ),
+      data = data,
+      truth = truth,
+      # what generated the data, which is what a later replication with
+      # `subjects = "fixed"` must be given: the contrast truth is what the
+      # fit is scored against, never what is drawn from
+      cell_truth = if (identical(coding, "contrast")) cell_truth else NULL,
+      coding = coding,
+      contrasts = contrasts,
       pars = out$pars,
       sds = out$sds,
       cors = if (nrow(out$cors) < 2L) NULL else out$cors,
@@ -814,6 +884,14 @@ print.bmmtools_simulation <- function(x, ...) {
 #'   population value per task, `<parameter> ~ 0 + task`, and one
 #'   subject-level effect per task: cell means, whose terms match the truth
 #'   of the simulation.
+#' @param coding How the tasks enter the formula. `"cell"`, the default,
+#'   is cell means, `<parameter> ~ 0 + task`: one population value per
+#'   task. `"contrast"` writes `<parameter> ~ 1 + task` instead, an
+#'   intercept and a contrast per task beyond the first, which is what a
+#'   study of *effects* wants. It needs `task_col`. The contrast matrix
+#'   itself is carried by the data, not by the formula: give it to
+#'   [simulate_recovery()] or [recovery_grid()] as `contrasts`, which
+#'   attaches it to the task column so brms builds the matching design.
 #'
 #' @return A `bmmformula`.
 #'
@@ -831,9 +909,11 @@ print.bmmtools_simulation <- function(x, ...) {
 recovery_formula <- function(model,
                              group = "id",
                              re_cor = c("none", "within", "all"),
-                             task_col = NULL) {
+                             task_col = NULL,
+                             coding = c("cell", "contrast")) {
   check_model(model)
   re_cor <- rlang::arg_match(re_cor)
+  coding <- rlang::arg_match(coding)
   valid_col <- is.character(task_col) && length(task_col) == 1L &&
     !is.na(task_col) && make.names(task_col) == task_col &&
     !grepl("[_.]", task_col)
@@ -842,6 +922,13 @@ recovery_formula <- function(model,
       "{.arg task_col} must be {.code NULL} or a single syntactic name \\
        without {.code _} or {.code .}."
     )
+  }
+  if (identical(coding, "contrast") && is.null(task_col)) {
+    cli::cli_abort(c(
+      "{.code coding = \"contrast\"} needs {.arg task_col}.",
+      i = "A contrast is a comparison between tasks; without tasks there \\
+           is nothing to contrast."
+    ))
   }
   rlang::check_installed("bmm", "to build a bmm formula.")
   free <- model_parameters(model)$free
@@ -869,7 +956,13 @@ recovery_formula <- function(model,
       re_cor <- "within"
     }
   }
-  effects <- if (is.null(task_col)) "1" else paste0("0 + ", task_col)
+  effects <- if (is.null(task_col)) {
+    "1"
+  } else if (identical(coding, "contrast")) {
+    paste0("1 + ", task_col)
+  } else {
+    paste0("0 + ", task_col)
+  }
   bar <- switch(re_cor,
     none = if (is.null(task_col)) " | " else " || ",
     within = " | ",

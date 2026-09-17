@@ -271,6 +271,13 @@ upgrade_simulation <- function(sim) {
   for (field in setdiff(c("tasks", "task_col"), names(sim))) {
     sim[field] <- list(NULL)
   }
+  # a file from before 9.3 has no coding: it is cell means, whose truth is
+  # the truth it already holds
+  if (is.null(sim$coding)) {
+    sim$coding <- "cell"
+    sim["contrasts"] <- list(NULL)
+    sim["cell_truth"] <- list(NULL)
+  }
   if (!is.null(sim$truth$sd)) {
     return(sim)
   }
@@ -296,14 +303,19 @@ upgrade_simulation <- function(sim) {
 #' @noRd
 cell_simulation <- function(paths, model, values, row, seed, subjects,
                             first_rep, generator, covariates, tasks = NULL,
-                            task_col = "task") {
+                            task_col = "task", coding = "cell",
+                            contrasts = NULL) {
   if (file.exists(paths$sim)) {
     return(upgrade_simulation(readRDS(paths$sim)))
   }
   subject_pars <- NULL
   if (identical(subjects, "fixed") && !is.null(first_rep)) {
+    # under a contrast coding the first replication's `truth` is the
+    # contrast truth, which is not what generated its data; the values to
+    # reuse are always the cell ones
+    generating <- first_rep$cell_truth %||% first_rep$truth
     subject_pars <- dplyr::bind_rows(
-      first_rep$truth$subjects, first_rep$truth$covariates
+      generating$subjects, generating$covariates
     )
     values <- list(
       pars = first_rep$pars, sds = first_rep$sds, cors = first_rep$cors
@@ -314,6 +326,7 @@ cell_simulation <- function(paths, model, values, row, seed, subjects,
     n_subjects = row$n_subjects, n_trials = row$n_trials,
     sds = values$sds, cors = values$cors, covariates = covariates,
     tasks = tasks, task_col = task_col,
+    coding = coding, contrasts = contrasts,
     subject_pars = subject_pars,
     generator = generator,
     seed = if (is.na(seed)) NULL else seed
@@ -601,12 +614,12 @@ check_extraction_args <- function(levels, correlations, cor_scale,
   if (!is.character(levels) || length(levels) == 0L) {
     cli::cli_abort(
       "{.arg levels} must be one or more of {.val {c(\"population\", \\
-       \"subject\", \"sd\")}}.",
+       \"subject\", \"effect\", \"sd\")}}.",
       call = call
     )
   }
   levels <- unique(rlang::arg_match(
-    levels, c("population", "subject", "sd"),
+    levels, c("population", "subject", "effect", "sd"),
     multiple = TRUE, error_call = call
   ))
   if (!is.null(correlations)) {
@@ -1038,6 +1051,25 @@ score_cells <- function(runs, sims, cells, links, scale = "natural",
       scale = scale, links = links
     )
   }
+  # a cell-means simulation has no effect table at all, which is not the
+  # same as an empty one: binding a missing table is an error, so the
+  # level is skipped before the bind rather than after it
+  has_effects <- any(vapply(
+    ok, function(i) !is.null(sims[[i]]$truth$effect), logical(1)
+  ))
+  if ("effect" %in% request$levels && has_effects) {
+    truth_effect <- truth_of("effect")
+    if (nrow(truth_effect) > 0L) {
+      # effects are scored on the link scale whatever `scale` says: a
+      # contrast between link-scale values is not a contrast between
+      # their inverse links
+      pieces$effect <- recover(
+        estimates[estimates$level == "effect", ],
+        truth_effect,
+        level = "effect", scale = "link"
+      )
+    }
+  }
   if ("subject" %in% request$levels && nrow(truth_sub) > 0L) {
     subjects <- estimates[estimates$level == "subject", ]
     if (!is.null(request$ml)) {
@@ -1167,9 +1199,12 @@ is_component_list <- function(x) {
 #'
 #' @noRd
 grid_formula <- function(formula, row, i, model, re_cor, task_col,
-                         call = rlang::caller_env()) {
+                         coding = "cell", call = rlang::caller_env()) {
   if (is.null(formula)) {
-    return(recovery_formula(model, re_cor = re_cor, task_col = task_col))
+    return(recovery_formula(
+      model,
+      re_cor = re_cor, task_col = task_col, coding = coding
+    ))
   }
   if (!is.function(formula)) {
     return(formula)
@@ -1221,6 +1256,12 @@ grid_formula <- function(formula, row, i, model, re_cor, task_col,
 #' @param tasks,task_col As in [simulate_recovery()], the same for every
 #'   cell. With `tasks`, the default formula is
 #'   `recovery_formula(model, re_cor = re_cor, task_col = task_col)`.
+#' @param coding,contrasts As in [simulate_recovery()], the same for every
+#'   cell. `coding = "contrast"` needs `tasks`, makes the default formula
+#'   `1 + task` rather than `0 + task`, and scores the intercept and the
+#'   contrasts in place of the cell means. What is simulated does not
+#'   change, so a grid can be run under both codings from one set of
+#'   generating values.
 #' @param dir Directory for the per-cell files; created if missing.
 #' @param reps Replications per cell.
 #' @param formula A `bmmformula`; `NULL` means [recovery_formula()] of the
@@ -1439,6 +1480,8 @@ recovery_grid <- function(model,
                           covariates = NULL,
                           tasks = NULL,
                           task_col = "task",
+                          coding = c("cell", "contrast"),
+                          contrasts = NULL,
                           formula = NULL,
                           prior = NULL,
                           generator = NULL,
@@ -1476,6 +1519,19 @@ recovery_grid <- function(model,
   subjects <- rlang::arg_match(subjects)
   re_cor <- rlang::arg_match(re_cor)
   scale <- rlang::arg_match(scale)
+  coding <- rlang::arg_match(coding)
+  if (identical(coding, "contrast")) {
+    if (is.null(tasks)) {
+      cli::cli_abort(c(
+        "{.code coding = \"contrast\"} needs {.arg tasks}.",
+        i = "A contrast is a comparison between tasks; without tasks there \\
+             is nothing to contrast."
+      ))
+    }
+    contrasts <- check_contrasts(contrasts, length(tasks))
+  } else {
+    contrasts <- NULL
+  }
   extraction <- check_extraction_args(levels, correlations, cor_scale)
   check_model_correlations(extraction$correlations, formula, re_cor, tasks)
   convergence <- check_convergence_arg(convergence)
@@ -1513,7 +1569,8 @@ recovery_grid <- function(model,
     if (is.null(formulas[[i]])) {
       formulas[[i]] <<- grid_formula(
         formula, grid[i, , drop = FALSE], i, model_for(i), re_cor,
-        if (is.null(tasks)) NULL else task_col
+        if (is.null(tasks)) NULL else task_col,
+        coding = coding
       )
     }
     formulas[[i]]
@@ -1536,7 +1593,7 @@ recovery_grid <- function(model,
       cell_paths(dir, cells$row[[i]], cells$rep[[i]]),
       model_for(cells$row[[i]]), values, row, cells$seed[[i]], subjects,
       first_rep[[cells$row[[i]]]], generator, covariates,
-      tasks, task_col
+      tasks, task_col, coding, contrasts
     )
     if (cells$rep[[i]] == 1L) first_rep[[cells$row[[i]]]] <<- sim
     sim
@@ -1562,7 +1619,8 @@ recovery_grid <- function(model,
   write_grid_record(dir, list(
     grid = grid, reps = reps, seed = seed, subjects = subjects,
     scale = scale, re_cor = re_cor, tasks = design$tasks,
-    task_col = design$task_col, levels = extraction$levels,
+    task_col = design$task_col, coding = coding, contrasts = contrasts,
+    levels = extraction$levels,
     correlations = extraction$correlations, cor_scale = extraction$cor_scale,
     convergence = convergence, ml = ml_request(ml_args),
     sampler = cell_sampler(dots), links = links

@@ -15,6 +15,8 @@ recovery_grid(
   covariates = NULL,
   tasks = NULL,
   task_col = "task",
+  coding = c("cell", "contrast"),
+  contrasts = NULL,
   formula = NULL,
   prior = NULL,
   generator = NULL,
@@ -68,6 +70,13 @@ applied to its result.}
 \item{tasks, task_col}{As in \code{\link[=simulate_recovery]{simulate_recovery()}}, the same for every
 cell. With \code{tasks}, the default formula is
 \code{recovery_formula(model, re_cor = re_cor, task_col = task_col)}.}
+
+\item{coding, contrasts}{As in \code{\link[=simulate_recovery]{simulate_recovery()}}, the same for every
+cell. \code{coding = "contrast"} needs \code{tasks}, makes the default formula
+\code{1 + task} rather than \code{0 + task}, and scores the intercept and the
+contrasts in place of the cell means. What is simulated does not
+change, so a grid can be run under both codings from one set of
+generating values.}
 
 \item{formula}{A \code{bmmformula}; \code{NULL} means \code{\link[=recovery_formula]{recovery_formula()}} of the
 cell's model; or a \verb{function(row)} of the one-row grid data frame

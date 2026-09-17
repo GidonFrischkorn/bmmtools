@@ -42,8 +42,10 @@ same generating values are scored against every replication. When
 each, such as the \code{truth} of a \code{bmmtools_simulation}.}
 
 \item{level}{The levels \code{recover()} scores: \code{"population"} (the
-default), \code{"sd"} (the between-subject standard deviations), or
-\code{c("population", "sd")} for both.}
+default), \code{"sd"} (the between-subject standard deviations),
+\code{"effect"} (the contrasts of a \code{coding = "contrast"} design), or
+several of them. \code{"sd"} and \code{"effect"} are always scored on the link
+scale, whatever \code{scale} says.}
 
 \item{scale}{\code{"natural"} scores on the scale a reader interprets,
 \code{"link"} on the scale the model was estimated on. The choice

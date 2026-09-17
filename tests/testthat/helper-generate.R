@@ -32,12 +32,16 @@ grid_mock_fitter <- function(fail_on = NULL) {
   list(fitter = fitter, calls = calls)
 }
 
-#' The terms a fit of `formula` would have: one per free parameter, or one
-#' per parameter and task when the formula has cell means (`0 + task`)
+#' The terms a fit of `formula` would have: one per free parameter, one
+#' per parameter and task under cell means (`0 + task`), or an intercept
+#' and one contrast per task beyond the first under a contrast design
+#' (`1 + task`)
 #'
 #' The task column is the variable of the first formula's right-hand side
 #' other than the grouping and correlation ids, as `recovery_formula()`
-#' writes it.
+#' writes it. The `"effects"` attribute names the terms a real fit would
+#' give `level = "effect"`, so that the mock splits them as brms's
+#' coefficient names do.
 #'
 #' @noRd
 mock_terms <- function(formula, data, model) {
@@ -48,7 +52,21 @@ mock_terms <- function(formula, data, model) {
   if (length(task_col) != 1L || !is.factor(data[[task_col]])) {
     return(free)
   }
-  task_terms(free, levels(data[[task_col]]), task_col)
+  tasks <- levels(data[[task_col]])
+  if (!mock_has_intercept(formula)) {
+    return(task_terms(free, tasks, task_col))
+  }
+  effects <- as.vector(t(outer(
+    free, paste0("_", task_col, seq_len(length(tasks) - 1L)), paste0
+  )))
+  structure(c(free, effects), effects = effects)
+}
+
+#' Whether the formula's population terms include an intercept
+#' @noRd
+mock_has_intercept <- function(formula) {
+  population <- sub("\\+ \\(.*$", "", deparse1(formula[[1L]]))
+  grepl("~\\s*1\\s*\\+", population)
 }
 
 #' Estimates for a mock fit: 0 with a wide interval, converged
@@ -73,17 +91,22 @@ extract_estimates_mockfit <- function(fit,
       ess_tail = 1000, level = lvl, id = id, converged = TRUE
     )
   }
+  effects <- attr(fit$parameters, "effects") %||% character()
+  values <- setdiff(fit$parameters, effects)
   pieces <- list()
   if ("population" %in% level) {
-    pieces$population <- one(fit$parameters, NA_character_, "population")
+    pieces$population <- one(values, NA_character_, "population")
+  }
+  if ("effect" %in% level && length(effects) > 0L) {
+    pieces$effect <- one(effects, NA_character_, "effect")
   }
   if ("subject" %in% level) {
     pieces$subject <- dplyr::bind_rows(lapply(fit$ids, function(i) {
-      one(fit$parameters, i, "subject")
+      one(as.vector(fit$parameters), i, "subject")
     }))
   }
   if ("sd" %in% level) {
-    pieces$sd <- one(fit$parameters, NA_character_, "sd")
+    pieces$sd <- one(as.vector(fit$parameters), NA_character_, "sd")
   }
   dplyr::bind_rows(pieces)
 }
@@ -102,7 +125,7 @@ registerS3method(
 #' @noRd
 extract_subject_draws_mockfit <- function(fit, group = NULL, ...) {
   ids <- as.character(fit$ids)
-  terms <- fit$parameters
+  terms <- as.vector(fit$parameters)
   n_iter <- 10L
   n_chain <- 2L
   out <- array(

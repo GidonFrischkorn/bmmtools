@@ -81,40 +81,56 @@ split_coefficient <- function(x) {
 #' A parameter with one coefficient is its bare name, whatever the
 #' coefficient; one with several and no `Intercept`, as cell-means coding
 #' (`0 + task`) gives, is `<par>_<coef>` per coefficient. An `Intercept`
-#' together with other coefficients is population effects or contrasts,
-#' which are not scored (D22, D30), so it is an error: reducing it to the
-#' bare name would silently fan out the join with the truth. A coefficient
-#' without a parameter keeps its own name.
+#' together with other coefficients is a contrast design (`1 + task`,
+#' `coding = "contrast"`): the intercept is the bare name and each other
+#' coefficient is `<par>_<coef>`, which is what
+#' [contrast_truth()] names the truths those coefficients estimate. A
+#' coefficient without a parameter keeps its own name.
+#'
+#' The two designs cannot collide: cell-means terms carry the task
+#' *level* (`kappa_task1` for a task called 1) and contrast terms the
+#' contrast *column* (`kappa_task1` for the first contrast), and one fit
+#' has only one of them.
 #'
 #' @param par,coef Parallel character vectors, one entry per coefficient
 #'   (repeated entries, one per subject, are allowed).
 #' @noRd
 coefficient_terms <- function(par, coef, call = rlang::caller_env()) {
   term <- ifelse(nzchar(par), par, coef)
-  contrasts <- character()
   for (p in unique(par[nzchar(par)])) {
     at <- par == p
     coefs <- unique(coef[at])
     if (length(coefs) < 2L) next
     if ("Intercept" %in% coefs) {
-      contrasts <- c(contrasts, p)
+      contrast <- at & coef != "Intercept"
+      term[contrast] <- paste0(p, "_", coef[contrast])
       next
     }
     term[at] <- paste0(p, "_", coef[at])
   }
-  if (length(contrasts) > 0L) {
-    cli::cli_abort(
-      c(
-        "Parameter{?s} {.val {contrasts}} {?has/have} an intercept together \\
-         with other coefficients.",
-        i = "Population effects and contrasts (an intercept plus other \\
-             coefficients) are not scored yet; cell-means coding \\
-             ({.code 0 + task}) is."
-      ),
-      call = call
-    )
-  }
   term
+}
+
+#' What each coefficient is: a population value or an effect
+#'
+#' A coefficient of a parameter that also has an `Intercept` is an effect
+#' --- a contrast between tasks, not a value of the parameter --- and is
+#' scored as one (`level = "effect"`, always on the link scale). Everything
+#' else, the intercept of such a parameter included, is a population value.
+#'
+#' Read from the coefficient names alone, so an extraction needs nothing
+#' from the simulation that produced the fit.
+#'
+#' @inheritParams coefficient_terms
+#' @noRd
+coefficient_kinds <- function(par, coef) {
+  kind <- rep("population", length(coef))
+  for (p in unique(par[nzchar(par)])) {
+    at <- par == p
+    if (!("Intercept" %in% coef[at])) next
+    kind[at & coef != "Intercept"] <- "effect"
+  }
+  kind
 }
 
 #' Terms for brms coefficient names, as a lookup keyed by the name
@@ -123,6 +139,14 @@ name_terms <- function(x, call = rlang::caller_env()) {
   x <- unique(x)
   parts <- split_coefficient(x)
   stats::setNames(coefficient_terms(parts$par, parts$coef, call = call), x)
+}
+
+#' Kinds for brms coefficient names, as a lookup keyed by the name
+#' @noRd
+name_kinds <- function(x) {
+  x <- unique(x)
+  parts <- split_coefficient(x)
+  stats::setNames(coefficient_kinds(parts$par, parts$coef), x)
 }
 
 #' The grouping factors a fit has
@@ -303,9 +327,8 @@ check_unique_terms <- function(x, keys, call = rlang::caller_env()) {
       c(
         "Parameter name{?s} {.val {duplicated_terms}} \\
          {?is/are} not unique in the fit.",
-        i = "Two coefficients reduce to the same term. Population effects \\
-             and contrasts (an intercept plus other coefficients) are not \\
-             scored yet; cell-means coding ({.code 0 + task}) is.",
+        i = "Two coefficients reduce to the same term, so a join with the \\
+             truth would fan out.",
         i = "The offending coefficient{?s}: {.val {offending}}."
       ),
       call = call
@@ -314,9 +337,14 @@ check_unique_terms <- function(x, keys, call = rlang::caller_env()) {
   invisible(x)
 }
 
-#' Population-level rows
+#' Population-level rows: the values of a parameter, its effects, or both
+#'
+#' Both kinds come from the same `b_` draws (see [coefficient_kinds()]),
+#' so one pass produces them and `keep` says which are wanted.
+#'
 #' @noRd
 population_estimates <- function(draws, ci_level, ci_method, drop_constants,
+                                 keep = c("population", "effect"),
                                  call = rlang::caller_env()) {
   variables <- grep("^b_", posterior::variables(draws), value = TRUE)
   if (length(variables) == 0L) {
@@ -325,6 +353,13 @@ population_estimates <- function(draws, ci_level, ci_method, drop_constants,
 
   # named before summarising, so a refused design costs no summary
   terms <- name_terms(sub("^b_", "", variables), call = call)
+  kinds <- name_kinds(sub("^b_", "", variables))
+  # selected before summarising as well, so that asking for one kind
+  # neither summarises the other nor counts it as found and then dropped
+  variables <- variables[unname(kinds[sub("^b_", "", variables)]) %in% keep]
+  if (length(variables) == 0L) {
+    return(structure(empty_estimates(), n_found = 0L))
+  }
   out <- summarise_selected(
     posterior::subset_draws(draws, variable = variables), ci_level
   )
@@ -335,7 +370,9 @@ population_estimates <- function(draws, ci_level, ci_method, drop_constants,
   check_unique_terms(out, "term", call = call)
 
   structure(
-    as_estimates(out, "population", ci_level, ci_method),
+    as_estimates(
+      out, unname(kinds[sub("^b_", "", out$variable)]), ci_level, ci_method
+    ),
     n_found = n_found
   )
 }
@@ -714,7 +751,7 @@ estimates_from_draws <- function(draws,
   converged <- check_converged(converged, call = call)
   estimator <- check_estimator(estimator, call = call)
   level <- rlang::arg_match(
-    level, c("population", "subject", "sd", "cor"),
+    level, c("population", "subject", "effect", "sd", "cor"),
     multiple = TRUE,
     error_call = call
   )
@@ -750,10 +787,11 @@ estimates_from_draws <- function(draws,
   }
 
   pieces <- list()
-  if ("population" %in% level) {
+  coefficients <- intersect(c("population", "effect"), level)
+  if (length(coefficients) > 0L) {
     pieces$population <- population_estimates(
       draws, ci_level, ci_method, drop_constants,
-      call = call
+      keep = coefficients, call = call
     )
   }
   if ("subject" %in% level) {
@@ -820,9 +858,15 @@ fit_converged <- function(fit, draws) {
 #'
 #' @param fit A `brmsfit`, and so also a `bmmfit`.
 #' @param level Which estimates to return: `"population"`, `"subject"`,
-#'   `"sd"` (the group-level standard deviations), `"cor"` (the
-#'   group-level correlations), or several, in which case they are
-#'   stacked and the `level` column separates them.
+#'   `"effect"` (the contrasts of a `1 + task` design, see
+#'   [simulate_recovery()]'s `coding`), `"sd"` (the group-level standard
+#'   deviations), `"cor"` (the group-level correlations), or several, in
+#'   which case they are stacked and the `level` column separates them.
+#'
+#'   `"population"` and `"effect"` split the same `b_` coefficients: a
+#'   parameter whose coefficients include an `Intercept` has that
+#'   intercept as its population value and every other coefficient as an
+#'   effect. A fit with no such parameter has no `"effect"` rows.
 #' @param group The grouping factor subject-level, SD and correlation
 #'   estimates come from. `NULL` uses the fit's only grouping factor and
 #'   errors if there is more than one.
@@ -901,7 +945,8 @@ extract_estimates.default <- function(fit, ...) {
 #' @export
 extract_estimates.brmsfit <- function(fit,
                                       level = c(
-                                        "population", "subject", "sd", "cor"
+                                        "population", "subject", "effect",
+                                        "sd", "cor"
                                       ),
                                       group = NULL,
                                       ci_level = 0.95,

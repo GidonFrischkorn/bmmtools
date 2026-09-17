@@ -878,6 +878,40 @@ test_that("task formulas are cell means with three random-effect structures", {
   expect_error(recovery_formula(model, task_col = c("a", "b")), "task_col")
 })
 
+test_that("contrast coding writes an intercept and a task slope", {
+  skip_if_not_installed("bmm")
+  skip_if_no_bmm_sdt()
+  model <- bmm::mixture2p(resp_error = "y")
+  f <- function(re_cor) {
+    recovery_formula(
+      model,
+      re_cor = re_cor, task_col = "task", coding = "contrast"
+    )
+  }
+  expect_equal(
+    deparse(f("none")$kappa), "kappa ~ 1 + task + (1 + task || id)"
+  )
+  expect_equal(
+    deparse(f("within")$thetat), "thetat ~ 1 + task + (1 + task | id)"
+  )
+  expect_equal(
+    deparse(f("all")$kappa), "kappa ~ 1 + task + (1 + task | p | id)"
+  )
+
+  # cell means stay the default, untouched by the new argument
+  expect_equal(
+    deparse(recovery_formula(model, task_col = "task")$kappa),
+    "kappa ~ 0 + task + (0 + task || id)"
+  )
+
+  expect_error(
+    recovery_formula(model, coding = "contrast"), "task_col"
+  )
+  expect_error(
+    recovery_formula(model, task_col = "task", coding = "sum"), "coding"
+  )
+})
+
 test_that("task formulas pass the mock backend and match the truth terms", {
   skip_if_not_installed("bmm")
   skip_if_not_installed("brms")
