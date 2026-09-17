@@ -1,0 +1,294 @@
+# Changelog
+
+## bmmtools (development version)
+
+### Comparing estimators
+
+- [`fit_ml()`](https://www.gfrischkorn.org/bmmtools/reference/fit_ml.md)
+  estimates a model subject by subject with no pooling and returns the
+  estimates in the same tibble shape a hierarchical fit gives, so
+  [`recover_subjects()`](https://www.gfrischkorn.org/bmmtools/reference/recover.md)
+  can score both against one truth. It optimises bmm’s own generated
+  likelihood through `algorithm = "laplace"` and re-implements no model.
+  Flat priors are the default, so the mode is a maximum-likelihood
+  estimate rather than a penalised one; `prior = "default"` keeps bmm’s
+  priors. It exists to measure what hierarchical estimation buys, not to
+  recommend maximum likelihood for inference.
+
+- `fit_ml(method = "optim")` is a second route to the same estimates,
+  maximising bmm’s R density for the model directly with
+  [`optim()`](https://rdrr.io/r/stats/optim.html) and taking its
+  interval from the Hessian (`ci_method = "wald"`). It needs no compiler
+  and no Stan, which makes it the route that runs anywhere, and it
+  optimises each subject independently, so one subject at a boundary
+  cannot stall the rest. It is capped at the models bmmtools carries a
+  density for — the same six the simulation adapters cover — and `nll`
+  supplies one for anything else. Measured against the Stan route on 40
+  subjects of `mixture2p`: the same estimates to Monte Carlo error,
+  standard errors agreeing to a mean ratio of 1.000, and the same
+  `coverage` and `calibration_slope` to three decimals, in 0.35 s
+  against 8 s.
+
+- With `method = "stan"`, the default,
+  [`fit_ml()`](https://www.gfrischkorn.org/bmmtools/reference/fit_ml.md)
+  runs **one** fit for the whole data set rather than one per subject.
+  Under `p ~ 0 + id` the log posterior is a sum of per-subject terms, so
+  the joint mode is the vector of per-subject modes; this was checked
+  against independent optimisation of bmm’s own density and agreed to
+  3e-06 on the link scale.
+
+- A subject whose estimate leaves a finite range on the link scale, or
+  whose optimiser reports failure on the `optim` route, is reported with
+  `estimate = NA` and `converged = FALSE`, never dropped: the recovery
+  metrics drop incomplete pairs silently, so dropping would score
+  maximum likelihood on the easiest subjects and the hierarchical fit on
+  all of them. `attr(x, "ml_cells")` and
+  [`print()`](https://rdrr.io/r/base/print.html) carry the per-subject
+  counts.
+
+- `recovery_grid(ml = TRUE)` fits every cell subject by subject as well,
+  on the same simulated data, and scores both estimators against one
+  truth at the subject level, so the shrinkage comparison can be read
+  over a whole design rather than one data set. A Stan-route ML fit is
+  cached beside the cell’s other files; either route’s rows go into the
+  sidecar with the request that made them, and a resume reads them back
+  without refitting. A cell whose ML fit fails keeps its hierarchical
+  rows and is named in a warning, with the per-cell record in
+  `attr(x, "ml_cells")`. `ml = list(...)` passes arguments to
+  [`fit_ml()`](https://www.gfrischkorn.org/bmmtools/reference/fit_ml.md),
+  so `ml = list(method = "optim")` runs the whole design without a
+  compiler. The sidecar records which route made its rows and a resume
+  that asks for the other one refits.
+
+- A new article, “Hierarchical estimation against subject-wise maximum
+  likelihood”, runs the comparison end to end on `mixture2p`: one data
+  set fitted both ways and scored against one truth, then the same
+  contrast over a grid of trial counts. It is where the estimator table
+  of “Recovery summary columns” stops being a conjugate toy.
+
+- Recovery objects carry an `estimator` column, and
+  [`summary()`](https://rdrr.io/r/base/summary.html) groups by it. Two
+  estimators of the same parameter — a hierarchical posterior and a
+  subject-wise maximum-likelihood fit, say — can be bound together and
+  scored against one truth without being pooled into a single bias and
+  RMSE.
+  [`extract_estimates()`](https://www.gfrischkorn.org/bmmtools/reference/extract_estimates.md)
+  gains an `estimator` argument (default `"bayes"`), and a hand-built
+  estimates tibble may carry the column itself.
+
+- `plot_recovery(color_by = "estimator", annotate = TRUE)` labels each
+  panel once per estimator instead of refusing to annotate it.
+
+- [`recover_subjects()`](https://www.gfrischkorn.org/bmmtools/reference/recover.md)
+  warns when two estimators were not scored on the same subjects,
+  because the metrics drop incomplete pairs in silence and the rows
+  would otherwise not be comparable.
+
+#### Breaking
+
+- [`summary()`](https://rdrr.io/r/base/summary.html) on a recovery
+  object now returns its rows in the order the estimates arrived rather
+  than sorted by term, so that adding a second estimator does not
+  reshuffle the rows of the first. A summary of one estimator holds the
+  same numbers as before, in a different order.
+- `estimator` is a required column of the recovery contract, so a
+  `bmmtools_recovery` object saved by 0.1.0 no longer satisfies it.
+  Restore one with `dplyr::mutate(old, estimator = "bayes")`. Objects
+  built by
+  [`recover()`](https://www.gfrischkorn.org/bmmtools/reference/recover.md),
+  [`recover_subjects()`](https://www.gfrischkorn.org/bmmtools/reference/recover.md)
+  and
+  [`recovery_grid()`](https://www.gfrischkorn.org/bmmtools/reference/recovery_grid.md)
+  are filled automatically and are unaffected.
+
+## bmmtools 0.1.0
+
+First release. bmmtools validates cognitive measurement models fitted
+with bmm: one engine — simulate, fit, score — and a scorer per question.
+
+### Simulate
+
+- [`simulate_recovery()`](https://www.gfrischkorn.org/bmmtools/reference/simulate_recovery.md)
+  turns a bmm model and population values on the link scale into a data
+  set and the truth that produced it. Subject values can be correlated
+  (`cors`) and drawn together with observed covariates (`covariates`);
+  `pars`, `sds` and `cors` may be functions evaluated under the seed.
+  `tasks` and `task_col` give every subject every task, so each free
+  parameter has one value per task under the term `kappa_task1`, brms’s
+  name for the cell mean. The truth lists the population values, the
+  between-subject SDs, every correlation pair, the subject values and
+  the covariates.
+- [`cors_from_factors()`](https://www.gfrischkorn.org/bmmtools/reference/cors_from_factors.md)
+  builds a correlation matrix from factor loadings.
+- [`recovery_formula()`](https://www.gfrischkorn.org/bmmtools/reference/recovery_formula.md)
+  writes the formula a recovery study needs: a random intercept over
+  `id` for every free parameter, correlated across parameters with
+  `re_cor = "all"`, within each parameter’s tasks with
+  `re_cor = "within"`. With `task_col` it writes cell-means formulas
+  such as `kappa ~ 0 + task + (0 + task || id)`.
+- [`recovery_component()`](https://www.gfrischkorn.org/bmmtools/reference/recovery_component.md)
+  and
+  [`simulate_components()`](https://www.gfrischkorn.org/bmmtools/reference/simulate_components.md)
+  simulate several models for the same simulated people, so parameters
+  of different models can be correlated. The subject values of all
+  components and the covariates are one multivariate normal draw, and
+  terms are prefixed with the component name.
+- Six generator adapters ship — `sdt_yn`, `sdt_mafc`, `ezdm`, `ddm`,
+  `mixture2p` and `sdm` — and a model without one works the same way
+  once you supply `generator`.
+
+### Fit and run a study
+
+- [`fit_cached()`](https://www.gfrischkorn.org/bmmtools/reference/fit_cached.md)
+  fits once and refits only when something that determines the fit
+  changes. The key covers the formula, data, model, prior, seed, sampler
+  settings, backend and the installed versions of bmm, brms and the Stan
+  toolchain, and the message names what changed.
+- [`fit_components()`](https://www.gfrischkorn.org/bmmtools/reference/fit_components.md)
+  fits each component of a set on its own, with an optional prior per
+  component.
+- [`check_convergence()`](https://www.gfrischkorn.org/bmmtools/reference/check_convergence.md)
+  summarises rhat, bulk and tail ESS, divergent transitions and
+  tree-depth hits into one row and a pass verdict. A fit that fails is
+  still scored, and the verdict travels with the estimates as the
+  `converged` column.
+- [`recovery_grid()`](https://www.gfrischkorn.org/bmmtools/reference/recovery_grid.md)
+  runs the loop over a design grid of subjects, trials and replications:
+  one durable file per cell, a resume that needs no temporary state, a
+  smoke mode, a preflight fit that catches a compile error before any
+  cell runs, and cells ordered so the first completed block spans the
+  design. Each cell writes a sidecar holding everything scored from the
+  fit, so a resume can read the sidecars and the fits can be deleted.
+  Grid columns set population values, SDs, task terms and correlations
+  per row, and `model`, `formula`, `pars`, `sds` and `cors` may be
+  functions of the row. A list of components as `model` simulates one
+  set per cell and fits every component separately.
+
+### Score recovery
+
+- [`extract_estimates()`](https://www.gfrischkorn.org/bmmtools/reference/extract_estimates.md)
+  returns the population- and subject-level estimates of a fit as a
+  tibble; `level = "sd"` and `level = "cor"` add the between-subject
+  standard deviations and correlations on the link scale, with
+  correlations named `kappa__thetat` whichever order brms used.
+- [`extract_subject_draws()`](https://www.gfrischkorn.org/bmmtools/reference/extract_subject_draws.md)
+  returns the per-draw subject values as an array of iterations, chains,
+  subjects and parameters.
+- [`recover()`](https://www.gfrischkorn.org/bmmtools/reference/recover.md)
+  and
+  [`recover_subjects()`](https://www.gfrischkorn.org/bmmtools/reference/recover.md)
+  score estimates against the generating values, on the natural scale by
+  default. `recover(level = c("population", "sd"))` also scores the SDs,
+  always on the link scale.
+- [`summary()`](https://rdrr.io/r/base/summary.html) of a recovery
+  reports bias, RMSE, credible-interval coverage, interval width and
+  correlations, including Lin’s concordance with a 95% interval, its
+  accuracy factor, the scale and location shifts, a calibration slope
+  and the spread of the generating values. At subject level the
+  concordance is pooled across replications on Lin’s Z scale; the
+  geometric-mean pooling of the scale shift and slope has not been
+  checked by simulation.
+- [`extract_correlations()`](https://www.gfrischkorn.org/bmmtools/reference/extract_correlations.md)
+  estimates between-subject correlations three ways — the model’s own
+  group-level correlation, the per-draw correlation across subjects, and
+  the correlation of posterior means — and
+  [`recover_correlations()`](https://www.gfrischkorn.org/bmmtools/reference/recover_correlations.md)
+  scores them against both the generating correlation and the one the
+  simulated subjects actually had. Its
+  [`summary()`](https://rdrr.io/r/base/summary.html) adds the rate at
+  which intervals exclude zero, as a false-positive rate or as power.
+  Across separate fits these correlations are attenuated by the
+  reliabilities of both estimates, and the documentation says which
+  routes are not.
+- [`subject_table()`](https://www.gfrischkorn.org/bmmtools/reference/subject_table.md)
+  puts true and estimated subject values side by side, one row per
+  subject, for a simulation and its fit or for a whole grid. It is the
+  input for a structural equation model of true against estimated
+  values.
+- [`recovery_ccc()`](https://www.gfrischkorn.org/bmmtools/reference/recovery_ccc.md)
+  computes the same concordance columns for any pair of vectors.
+- [`inverse_link()`](https://www.gfrischkorn.org/bmmtools/reference/inverse_link.md)
+  transforms values from the link scale for the twelve links bmm uses.
+
+### Prior predictive checks
+
+- [`prior_check()`](https://www.gfrischkorn.org/bmmtools/reference/prior_check.md)
+  samples from the prior only and summarises the prior-predictive draws
+  on the scale of the response: floor and ceiling rates, a quantile
+  profile, or a statistic you write yourself. Several prior sets can be
+  compared in one call.
+
+### Correctness
+
+- [`sbc()`](https://www.gfrischkorn.org/bmmtools/reference/sbc.md) runs
+  simulation-based calibration for a bmm model: it fits the prior once,
+  turns its draws into data sets, fits each of them, and returns the SBC
+  package’s own `SBC_results`, so
+  [`SBC::plot_rank_hist()`](https://hyunjimoon.github.io/SBC/reference/plot_rank_hist.html)
+  and the rest apply unchanged. `level` picks which draws are ranked —
+  the population parameters, the between-subject SDs, their
+  correlations, and with `level = "subject"` the subject-level draws,
+  one per subject and varying parameter. Whatever is ranked, everything
+  the formula implies is always drawn from the prior and simulated from,
+  because the ranks are uniform only when the data come from the joint
+  prior.
+- `sbc(generator =)` lifts the restriction on `formula`. The function
+  receives every `b_`, `sd_`, `cor_` and `r_` draw of the prior fit as
+  one named vector, under the fit’s own draw names, and returns the data
+  frame to fit, so any formula works and the truth names equal the draw
+  names by construction.
+- [`sbc()`](https://www.gfrischkorn.org/bmmtools/reference/sbc.md) says
+  what went wrong. When a prior draw is one the model cannot generate
+  from, the error names the simulation and what that draw held. When any
+  fit exceeds bmmtools’ rhat 1.05 or falls below SBC’s rank-ESS 0.5, one
+  warning reports both counts and names SBC’s stricter rhat.
+- [`cross_check()`](https://www.gfrischkorn.org/bmmtools/reference/cross_check.md)
+  compares a fit’s estimates with a reference — a closed form such as
+  `bmm::sdt_d()`, another implementation, or published values — and
+  returns `bias`, whether the fit’s interval covers the reference and
+  whether the two intervals overlap, in the same tibble shape the other
+  scorers return. The reference is a comparison, not a truth, and the
+  documentation says so.
+
+### Plots
+
+- [`plot_recovery()`](https://www.gfrischkorn.org/bmmtools/reference/plot_recovery.md)
+  plots estimates against generating values, one panel per parameter,
+  with credible intervals and a line at equality, and with
+  `annotate = TRUE` labels each panel with r and the concordance. It is
+  a generic and also plots a correlation recovery, coloured by
+  estimator, and a cross-check, with the reference on x.
+- [`plot_prior_check()`](https://www.gfrischkorn.org/bmmtools/reference/plot_prior_check.md)
+  plots prior-predictive draws against the observed data.
+
+### Data, documentation and infrastructure
+
+- `recovery_mixture2p` and `prior_check_sdt_yn` are example results, so
+  the examples run without Stan.
+- A pkgdown website with six articles:
+  <https://www.gfrischkorn.org/bmmtools/>.
+- A hex logo, `man/figures/logo.png`.
+- DESCRIPTION carries `Remotes: hyunjimoon/SBC`, so `pak` and `remotes`
+  resolve the SBC entry in Suggests; SBC is not on CRAN.
+- Licensed under GPL (\>= 2), compatible with bmm’s GPL-2.
+- The signal-detection adapters resolve bmm’s `rsdt_yn()`,
+  `rsdt_mafc()`, `dsdt_yn()` and `dsdt_mafc()` by name at call time. No
+  released bmm exports them, so a literal `bmm::rsdt_yn()` made
+  `R CMD check` report a missing object wherever a released bmm was
+  installed. Behaviour is unchanged where the functions exist, and an
+  absent one is now a named error rather than R’s bare “not an exported
+  object”.
+
+### Known limitations
+
+- bmm’s default prior on the group-level SD of a log-link parameter such
+  as `kappa` is wide enough that
+  [`bmm::rmixture2p()`](https://venpopov.com/bmm/reference/mixture2p_dist.html)
+  can fail on draws from it, so
+  [`sbc()`](https://www.gfrischkorn.org/bmmtools/reference/sbc.md) on
+  `mixture2p` needs a prior given explicitly. The walkthrough article
+  shows one.
+- [`cross_check()`](https://www.gfrischkorn.org/bmmtools/reference/cross_check.md)
+  takes one fit and compares at the population level; `"sd"` and `"cor"`
+  references, and a list of fits, are not supported.
+- `subjects = "fixed"` is an error for component sets.
