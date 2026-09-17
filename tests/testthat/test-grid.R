@@ -1374,6 +1374,7 @@ test_that("ml is refused with components", {
 # what the review of milestone 8 found ------------------------------------
 
 test_that("an ml route clash is refused before any cell is fitted", {
+  skip_if_not_installed("bmm")
   dir <- withr::local_tempdir()
   mock <- grid_mock_fitter()
   run <- function(ml) {
@@ -1438,6 +1439,7 @@ test_that("a grid whose ML fit fails on some subjects says so", {
 })
 
 test_that("an unknown ml name is refused on the optim route", {
+  skip_if_not_installed("bmm")
   dir <- withr::local_tempdir()
   mock <- grid_mock_fitter()
   # on the stan route an unknown name is deliberate: it reaches the Stan
