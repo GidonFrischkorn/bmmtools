@@ -1,5 +1,17 @@
 # bmmtools (development version)
 
+## Running a study
+
+* `fit_cached()` records how long the fit took. The time is written to
+  `<file>.meta.rds` beside the fit and comes back in the
+  `bmmtools_cache` attribute as `seconds`, including when the call
+  reused a cached fit, so a resumed study still reports the time each
+  fit once took rather than the time it took to read it. The time is
+  deliberately not part of the cache key: a key component that changed
+  with every run would differ from every stored key and refit
+  everything. A fit cached before this release has no meta file and
+  reports `NA`.
+
 ## Comparing estimators
 
 * `fit_ml()` estimates a model subject by subject with no pooling and

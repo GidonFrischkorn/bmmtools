@@ -218,6 +218,8 @@ test_that("the .rds extension is added when missing and kept when present", {
   expect_identical(cache_paths("a/b/cell.rds")$rds, "a/b/cell.rds")
   expect_identical(cache_paths("a/b/cell")$key, "a/b/cell.key")
   expect_identical(cache_paths("a/b/cell.rds")$key, "a/b/cell.key")
+  expect_identical(cache_paths("a/b/cell")$meta, "a/b/cell.meta.rds")
+  expect_identical(cache_paths("a/b/cell.rds")$meta, "a/b/cell.meta.rds")
 })
 
 test_that("the formula key ignores the formula's environment", {
@@ -432,9 +434,83 @@ test_that("writes go through a temporary name and leave no stray file", {
   mock <- mock_fitter()
   file <- file.path(dir, "cell")
   suppressMessages(cache_call(mock, file, seed = 1))
-  expect_setequal(list.files(dir), c("cell.rds", "cell.key"))
+  expect_setequal(
+    list.files(dir), c("cell.rds", "cell.key", "cell.meta.rds")
+  )
   expect_setequal(
     list.files(dir, all.files = TRUE, no.. = TRUE),
-    c("cell.rds", "cell.key")
+    c("cell.rds", "cell.key", "cell.meta.rds")
   )
+})
+
+# Milestone 9.1b: the fit's wall time, recorded beside the fit and never
+# in the key. See local/dev/spec-milestone-9-study-support.md, D42.
+
+test_that("a fit records its wall time in a meta file beside the key", {
+  dir <- withr::local_tempdir()
+  mock <- mock_fitter()
+  file <- file.path(dir, "cell-01")
+
+  fit <- suppressMessages(cache_call(mock, file, seed = 1, iter = 200))
+
+  expect_true(file.exists(paste0(file, ".meta.rds")))
+  meta <- readRDS(paste0(file, ".meta.rds"))
+  expect_named(meta, c("seconds", "fitted_at", "bmmtools_version"))
+  expect_type(meta$seconds, "double")
+  expect_false(is.na(meta$seconds))
+  expect_identical(meta$bmmtools_version, bmmtools_version())
+  expect_identical(attr(fit, "bmmtools_cache")$seconds, meta$seconds)
+})
+
+test_that("a reused fit reports the time the first fit took", {
+  dir <- withr::local_tempdir()
+  mock <- mock_fitter()
+  file <- file.path(dir, "cell-01")
+
+  first <- suppressMessages(cache_call(mock, file, seed = 1, iter = 200))
+  second <- suppressMessages(cache_call(mock, file, seed = 1, iter = 200))
+
+  expect_identical(mock$calls$n, 1L)
+  expect_true(attr(second, "bmmtools_cache")$reused)
+  expect_false(is.na(attr(second, "bmmtools_cache")$seconds))
+  expect_identical(
+    attr(second, "bmmtools_cache")$seconds,
+    attr(first, "bmmtools_cache")$seconds
+  )
+})
+
+test_that("a fit cached before there were meta files reports NA seconds", {
+  dir <- withr::local_tempdir()
+  mock <- mock_fitter()
+  file <- file.path(dir, "cell-01")
+
+  suppressMessages(cache_call(mock, file, seed = 1, iter = 200))
+  unlink(paste0(file, ".meta.rds"))
+
+  expect_silent(
+    fit <- suppressMessages(cache_call(mock, file, seed = 1, iter = 200))
+  )
+  expect_identical(mock$calls$n, 1L)
+  expect_identical(attr(fit, "bmmtools_cache")$seconds, NA_real_)
+})
+
+test_that("the wall time is not a cache component, so it never refits", {
+  # The regression test for D42. read_cache_key() turns every name=value
+  # line into a component and changed_components() unions the names, so a
+  # `seconds=` line in the key would differ from every stored key and
+  # refit every cell of a resumed study.
+  dir <- withr::local_tempdir()
+  mock <- mock_fitter()
+  file <- file.path(dir, "cell-01")
+
+  suppressMessages(cache_call(mock, file, seed = 1, iter = 200))
+  stored <- read_cache_key(paste0(file, ".key"))
+  fresh <- cache_key(
+    fake_bmmformula(a = a ~ 1 + (1 | id)), fake_data(), fake_model(),
+    NULL, list(seed = 1, iter = 200)
+  )
+
+  expect_false(any(grepl("second|time|elapsed", names(stored$components))))
+  expect_identical(changed_components(stored, fresh), character(0))
+  expect_identical(stored$key, fresh$key)
 })

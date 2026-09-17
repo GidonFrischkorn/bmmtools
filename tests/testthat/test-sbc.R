@@ -786,7 +786,13 @@ test_that("file caches the prior fit and nothing else", {
 
   # set_path() appends the set name, as prior_check() does
   expect_true(file.exists(paste0(path, "-sbc.rds")))
-  expect_length(list.files(dirname(path), pattern = "\\.rds$"), 1L)
+  # one cached fit, and only the prior fit: its `.meta.rds` companion
+  # (the fit's wall time) is not another fit
+  fits <- setdiff(
+    list.files(dirname(path), pattern = "\\.rds$"),
+    list.files(dirname(path), pattern = "\\.meta\\.rds$")
+  )
+  expect_length(fits, 1L)
 })
 
 test_that("a list of priors is an error pointing at prior_check", {

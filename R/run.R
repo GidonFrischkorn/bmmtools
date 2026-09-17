@@ -32,7 +32,48 @@ cache_paths <- function(file) {
     )
   }
   stem <- sub("\\.rds$", "", file)
-  list(rds = paste0(stem, ".rds"), key = paste0(stem, ".key"))
+  list(
+    rds = paste0(stem, ".rds"),
+    key = paste0(stem, ".key"),
+    meta = paste0(stem, ".meta.rds")
+  )
+}
+
+#' Write and read the fit's wall time, beside the fit and outside the key
+#'
+#' How long a fit took is a fact about the run, not about the fit, so it
+#' must not enter the cache key: `read_cache_key()` turns every
+#' `name=value` line of a key file into a component and
+#' `changed_components()` unions the names of the stored and the fresh
+#' key, so a `seconds=` line would differ from every key ever written and
+#' refit every cached fit on every run. It goes in its own file, which
+#' nothing compares.
+#'
+#' A fit cached before this file existed has no meta file, and reports
+#' `NA` seconds rather than failing.
+#'
+#' @noRd
+write_cache_meta <- function(path, seconds) {
+  meta <- list(
+    seconds = as.double(seconds),
+    fitted_at = Sys.time(),
+    bmmtools_version = bmmtools_version()
+  )
+  write_atomic(path, function(tmp) saveRDS(meta, tmp))
+  meta
+}
+
+#' @noRd
+read_cache_seconds <- function(path) {
+  if (!file.exists(path)) {
+    return(NA_real_)
+  }
+  meta <- tryCatch(readRDS(path), error = function(e) NULL)
+  seconds <- meta$seconds
+  if (!is.numeric(seconds) || length(seconds) != 1L) {
+    return(NA_real_)
+  }
+  as.double(seconds)
 }
 
 #' Deparse every formula inside an object
@@ -295,7 +336,8 @@ cache_read <- function(paths, key, lookup, call = rlang::caller_env()) {
     }
   )
   attr(fit, "bmmtools_cache") <- list(
-    file = paths$rds, key = key$key, reused = TRUE
+    file = paths$rds, key = key$key, reused = TRUE,
+    seconds = read_cache_seconds(paths$meta)
   )
   fit
 }
@@ -354,13 +396,20 @@ cache_announce <- function(paths, lookup, refit) {
 #'   inject a stand-in so that no model is compiled.
 #'
 #' @return The fit, with an attribute `bmmtools_cache`: a list of
-#'   `file`, `key` and `reused`.
+#'   `file`, `key`, `reused` and `seconds`, the wall time the fit took
+#'   when it was run, which is the first fit's time when this call reused
+#'   one and `NA` for a fit cached before bmmtools recorded it.
 #'
 #' @details
 #' The fit and the key are each written to a temporary name and renamed
 #' into place, so an interrupted write never leaves a truncated file
 #' under the final name; the key is written after the fit. A cached fit
 #' that cannot be read is reported as such rather than as a parse error.
+#'
+#' How long the fit took is written to `<file>.meta.rds`, beside the fit
+#' and outside the key. It is deliberately not a key component: a
+#' component that changes with every run would differ from every stored
+#' key and refit everything a resumed study had already fitted.
 #'
 #' @examples
 #' \dontrun{
@@ -408,15 +457,18 @@ fit_cached <- function(formula,
     rlang::check_installed("bmm", "to fit a model.")
     fitter <- bmm::bmm
   }
+  started <- Sys.time()
   fit <- rlang::exec(
     fitter,
     formula = formula, data = data, model = model, prior = prior, !!!dots
   )
+  seconds <- as.double(difftime(Sys.time(), started, units = "secs"))
 
   write_atomic(paths$rds, function(tmp) saveRDS(fit, tmp))
+  meta <- write_cache_meta(paths$meta, seconds)
   write_cache_key(paths$key, key)
   attr(fit, "bmmtools_cache") <- list(
-    file = paths$rds, key = key$key, reused = FALSE
+    file = paths$rds, key = key$key, reused = FALSE, seconds = meta$seconds
   )
   fit
 }

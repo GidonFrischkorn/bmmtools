@@ -45,7 +45,9 @@ inject a stand-in so that no model is compiled.}
 }
 \value{
 The fit, with an attribute \code{bmmtools_cache}: a list of
-\code{file}, \code{key} and \code{reused}.
+\code{file}, \code{key}, \code{reused} and \code{seconds}, the wall time the fit took
+when it was run, which is the first fit's time when this call reused
+one and \code{NA} for a fit cached before bmmtools recorded it.
 }
 \description{
 A cache for the fits a recovery study produces. brms's own \code{file}
@@ -64,6 +66,11 @@ The fit and the key are each written to a temporary name and renamed
 into place, so an interrupted write never leaves a truncated file
 under the final name; the key is written after the fit. A cached fit
 that cannot be read is reported as such rather than as a parse error.
+
+How long the fit took is written to \verb{<file>.meta.rds}, beside the fit
+and outside the key. It is deliberately not a key component: a
+component that changes with every run would differ from every stored
+key and refit everything a resumed study had already fitted.
 }
 \examples{
 \dontrun{
