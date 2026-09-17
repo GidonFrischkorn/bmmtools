@@ -580,10 +580,16 @@ echo_generator <- function(pars, n_trials, model) {
 
 task_pars <- c(kappa = log(8), kappa_task2 = log(4), thetat = 0.5)
 
-test_that("tasks = NULL reproduces the simulations of 273cc47 bit for bit", {
+test_that("tasks = NULL reproduces the simulations of 273cc47", {
   skip_if_not_installed("bmm")
   # Built by running exactly these calls at commit 273cc47, before the
   # task dimension existed, and saving the fields compared here.
+  # Compared with a tolerance, not bit for bit: the fixture was built on
+  # macOS and the correlated draw goes through a different LAPACK on the
+  # Linux runner, where the values differ in the last one or two ulp.
+  # testthat's default tolerance is ~1.5e-8, eight orders of magnitude
+  # above that noise, so a changed RNG stream or a changed simulation
+  # still fails this loudly --- which is the regression it exists for.
   head <- readRDS(test_path("fixtures", "simulation-273cc47.rds"))
   model <- bmm::mixture2p(resp_error = "y")
   gen <- function(pars, n_trials, model) {
@@ -605,8 +611,8 @@ test_that("tasks = NULL reproduces the simulations of 273cc47 bit for bit", {
     seed = 7
   )
   fields <- names(head$correlated)
-  expect_identical(unclass(correlated)[fields], head$correlated)
-  expect_identical(unclass(plain)[fields], head$plain)
+  expect_equal(unclass(correlated)[fields], head$correlated)
+  expect_equal(unclass(plain)[fields], head$plain)
   expect_null(correlated$tasks)
   expect_null(correlated$task_col)
   expect_true(all(c("tasks", "task_col") %in% names(correlated)))
