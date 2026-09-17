@@ -19,7 +19,7 @@ prior_check_sdt_yn
 \description{
 A precomputed \code{\link[=prior_check]{prior_check()}} result, shipped so that \code{summary()} and
 \code{\link[=plot_prior_check]{plot_prior_check()}} can be tried without compiling a model. Two
-prior sets are compared for \code{\link[bmm:sdt_yn]{bmm::sdt_yn()}} with a random intercept on
+prior sets are compared for \code{bmm::sdt_yn()} with a random intercept on
 \code{d} and \code{criterion}: bmm's defaults (\code{default}) and the defaults with
 \code{normal(0, 1)} priors on both between-subject SDs (\code{narrow_sd}). The
 data are 20 simulated subjects with 50 trials per stimulus class; 100

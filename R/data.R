@@ -29,7 +29,7 @@
 #'
 #' A precomputed [prior_check()] result, shipped so that `summary()` and
 #' [plot_prior_check()] can be tried without compiling a model. Two
-#' prior sets are compared for [bmm::sdt_yn()] with a random intercept on
+#' prior sets are compared for `bmm::sdt_yn()` with a random intercept on
 #' `d` and `criterion`: bmm's defaults (`default`) and the defaults with
 #' `normal(0, 1)` priors on both between-subject SDs (`narrow_sd`). The
 #' data are 20 simulated subjects with 50 trials per stimulus class; 100
