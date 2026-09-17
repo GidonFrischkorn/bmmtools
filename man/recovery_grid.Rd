@@ -25,6 +25,7 @@ recovery_grid(
   levels = c("population", "subject"),
   correlations = NULL,
   cor_scale = "link",
+  convergence = NULL,
   ml = FALSE,
   smoke = FALSE,
   preflight = TRUE,
@@ -107,6 +108,14 @@ correlations of every cell, pairs with covariates included.}
 on, \code{"link"} or \code{"natural"}. The \code{"model"} estimator exists on the
 link scale only.}
 
+\item{convergence}{\code{NULL}, the default, gates every cell with
+\code{\link[=check_convergence]{check_convergence()}}'s defaults. A named list gives its arguments
+(\code{rhat_max}, \code{ess_bulk_min}, \code{ess_tail_min}, \code{divergent_max},
+\code{treedepth_max}, \code{variables}), checked before any cell runs. The
+gate is computed once per cell and its whole diagnostics row is
+stored in the cell's sidecar, so a study can report why a cell
+failed without reading the fit.}
+
 \item{ml}{\code{FALSE}, the default, fits every cell hierarchically only.
 \code{TRUE} also fits every cell subject by subject with \code{\link[=fit_ml]{fit_ml()}} on
 the same simulated data, and scores both estimators against one
@@ -138,8 +147,17 @@ Its attributes:
 \itemize{
 \item \code{cells}: a tibble with one row per cell (\code{condition},
 \code{replication}, \code{n_subjects}, \code{n_trials}, \code{seed}, \code{file}, \code{status},
-\code{elapsed} in seconds, \code{converged}).
-\item \code{grid}: the grid as run.
+\code{elapsed} in seconds, \code{converged}), followed by the cell's
+convergence record (\code{max_rhat}, \code{min_ess_bulk}, \code{min_ess_tail},
+\code{n_divergent}, \code{n_max_treedepth}, \code{n_variables}, \code{failed}) and
+what it was run with (\code{fit_seconds}, \code{chains}, \code{iter},
+\code{threads}). All of these come from the cell's sidecar, so a
+resumed grid reports them without reading a fit. \code{elapsed} is how
+long the cell took in this run, read time included;
+\code{fit_seconds} is how long the fit itself took when it was run.
+\item \code{grid}: the grid as run. The same record, with everything else the
+grid was called with, is written to \verb{<dir>/grid.rds}, which is
+what \code{collect_grid()} reads.
 \item \code{correlations}: with \code{correlations} requested, a
 \code{bmmtools_cor_recovery} from \code{\link[=recover_correlations]{recover_correlations()}} over every
 cell, with \code{condition} and \code{replication}; otherwise \code{NULL}.

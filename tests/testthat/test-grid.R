@@ -37,7 +37,10 @@ test_that("a small grid runs end to end and scores both levels", {
   expect_equal(nrow(cells), 4L)
   expect_named(cells, c(
     "condition", "replication", "n_subjects", "n_trials", "seed", "file",
-    "status", "elapsed", "converged"
+    "status", "elapsed", "converged",
+    "max_rhat", "min_ess_bulk", "min_ess_tail", "n_divergent",
+    "n_max_treedepth", "n_variables", "failed",
+    "fit_seconds", "chains", "iter", "threads"
   ))
   expect_true(all(cells$status == "ok"))
   expect_true(all(file.exists(cells$file)))
@@ -463,7 +466,8 @@ test_that("each cell writes a sidecar with the documented fields", {
   sidecar <- readRDS(file.path(dir, "cell-2-rep-1-est.rds"))
   expect_named(sidecar, c(
     "key", "bmmtools_version", "levels", "correlations", "cor_scale",
-    "estimates", "cor_estimates", "subject_means"
+    "estimates", "cor_estimates", "subject_means", "diagnostics",
+    "fit_seconds", "sampler"
   ))
 
   sim <- readRDS(file.path(dir, "cell-2-rep-1-sim.rds"))
@@ -1112,7 +1116,10 @@ test_that("ml = TRUE leaves the cells attribute as it was", {
   expect_equal(nrow(cells), 4L)
   expect_named(cells, c(
     "condition", "replication", "n_subjects", "n_trials", "seed", "file",
-    "status", "elapsed", "converged"
+    "status", "elapsed", "converged",
+    "max_rhat", "min_ess_bulk", "min_ess_tail", "n_divergent",
+    "n_max_treedepth", "n_variables", "failed",
+    "fit_seconds", "chains", "iter", "threads"
   ))
 })
 
@@ -1158,7 +1165,8 @@ test_that("the sidecar stores the ML record and rows; a resume reads them", {
   sidecar <- readRDS(file.path(dir, "cell-2-rep-1-est.rds"))
   expect_named(sidecar, c(
     "key", "bmmtools_version", "levels", "correlations", "cor_scale", "ml",
-    "estimates", "cor_estimates", "subject_means", "ml_estimates"
+    "estimates", "cor_estimates", "subject_means", "diagnostics",
+    "fit_seconds", "sampler", "ml_estimates"
   ))
   # every fit_ml() argument that changes the rows, at its default when not
   # given --- `start` and `nll` belong to the optim route and are NULL here
@@ -1452,4 +1460,147 @@ test_that("an unknown ml name is refused on the optim route", {
     "ci_levl"
   )
   expect_identical(mock$calls$n, 0L)
+})
+
+# Milestone 9.1: the convergence gate as an argument, the cell's
+# diagnostics in its sidecar, and the grid's own record. See
+# local/dev/spec-milestone-9-study-support.md, D41.
+
+test_that("each cell stores a diagnostics row in its sidecar", {
+  skip_if_not_installed("bmm")
+  dir <- withr::local_tempdir()
+
+  out <- suppressMessages(grid_run(dir, grid_mock_fitter(), reps = 1L))
+
+  sidecars <- list.files(dir, pattern = "est\\.rds$", full.names = TRUE)
+  expect_length(sidecars, 2L)
+  stored <- readRDS(sidecars[[1L]])
+  expect_named(stored$diagnostics, names(empty_diagnostics()))
+  # a mock fit is not a brmsfit, so the gate cannot be applied to it and
+  # every number is missing --- but the row is there, and has one shape
+  expect_true(all(is.na(unlist(stored$diagnostics))))
+  expect_type(stored$fit_seconds, "double")
+  expect_named(stored$sampler, c(
+    "chains", "iter", "warmup", "thin", "threads", "cores", "backend",
+    "algorithm"
+  ))
+  expect_identical(stored$sampler$chains, 2)
+  expect_identical(stored$sampler$iter, 400)
+
+  cells <- attr(out, "cells")
+  expect_true(all(is.na(cells$max_rhat)))
+  expect_true(all(cells$fit_seconds >= 0))
+  expect_identical(cells$chains, c(2L, 2L))
+  expect_identical(cells$iter, c(400L, 400L))
+  # a fit the gate cannot judge keeps the verdict its own method reaches
+  expect_true(all(cells$converged))
+})
+
+test_that("a resumed cell reports the fit's time, not the read's", {
+  skip_if_not_installed("bmm")
+  dir <- withr::local_tempdir()
+
+  first <- suppressMessages(grid_run(dir, grid_mock_fitter(), reps = 1L))
+  mock <- grid_mock_fitter()
+  second <- suppressMessages(grid_run(dir, mock, reps = 1L))
+
+  expect_identical(mock$calls$n, 0L)
+  expect_identical(
+    attr(second, "cells")$fit_seconds, attr(first, "cells")$fit_seconds
+  )
+})
+
+test_that("the grid writes a record of what it was run with", {
+  skip_if_not_installed("bmm")
+  dir <- withr::local_tempdir()
+
+  suppressMessages(grid_run(dir, grid_mock_fitter(), reps = 1L))
+
+  path <- file.path(dir, "grid.rds")
+  expect_true(file.exists(path))
+  record <- readRDS(path)
+  expect_identical(record$grid, small_grid())
+  expect_identical(record$reps, 1L)
+  expect_identical(record$seed, 100)
+  expect_identical(record$levels, c("population", "subject"))
+  expect_identical(record$scale, "natural")
+  expect_identical(record$bmmtools_version, bmmtools_version())
+  expect_identical(record$sampler$chains, 2)
+
+  # the same call rewrites nothing and says nothing
+  expect_no_message(
+    suppressMessages(
+      grid_run(dir, grid_mock_fitter(), reps = 1L),
+      classes = "bmmtools_cache_message"
+    )
+  )
+})
+
+test_that("a directory reused for a different design says the record changed", {
+  skip_if_not_installed("bmm")
+  dir <- withr::local_tempdir()
+  suppressMessages(grid_run(dir, grid_mock_fitter(), reps = 1L))
+
+  expect_message(
+    suppressMessages(
+      grid_run(dir, grid_mock_fitter(), reps = 2L),
+      classes = "bmmtools_cache_message"
+    ),
+    "reps"
+  )
+})
+
+test_that("convergence gives check_convergence() its thresholds", {
+  skip_if_not_installed("bmm")
+  dir <- withr::local_tempdir()
+
+  expect_error(
+    grid_run(dir, grid_mock_fitter(), convergence = list(rhat = 1.01)),
+    "no argument"
+  )
+  expect_error(
+    grid_run(dir, grid_mock_fitter(), convergence = list(1.01)),
+    "named list"
+  )
+  expect_error(
+    grid_run(dir, grid_mock_fitter(), convergence = "strict"),
+    "named list"
+  )
+
+  # a valid set is accepted and recorded
+  out <- suppressMessages(grid_run(
+    dir, grid_mock_fitter(), reps = 1L,
+    convergence = list(rhat_max = 1.01, ess_tail_min = 400)
+  ))
+  record <- readRDS(file.path(dir, "grid.rds"))
+  expect_identical(
+    record$convergence, list(rhat_max = 1.01, ess_tail_min = 400)
+  )
+  expect_s3_class(out, "bmmtools_recovery")
+})
+
+test_that("the gate is computed once and its verdict reaches the estimates", {
+  skip_if_not_installed("brms")
+  fit <- readRDS(test_path("fixtures", "mixture2p-fit.rds"))
+  request <- extraction_request(levels = "population")
+
+  cell <- extract_cell(fit, list(truth = list(subjects = data.frame())), request)
+  expected <- check_convergence(fit)
+  attr(expected, "thresholds") <- NULL
+  expect_identical(cell$diagnostics, expected)
+  expect_identical(
+    unique(cell$estimates$converged), as.logical(expected$pass)
+  )
+
+  # a stricter gate flips the verdict and leaves the numbers alone
+  strict <- extract_cell(
+    fit, list(truth = list(subjects = data.frame())),
+    extraction_request(
+      levels = "population", convergence = list(rhat_max = 1.0000001)
+    )
+  )
+  expect_false(strict$diagnostics$pass)
+  expect_identical(strict$diagnostics$max_rhat, expected$max_rhat)
+  expect_match(strict$diagnostics$failed, "rhat")
+  expect_false(unique(strict$estimates$converged))
 })

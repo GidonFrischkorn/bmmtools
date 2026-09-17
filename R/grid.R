@@ -372,11 +372,82 @@ extraction_request <- function(levels = c("population", "subject"),
                                correlations = NULL,
                                cor_scale = "link",
                                links = NULL,
-                               ml = NULL) {
+                               ml = NULL,
+                               convergence = NULL) {
   list(
     levels = levels, correlations = correlations, cor_scale = cor_scale,
-    links = links, ml = ml
+    links = links, ml = ml, convergence = convergence
   )
+}
+
+#' Validate `convergence` of recovery_grid() into `check_convergence()` args
+#'
+#' `NULL` keeps [check_convergence()]'s defaults. A named list gives its
+#' arguments, checked against its formals before any cell runs, because a
+#' misspelled threshold that reached the gate would silently score every
+#' cell under the defaults.
+#'
+#' @noRd
+check_convergence_arg <- function(convergence, call = rlang::caller_env()) {
+  if (is.null(convergence)) {
+    return(NULL)
+  }
+  if (!is.list(convergence) || !rlang::is_named(convergence)) {
+    cli::cli_abort(
+      c(
+        "{.arg convergence} must be a named list or {.code NULL}, \\
+         not {.obj_type_friendly {convergence}}.",
+        i = "It gives arguments to {.fn check_convergence}."
+      ),
+      call = call
+    )
+  }
+  allowed <- setdiff(
+    names(formals(check_convergence.brmsfit)), c("fit", "...")
+  )
+  unknown <- setdiff(names(convergence), allowed)
+  if (length(unknown) > 0L) {
+    cli::cli_abort(
+      c(
+        "{.arg convergence} has no argument {.val {unknown}}.",
+        i = "{.fn check_convergence} takes {.val {allowed}}."
+      ),
+      call = call
+    )
+  }
+  convergence
+}
+
+#' The columns of a cell's convergence record, all missing
+#'
+#' A fit the gate cannot be applied to --- the mock fitter of the tests,
+#' or anything that is not a `brmsfit` --- still gets a row, so that the
+#' `cells` table has one shape whatever ran.
+#'
+#' @noRd
+empty_diagnostics <- function() {
+  tibble::tibble(
+    max_rhat = NA_real_, min_ess_bulk = NA_real_, min_ess_tail = NA_real_,
+    n_divergent = NA_integer_, n_max_treedepth = NA_integer_,
+    n_variables = NA_integer_, pass = NA, failed = NA_character_
+  )
+}
+
+#' The convergence gate of one cell, computed once
+#'
+#' The verdict goes to the extractors rather than each of them
+#' recomputing it, and the whole row goes into the sidecar, so that a
+#' study can report why a cell failed without reading the fit --- which,
+#' as `?recovery_grid` says, it may have deleted.
+#'
+#' @noRd
+cell_diagnostics <- function(fit, convergence = NULL) {
+  if (!inherits(fit, "brmsfit")) {
+    return(empty_diagnostics())
+  }
+  out <- rlang::exec(check_convergence, fit, !!!convergence)
+  attr(out, "thresholds") <- NULL
+  out
 }
 
 #' The `fit_ml()` arguments the grid owns and refuses in `ml`
@@ -657,7 +728,16 @@ write_sidecar <- function(path, keys, request, extracted, levels = TRUE) {
 #' Everything the grid keeps from one fit, while it is in memory
 #' @noRd
 extract_cell <- function(fit, sim, request) {
-  estimates <- extract_estimates(fit, level = request$levels)
+  diagnostics <- cell_diagnostics(fit, request$convergence)
+  # the gate is computed once and its verdict handed to the extractors,
+  # rather than each of them recomputing it under the defaults. A fit
+  # the gate cannot be applied to keeps whatever verdict its own
+  # extract_estimates() method reaches.
+  gate <- if (is.na(diagnostics$pass)) NULL else as.logical(diagnostics$pass)
+  estimates <- extract_estimates(
+    fit,
+    level = request$levels, converged = gate
+  )
   converged <- NULL
   if (nrow(estimates) > 0L) converged <- as.logical(estimates$converged[[1L]])
 
@@ -684,8 +764,40 @@ extract_cell <- function(fit, sim, request) {
   }
   list(
     estimates = estimates, cor_estimates = cor_estimates,
-    subject_means = subject_means
+    subject_means = subject_means, diagnostics = diagnostics
   )
+}
+
+#' What the cell was run with, for the runtime table
+#'
+#' The sampler arguments of the grid's `...`, by name, with `NULL` for
+#' what was not given. Nothing else records them: the cache key holds
+#' their hashes, which cannot be read back, and `cores`, `threads` and
+#' `refresh` never enter it at all.
+#'
+#' @noRd
+cell_sampler <- function(dots) {
+  names <- c(
+    "chains", "iter", "warmup", "thin", "threads", "cores", "backend",
+    "algorithm"
+  )
+  out <- lapply(names, function(name) dots[[name]])
+  names(out) <- names
+  out$threads <- threads_key(out$threads)
+  out
+}
+
+#' A `brms::threading()` object as a number of threads, or `NA`
+#' @noRd
+threads_key <- function(threads) {
+  if (is.null(threads)) {
+    return(NA_integer_)
+  }
+  value <- if (is.list(threads)) threads$threads else threads
+  if (!is.numeric(value) || length(value) != 1L) {
+    return(NA_integer_)
+  }
+  as.integer(value)
 }
 
 #' The subject-wise ML fit of one cell, on the same simulated data
@@ -752,6 +864,12 @@ run_cell <- function(sim, model, formula, prior, paths, seed, dots, fitter,
       if (is.null(extracted)) {
         fit <- rlang::exec(fit_cached, !!!cache_args)
         extracted <- extract_cell(fit, sim, request)
+        # the time the fit took, not the time this cell took: on a
+        # resume that reuses the fit, fit_cached() reports the first
+        # run's time from the meta file beside it
+        extracted$fit_seconds <- attr(fit, "bmmtools_cache")$seconds %||%
+          NA_real_
+        extracted$sampler <- cell_sampler(dots)
         written <- request
         if (!is.null(ml)) {
           ml_run <- run_cell_ml(sim, model, paths$ml, seed, ml)
@@ -770,7 +888,8 @@ run_cell <- function(sim, model, formula, prior, paths, seed, dots, fitter,
         write_sidecar(
           paths$est, list(key = key), written,
           extracted[c(
-            "estimates", "cor_estimates", "subject_means", "ml_estimates"
+            "estimates", "cor_estimates", "subject_means", "diagnostics",
+            "fit_seconds", "sampler", "ml_estimates"
           )]
         )
       } else if (!is.null(ml)) {
@@ -784,7 +903,10 @@ run_cell <- function(sim, model, formula, prior, paths, seed, dots, fitter,
         status = "ok", message = NA_character_,
         estimates = extracted$estimates,
         cor_estimates = extracted$cor_estimates,
-        subject_means = extracted$subject_means
+        subject_means = extracted$subject_means,
+        diagnostics = extracted$diagnostics %||% empty_diagnostics(),
+        fit_seconds = extracted$fit_seconds %||% NA_real_,
+        sampler = extracted$sampler %||% cell_sampler(list())
       )
     },
     error = function(e) {
@@ -796,6 +918,9 @@ run_cell <- function(sim, model, formula, prior, paths, seed, dots, fitter,
   if (!is.null(result$estimates) && nrow(result$estimates) > 0L) {
     result$converged <- result$estimates$converged[[1L]]
   }
+  if (is.null(result$diagnostics)) result$diagnostics <- empty_diagnostics()
+  if (is.null(result$fit_seconds)) result$fit_seconds <- NA_real_
+  if (is.null(result$sampler)) result$sampler <- cell_sampler(list())
   if (!is.null(ml)) {
     result["ml_estimates"] <- list(ml_run$estimates)
     result$ml_status <- ml_run$status
@@ -803,6 +928,50 @@ run_cell <- function(sim, model, formula, prior, paths, seed, dots, fitter,
     result$ml_elapsed <- ml_run$elapsed
   }
   result
+}
+
+#' Write what the grid was run with, once per directory
+#'
+#' The cell files say what each cell is; nothing until now said what the
+#' grid is. `collect_grid()` reads this record to rebuild a result from
+#' the cell files alone, on a machine that has neither the fits nor the
+#' package versions that produced them.
+#'
+#' A record that differs from the one stored is rewritten and the change
+#' is named, never made silently: a directory reused with a different
+#' design is the one case where the cell files and the record disagree.
+#'
+#' @noRd
+write_grid_record <- function(dir, record) {
+  path <- file.path(dir, "grid.rds")
+  record <- c(
+    record,
+    list(
+      bmmtools_version = bmmtools_version(),
+      bmm = package_version_string("bmm"),
+      brms = package_version_string("brms"),
+      created = Sys.time()
+    )
+  )
+  stored <- if (file.exists(path)) {
+    tryCatch(readRDS(path), error = function(e) NULL)
+  }
+  if (!is.null(stored)) {
+    compare <- setdiff(names(record), "created")
+    changed <- compare[!vapply(compare, function(name) {
+      identical(stored[[name]], record[[name]])
+    }, logical(1))]
+    if (length(changed) == 0L) {
+      return(invisible(path))
+    }
+    cli::cli_inform(
+      "Rewriting {.file {path}}: {.val {changed}} differ{?s/} from the \\
+       record already there."
+    )
+  }
+  dir.create(dir, recursive = TRUE, showWarnings = FALSE)
+  write_atomic(path, function(tmp) saveRDS(record, tmp))
+  invisible(path)
 }
 
 #' Bind one table of every scored cell, labelled with its cell
@@ -1093,6 +1262,13 @@ grid_formula <- function(formula, row, i, model, re_cor, task_col,
 #'   the optimiser); `model`, `data`, `file`, `refit`, `seed` and `by`
 #'   are the grid's. Needs `"subject"` in `levels`. See the section
 #'   "Subject-wise ML".
+#' @param convergence `NULL`, the default, gates every cell with
+#'   [check_convergence()]'s defaults. A named list gives its arguments
+#'   (`rhat_max`, `ess_bulk_min`, `ess_tail_min`, `divergent_max`,
+#'   `treedepth_max`, `variables`), checked before any cell runs. The
+#'   gate is computed once per cell and its whole diagnostics row is
+#'   stored in the cell's sidecar, so a study can report why a cell
+#'   failed without reading the fit.
 #' @param smoke `TRUE` runs the first two rows with two replications
 #'   into `<dir>/smoke`, so a smoke run never overwrites a full one.
 #' @param preflight Run the first cell once with one chain and 200
@@ -1108,8 +1284,17 @@ grid_formula <- function(formula, row, i, model, re_cor, task_col,
 #'   Its attributes:
 #'   * `cells`: a tibble with one row per cell (`condition`,
 #'     `replication`, `n_subjects`, `n_trials`, `seed`, `file`, `status`,
-#'     `elapsed` in seconds, `converged`).
-#'   * `grid`: the grid as run.
+#'     `elapsed` in seconds, `converged`), followed by the cell's
+#'     convergence record (`max_rhat`, `min_ess_bulk`, `min_ess_tail`,
+#'     `n_divergent`, `n_max_treedepth`, `n_variables`, `failed`) and
+#'     what it was run with (`fit_seconds`, `chains`, `iter`,
+#'     `threads`). All of these come from the cell's sidecar, so a
+#'     resumed grid reports them without reading a fit. `elapsed` is how
+#'     long the cell took in this run, read time included;
+#'     `fit_seconds` is how long the fit itself took when it was run.
+#'   * `grid`: the grid as run. The same record, with everything else the
+#'     grid was called with, is written to `<dir>/grid.rds`, which is
+#'     what `collect_grid()` reads.
 #'   * `correlations`: with `correlations` requested, a
 #'     `bmmtools_cor_recovery` from [recover_correlations()] over every
 #'     cell, with `condition` and `replication`; otherwise `NULL`.
@@ -1264,6 +1449,7 @@ recovery_grid <- function(model,
                           levels = c("population", "subject"),
                           correlations = NULL,
                           cor_scale = "link",
+                          convergence = NULL,
                           ml = FALSE,
                           smoke = FALSE,
                           preflight = TRUE,
@@ -1292,6 +1478,7 @@ recovery_grid <- function(model,
   scale <- rlang::arg_match(scale)
   extraction <- check_extraction_args(levels, correlations, cor_scale)
   check_model_correlations(extraction$correlations, formula, re_cor, tasks)
+  convergence <- check_convergence_arg(convergence)
   ml_args <- check_ml_arg(ml, extraction$levels)
   check_grid(grid)
   dots <- rlang::list2(...)
@@ -1369,8 +1556,17 @@ recovery_grid <- function(model,
   }
   request <- extraction_request(
     extraction$levels, extraction$correlations, extraction$cor_scale,
-    links = unlist(links), ml = ml_request(ml_args)
+    links = unlist(links), ml = ml_request(ml_args),
+    convergence = convergence
   )
+  write_grid_record(dir, list(
+    grid = grid, reps = reps, seed = seed, subjects = subjects,
+    scale = scale, re_cor = re_cor, tasks = design$tasks,
+    task_col = design$task_col, levels = extraction$levels,
+    correlations = extraction$correlations, cor_scale = extraction$cor_scale,
+    convergence = convergence, ml = ml_request(ml_args),
+    sampler = cell_sampler(dots), links = links
+  ))
 
   first_paths <- cell_paths(dir, 1L, 1L)
   run_first <- isTRUE(preflight) &&
@@ -1434,7 +1630,8 @@ recovery_grid <- function(model,
     }, character(1)), ".rds"),
     status = status,
     elapsed = vapply(runs, function(r) r$elapsed, numeric(1)),
-    converged = vapply(runs, function(r) as.logical(r$converged), logical(1))
+    converged = vapply(runs, function(r) as.logical(r$converged), logical(1)),
+    !!!cell_diagnostic_columns(runs)
   )
   attr(out, "grid") <- grid
   if (!is.null(ml_args)) {
@@ -1458,6 +1655,51 @@ warn_failed_ml_cells <- function(labels, message) {
          {?that cell/those cells} are scored; the ML rows are missing, \\
          and {.code attr(x, \"ml_cells\")} says where."
   ))
+}
+
+#' The diagnostic, timing and sampler columns of `cells`
+#'
+#' Every value comes from the cell's sidecar, so a resumed grid reports
+#' them without reading a fit. A cell whose fit failed has `NA`
+#' throughout. `fit_seconds` is the time the fit took when it was run,
+#' which is what a runtime table wants; `elapsed`, beside it, is the time
+#' the cell took in this run, read time included.
+#'
+#' @noRd
+cell_diagnostic_columns <- function(runs) {
+  pull <- function(field, template) {
+    vapply(runs, function(r) {
+      value <- r$diagnostics[[field]]
+      if (length(value) != 1L) template else value
+    }, template)
+  }
+  # a sampler argument arrives as whatever the user typed, and `chains =
+  # 2` is a double, so every one is coerced rather than matched on type
+  sampler <- function(field) {
+    vapply(runs, function(r) {
+      value <- r$sampler[[field]]
+      if (length(value) != 1L || !is.numeric(value)) {
+        NA_integer_
+      } else {
+        as.integer(value)
+      }
+    }, integer(1))
+  }
+  list(
+    max_rhat = pull("max_rhat", NA_real_),
+    min_ess_bulk = pull("min_ess_bulk", NA_real_),
+    min_ess_tail = pull("min_ess_tail", NA_real_),
+    n_divergent = pull("n_divergent", NA_integer_),
+    n_max_treedepth = pull("n_max_treedepth", NA_integer_),
+    n_variables = pull("n_variables", NA_integer_),
+    failed = pull("failed", NA_character_),
+    fit_seconds = vapply(runs, function(r) {
+      if (length(r$fit_seconds) != 1L) NA_real_ else as.double(r$fit_seconds)
+    }, numeric(1)),
+    chains = sampler("chains"),
+    iter = sampler("iter"),
+    threads = sampler("threads")
+  )
 }
 
 #' One row per cell for the ML fit, beside `cells`
