@@ -10,6 +10,39 @@
 # upstream change letting r<model>() take the model's own parameter
 # names would empty this table.
 
+#' Resolve a bmm function by name, at call time
+#'
+#' The signal-detection stack (`sdt_yn`, `sdt_mafc` and their `r*()` and
+#' `d*()` functions) is in no released bmm, so a literal `bmm::rsdt_yn()`
+#' makes `R CMD check`'s "checking dependencies in R code" report a
+#' missing object on any machine with a released bmm installed. That is a
+#' WARNING, and `r-lib/actions` checks with `error-on = "warning"`, so it
+#' fails the workflow. Resolving the name here keeps the check quiet and
+#' turns an absent symbol into a named error rather than R's bare "not an
+#' exported object".
+#'
+#' Used only for the four fork-only names; every other bmm call in the
+#' package stays a literal `bmm::` call, which is what documents the
+#' dependency.
+#'
+#' @param name The name of an exported bmm function.
+#'
+#' @return The function.
+#' @noRd
+bmm_fun <- function(name) {
+  if (!requireNamespace("bmm", quietly = TRUE)) {
+    cli::cli_abort("The {.pkg bmm} package is needed for {.fun {name}}.")
+  }
+  if (!name %in% getNamespaceExports("bmm")) {
+    cli::cli_abort(c(
+      "The installed {.pkg bmm} ({packageVersion('bmm')}) does not export \\
+       {.fun {name}}.",
+      i = "The signal-detection models are not in a released {.pkg bmm} yet."
+    ))
+  }
+  getExportedValue("bmm", name)
+}
+
 #' The class name an adapter is registered under
 #' @noRd
 adapter_classes <- function() {
@@ -58,7 +91,7 @@ name_columns <- function(data, names) {
 #' @noRd
 generate_sdt_yn <- function(pars, n_trials, model) {
   stimulus <- c(1, 0)
-  counts <- bmm::rsdt_yn(
+  counts <- bmm_fun("rsdt_yn")(
     2L, n_trials, stimulus,
     d = pars$d, criterion = pars$criterion, sdratio = pars$sdratio,
     dist = model$other_vars$dist
@@ -75,7 +108,7 @@ generate_sdt_yn <- function(pars, n_trials, model) {
 #' m-alternative forced choice: one row of correct counts
 #' @noRd
 generate_sdt_mafc <- function(pars, n_trials, model) {
-  counts <- bmm::rsdt_mafc(
+  counts <- bmm_fun("rsdt_mafc")(
     1L, n_trials,
     m = model$other_vars$m, d = pars$d, dist = model$other_vars$dist
   )

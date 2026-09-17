@@ -53,7 +53,7 @@ density_for <- function(model) {
 #' Yes/no signal detection: one row per stimulus class
 #' @noRd
 density_sdt_yn <- function(pars, data, model) {
-  bmm::dsdt_yn(
+  bmm_fun("dsdt_yn")(
     data[[model$resp_vars$response]],
     data[[model$other_vars$n_trials]],
     data[[model$other_vars$stimulus]],
@@ -65,7 +65,7 @@ density_sdt_yn <- function(pars, data, model) {
 #' m-alternative forced choice: one row of correct counts
 #' @noRd
 density_sdt_mafc <- function(pars, data, model) {
-  bmm::dsdt_mafc(
+  bmm_fun("dsdt_mafc")(
     data[[model$resp_vars$response]],
     data[[model$other_vars$n_trials]],
     m = model$other_vars$m, d = pars$d,

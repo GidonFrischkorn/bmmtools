@@ -898,3 +898,16 @@ test_that("task formulas pass the mock backend and match the truth terms", {
   b <- prior[prior$class == "b" & nzchar(prior$coef), ]
   expect_setequal(paste0(b$nlpar, "_", b$coef), sim$truth$population$term)
 })
+
+# resolving bmm's fork-only functions ------------------------------------
+
+test_that("bmm_fun() resolves an export and names one the build lacks", {
+  skip_if_not_installed("bmm")
+  # The signal-detection stack is in no released bmm, so the adapters that
+  # need it resolve the name at call time. A literal bmm::rsdt_yn() makes
+  # "checking dependencies in R code" report a missing object on every
+  # machine with a released bmm --- a WARNING, which fails the check
+  # workflow, because r-lib/actions checks with error-on = "warning".
+  expect_true(is.function(bmm_fun("rmixture2p")))
+  expect_error(bmm_fun("no_such_bmm_function"), "no_such_bmm_function")
+})

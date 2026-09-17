@@ -225,6 +225,12 @@ with bmm: one engine — simulate, fit, score — and a scorer per question.
 * DESCRIPTION carries `Remotes: hyunjimoon/SBC`, so `pak` and `remotes`
   resolve the SBC entry in Suggests; SBC is not on CRAN.
 * Licensed under GPL (>= 2), compatible with bmm's GPL-2.
+* The signal-detection adapters resolve bmm's `rsdt_yn()`, `rsdt_mafc()`,
+  `dsdt_yn()` and `dsdt_mafc()` by name at call time. No released bmm
+  exports them, so a literal `bmm::rsdt_yn()` made `R CMD check` report a
+  missing object wherever a released bmm was installed. Behaviour is
+  unchanged where the functions exist, and an absent one is now a named
+  error rather than R's bare "not an exported object".
 
 ## Known limitations
 
