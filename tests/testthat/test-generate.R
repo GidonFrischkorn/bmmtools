@@ -158,6 +158,14 @@ test_that("every adapter's data passes bmm's checks (mock backend)", {
       model = bmm::ddm(rt = "rt", response = "resp"),
       pars = c(drift = 2, bound = log(1.2), ndt = log(0.3))
     ),
+    list(
+      model = bmm::cswald(rt = "rt", response = "resp"),
+      pars = c(drift = log(2), bound = log(1), ndt = log(0.3))
+    ),
+    list(
+      model = bmm::cswald(rt = "rt", response = "resp", version = "crisk"),
+      pars = c(drift = 2, bound = log(2), ndt = log(0.3))
+    ),
     list(model = bmm::mixture2p(resp_error = "y"), pars = m2p_pars),
     list(
       model = bmm::sdm(resp_error = "y"),
@@ -211,6 +219,16 @@ test_that("adapters lay trials out the way each model expects", {
   )
   expect_equal(nrow(ddm$data), 30L)
   expect_named(ddm$data, c("id", "rt", "resp"))
+
+  cswald <- simulate_recovery(
+    bmm::cswald(rt = "rt", response = "resp"),
+    c(drift = log(2), bound = log(1), ndt = log(0.3)),
+    n_subjects = 2, n_trials = 15, seed = 1
+  )
+  expect_equal(nrow(cswald$data), 30L)
+  expect_named(cswald$data, c("id", "rt", "resp"))
+  expect_true(all(cswald$data$rt > 0.3))
+  expect_true(all(cswald$data$resp %in% c(0, 1)))
 
   sdm <- simulate_recovery(
     bmm::sdm(resp_error = "err"), c(c = log(4), kappa = log(3)),
@@ -540,7 +558,7 @@ test_that("recovery_formula gives every free parameter a random intercept", {
 
 # the adapter table -----------------------------------------------------
 
-test_that("generator_for knows six models and nothing else", {
+test_that("generator_for knows seven models and nothing else", {
   skip_if_not_installed("bmm")
   skip_if_no_bmm_sdt()
   models <- list(
@@ -548,11 +566,93 @@ test_that("generator_for knows six models and nothing else", {
     bmm::sdt_mafc(response = "k", n_trials = "n", m = 4),
     bmm::ezdm(mean_rt = "mrt", var_rt = "vrt", n_upper = "nu", n_trials = "n"),
     bmm::ddm(rt = "rt", response = "resp"),
+    bmm::cswald(rt = "rt", response = "resp"),
+    bmm::cswald(rt = "rt", response = "resp", version = "crisk"),
     bmm::mixture2p(resp_error = "y"),
     bmm::sdm(resp_error = "y")
   )
   for (m in models) expect_type(generator_for(m), "closure")
   expect_null(generator_for(structure(list(), class = c("bmmodel", "mpt"))))
+})
+
+# the cswald bound convention (spec 9.5) --------------------------------
+
+# `rcswald()` takes the total boundary separation, while the `simple`
+# version's own `bound` is the distance from an unbiased start to one
+# boundary --- half of it. Both tests profile the data the generator made
+# through the density adapter, so a mismatch in either half fails: if only
+# the generator dropped the factor of 2 the peak lands at twice the truth,
+# and if both adapters applied it the peak lands at half.
+
+test_that("`simple`'s bound is recovered from the data its generator made", {
+  skip_if_not_installed("bmm")
+  model <- bmm::cswald(rt = "rt", response = "resp")
+  pars <- natural_pars(
+    c(drift = log(2), bound = log(1), ndt = log(0.3)), model
+  )
+  withr::local_seed(20260917)
+  dat <- generate_cswald(pars, 5000L, model)
+  profile <- function(b) {
+    at_b <- pars
+    at_b$bound <- b
+    -sum(density_cswald(at_b, dat, model))
+  }
+  expect_equal(
+    stats::optimise(profile, interval = c(0.3, 3))$minimum, 1,
+    tolerance = 0.05
+  )
+  # the density passes the model's own bound and version straight to bmm
+  expect_equal(
+    density_cswald(pars, dat, model),
+    bmm::dcswald(
+      dat$rt, dat$resp,
+      drift = pars$drift, bound = pars$bound, ndt = pars$ndt,
+      version = "simple", log = TRUE
+    )
+  )
+})
+
+test_that("`crisk`'s bound is passed through unchanged", {
+  skip_if_not_installed("bmm")
+  model <- bmm::cswald(rt = "rt", response = "resp", version = "crisk")
+  pars <- natural_pars(
+    c(drift = 2, bound = log(2), ndt = log(0.3)), model
+  )
+  expect_equal(pars$zr, 0.5)
+  withr::local_seed(20260917)
+  dat <- generate_cswald(pars, 5000L, model)
+  profile <- function(b) {
+    at_b <- pars
+    at_b$bound <- b
+    -sum(density_cswald(at_b, dat, model))
+  }
+  expect_equal(
+    stats::optimise(profile, interval = c(0.5, 5))$minimum, 2,
+    tolerance = 0.05
+  )
+  expect_equal(
+    density_cswald(pars, dat, model),
+    bmm::dcswald(
+      dat$rt, dat$resp,
+      drift = pars$drift, bound = pars$bound, ndt = pars$ndt, zr = pars$zr,
+      version = "crisk", log = TRUE
+    )
+  )
+})
+
+test_that("the cswald adapter reads its version off the model's class", {
+  skip_if_not_installed("bmm")
+  simple <- bmm::cswald(rt = "rt", response = "resp")
+  crisk <- bmm::cswald(rt = "rt", response = "resp", version = "crisk")
+  # one `bound` of 1 on the natural scale: 2 of separation under `simple`,
+  # 1 under `crisk`, so the same drift needs longer to cross it
+  pars <- list(drift = 2, bound = 1, ndt = 0.3, s = 1, zr = 0.5, mu = 0)
+  withr::local_seed(1)
+  slow <- generate_cswald(pars, 4000L, simple)
+  fast <- generate_cswald(pars, 4000L, crisk)
+  expect_gt(stats::median(slow$rt), stats::median(fast$rt))
+  # and `simple` is the default version, as it is in bmm
+  expect_false(inherits(simple, "cswald_crisk"))
 })
 
 test_that("subject_pars may only give parameters that vary", {

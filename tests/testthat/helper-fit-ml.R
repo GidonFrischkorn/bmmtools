@@ -152,13 +152,15 @@ ml_square_nll <- function(par = "kappa") {
 #' Each case carries a `raw` closure that calls the same bmm density with
 #' `log = FALSE`, so the adapter can be checked against it. That is the
 #' check for the trap recorded in R/densities.R: dmixture2p(), dsdm(),
-#' dsdt_yn() and dsdt_mafc() default to `log = FALSE` while dddm() and
-#' dezdm() default to TRUE, so an adapter that leaves the argument out is
-#' wrong for four of the six and right for the other two.
+#' dsdt_yn() and dsdt_mafc() default to `log = FALSE` while dddm(),
+#' dezdm() and dcswald() default to TRUE, so an adapter that leaves the
+#' argument out is wrong for four of the seven and right for the other
+#' three.
 #'
 #' The signal-detection cases appear only when the installed bmm has them;
-#' CRAN bmm 1.3.2 does not, and the four that remain are what a runner
-#' exercises.
+#' CRAN bmm 1.3.2 does not, and the six that remain are what a runner
+#' exercises. cswald needs no such guard: released 1.3.2 exports the
+#' model and both its distribution functions (measured 2026-09-17).
 #'
 #' @noRd
 ml_density_cases <- function() {
@@ -191,6 +193,32 @@ ml_density_cases <- function() {
           data$rt, data$response,
           drift = pars$drift, bound = pars$bound,
           ndt = pars$ndt, zr = pars$zr, log = TRUE
+        ))
+      }
+    ),
+    list(
+      label = "cswald_simple",
+      model = bmm::cswald(rt = "rt", response = "response"),
+      link = c(drift = log(2), bound = log(1), ndt = log(0.25)),
+      raw = function(pars, data, model) {
+        exp(bmm::dcswald(
+          data$rt, data$response,
+          drift = pars$drift, bound = pars$bound, ndt = pars$ndt,
+          version = "simple", log = TRUE
+        ))
+      }
+    ),
+    list(
+      label = "cswald_crisk",
+      model = bmm::cswald(
+        rt = "rt", response = "response", version = "crisk"
+      ),
+      link = c(drift = 2, bound = log(2), ndt = log(0.25)),
+      raw = function(pars, data, model) {
+        exp(bmm::dcswald(
+          data$rt, data$response,
+          drift = pars$drift, bound = pars$bound, ndt = pars$ndt,
+          zr = pars$zr, version = "crisk", log = TRUE
         ))
       }
     ),

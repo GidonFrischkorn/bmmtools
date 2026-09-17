@@ -9,17 +9,17 @@
 # These exist only for `fit_ml(method = "optim")`. Decision 34 keeps the
 # Stan route free of any per-model code --- it optimises bmm's own generated
 # likelihood --- but the optim route has to know the likelihood in R, so it
-# is capped at the six models of adapter_classes() for decision 13's own
+# is capped at the seven models of adapter_classes() for decision 13's own
 # reason: a general package cannot re-implement every model it validates.
 #
 # Two things measured 2026-09-17 before this file was written
 # (local/dev/sim/ml-optim-probe.R):
 #
-# 1. The six d<model>() functions do NOT agree on their `log` default ---
+# 1. The d<model>() functions do NOT agree on their `log` default ---
 #    dmixture2p(), dsdm(), dsdt_yn() and dsdt_mafc() default to FALSE while
-#    dddm() and dezdm() default to TRUE. Every adapter passes log = TRUE
-#    explicitly; relying on the default would silently sum probabilities for
-#    four of the six.
+#    dddm(), dezdm() and (added 2026-09-17) dcswald() default to TRUE. Every
+#    adapter passes log = TRUE explicitly; relying on the default would
+#    silently sum probabilities for four of the seven.
 # 2. sdt_yn and sdt_mafc exist only in the bmm fork. CRAN bmm 1.3.2 exports
 #    neither the models nor their densities, so those two adapters cannot be
 #    exercised on a runner and their tests guard with skip_if_no_bmm_sdt().
@@ -44,6 +44,7 @@ density_for <- function(model) {
     sdt_mafc = density_sdt_mafc,
     ezdm = density_ezdm,
     ddm = density_ddm,
+    cswald = density_cswald,
     mixture2p = density_mixture2p,
     sdm = density_sdm,
     NULL
@@ -95,6 +96,42 @@ density_ddm <- function(pars, data, model) {
     drift = pars$drift, bound = pars$bound, ndt = pars$ndt, zr = pars$zr,
     log = TRUE
   )
+}
+
+#' Censored-shifted Wald: one row per trial
+#'
+#' Unlike its generator, this adapter does **not** double `bound` for the
+#' `simple` version. `dcswald()` reads each version in that version's own
+#' parameterisation --- measured 2026-09-17 in bmm's `.dcswald()`: the
+#' `simple` branch evaluates a Wald whose barrier is `bound` itself, while
+#' the `crisk` branch splits `bound` into `bound * zr` and
+#' `bound - bound * zr`. So the density takes the model's parameters as
+#' they are, and only [generate_cswald()] has to convert them into the
+#' diffusion's.
+#'
+#' `dcswald()` errors rather than returning `-Inf` when any `rt <= ndt`
+#' (measured 2026-09-17). [ml_optim_one()] evaluates the objective once
+#' outside its guard, so a start value whose `ndt` sits above the fastest
+#' response time stops the fit with bmm's own message instead of steering
+#' away from it; inside the optimisation the guard turns it into a large
+#' finite number, as it does any density that fails at an extreme.
+#' @noRd
+density_cswald <- function(pars, data, model) {
+  args <- list(
+    rt = data[[model$resp_vars$rt]],
+    response = data[[model$resp_vars$response]],
+    drift = pars$drift,
+    bound = pars$bound,
+    ndt = pars$ndt,
+    zr = pars$zr %||% 0.5,
+    s = pars$s %||% 1,
+    version = if (inherits(model, "cswald_crisk")) "crisk" else "simple",
+    log = TRUE
+  )
+  if (!is.null(pars$sndt)) {
+    args$sndt <- pars$sndt
+  }
+  do.call(bmm::dcswald, args)
 }
 
 #' Two-parameter mixture model: one response error per trial

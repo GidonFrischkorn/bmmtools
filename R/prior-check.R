@@ -116,7 +116,11 @@ response_range <- function(model, data, call = rlang::caller_env()) {
     list(floor = NA_real_, ceiling = NA_real_)
   }
   key <- adapter_name(model)
-  if (is.na(key) || key %in% c("ddm", "ezdm")) {
+  # The response-time models have no ceiling to give. cswald joined
+  # adapter_classes() in 0.2.0 and has to be named here: without it the
+  # count branch below would run, find no `n_trials` column and report a
+  # missing column rather than an absent range.
+  if (is.na(key) || key %in% c("ddm", "ezdm", "cswald")) {
     return(none(
       "No response range is known for a model of class {.cls {class(model)}}."
     ))

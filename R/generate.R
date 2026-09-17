@@ -615,7 +615,8 @@ truth_tables <- function(pars, sds, values, cors = NULL, covariates = NULL) {
 #'
 #' @details
 #' Adapters exist for `sdt_yn`, `sdt_mafc`, `ezdm` (three parameters),
-#' `ddm`, `mixture2p` and `sdm`. Every other model takes a `generator`.
+#' `ddm`, `cswald` (both versions), `mixture2p` and `sdm`. Every other
+#' model takes a `generator`.
 #' The truth for the subjects and for the SDs lists only the parameters
 #' that vary, because a parameter that does not vary has nothing
 #' person-level to recover.

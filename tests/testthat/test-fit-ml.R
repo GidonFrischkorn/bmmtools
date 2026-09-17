@@ -421,7 +421,7 @@ test_that("nll must be a function and is required without a density", {
     fit_ml(model, dat, method = "optim", nll = 3),
     "must be a function"
   )
-  # the toy model is not one of the six, so there is no density to fall
+  # the toy model is not one of the seven, so there is no density to fall
   # back on and the error has to say what the alternatives are
   expect_error(fit_ml(model, dat, method = "optim"), "has no density")
   expect_error(fit_ml(model, dat, method = "optim"), "stan")
@@ -463,17 +463,19 @@ test_that("print names the Wald interval and says there are no priors", {
 
 # the density adapters -------------------------------------------------
 
-test_that("density_for() knows six models and nothing else", {
+test_that("density_for() knows seven models and nothing else", {
   skip_if_not_installed("bmm")
   skip_if_no_bmm_sdt()
   expect_equal(adapter_classes(), c(
-    "sdt_yn", "sdt_mafc", "ezdm", "ddm", "mixture2p", "sdm"
+    "sdt_yn", "sdt_mafc", "ezdm", "ddm", "cswald", "mixture2p", "sdm"
   ))
   known <- list(
     bmm::sdt_yn(response = "hits", stimulus = "stim", n_trials = "n"),
     bmm::sdt_mafc(response = "k", n_trials = "n", m = 4),
     bmm::ezdm(mean_rt = "m", var_rt = "v", n_upper = "u", n_trials = "n"),
     bmm::ddm(rt = "rt", response = "resp"),
+    bmm::cswald(rt = "rt", response = "resp"),
+    bmm::cswald(rt = "rt", response = "resp", version = "crisk"),
     bmm::mixture2p(resp_error = "y"),
     bmm::sdm(resp_error = "y")
   )

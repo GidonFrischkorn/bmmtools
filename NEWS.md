@@ -1,6 +1,37 @@
 # bmmtools (development version)
 
+## Simulate
+
+* `simulate_recovery(coding = "contrast")` and
+  `recovery_grid(coding = "contrast")` generate a task design as an
+  intercept and a contrast rather than as cell means, with `contrasts`
+  taking any contrast matrix --- a design's own, or one of
+  `bayestestR`'s equal-prior codings. The truth is transformed with the
+  design, so the intercept and the effect have true values, true SDs and
+  a true correlation matrix of their own, and `recovery_formula(coding =
+  "contrast")` writes the matching formula. `contrasts` is deliberately
+  not an argument of `recovery_formula()`: a factor's contrast matrix
+  reaches brms through the data, not through the formula.
+* `"effect"` joins the `level` vocabulary of `extract_estimates()`,
+  `recover()` and `recovery_grid()`, so a contrast coefficient can be
+  scored on its own, away from the intercept it shares a parameter with.
+  It is kept on the link scale, as `"sd"` is.
+* A generator and a density adapter for bmm's censored-shifted Wald
+  (`cswald`), both the `simple` and the `crisk` version, bringing the
+  adapter table to seven models. `bmm::rcswald()` takes the boundary
+  separation of the diffusion it draws from, while the `simple`
+  version's own `bound` is the distance from an unbiased start to one
+  boundary, so the adapter converts between them: generated data
+  profiles back to the model's `bound`, not to twice it.
+
 ## Running a study
+
+* `run_info()` records the machine and the toolchain a study ran on ---
+  R version, platform, host, cores, CPU model, memory, the installed
+  versions of bmm, brms, cmdstanr, posterior and bmmtools, and the
+  CmdStan version --- as one row, so a runtime table can say what the
+  times it reports were measured on. It never errors: a field whose
+  source is missing on the platform is `NA`.
 
 * `collect_grid()` rebuilds what `recovery_grid()` returned from the
   files it left behind, without fitting anything and without reading a
@@ -52,7 +83,7 @@
   no compiler and no Stan, which makes it the route that runs anywhere,
   and it optimises each subject independently, so one subject at a
   boundary cannot stall the rest. It is capped at the models bmmtools
-  carries a density for --- the same six the simulation adapters cover
+  carries a density for --- the same seven the simulation adapters cover
   --- and `nll` supplies one for anything else. Measured against the
   Stan route on 40 subjects of `mixture2p`: the same estimates to Monte
   Carlo error, standard errors agreeing to a mean ratio of 1.000, and
@@ -113,6 +144,19 @@
   Restore one with `dplyr::mutate(old, estimator = "bayes")`. Objects
   built by `recover()`, `recover_subjects()` and `recovery_grid()` are
   filled automatically and are unaffected.
+
+## Score recovery
+
+* `summary()` reports `mae`, the mean absolute error, beside `rmse`. The
+  two differ in how much one badly recovered subject moves them, which
+  is worth seeing rather than inferring.
+* Population and effect rows gain `detected`, the share of intervals
+  that exclude zero, and `sign_recovery`, the share that exclude zero
+  *and* fall on the side of it the truth is on. At a true value of zero
+  `sign_recovery` is `NA`, because zero has no sign, and `detected` is
+  then a false-positive rate rather than power --- a page reporting them
+  has to say which of the two a row is. Subject rows carry both columns
+  as `NA`.
 
 # bmmtools 0.1.0
 

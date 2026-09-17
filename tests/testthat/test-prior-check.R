@@ -93,6 +93,20 @@ test_that("response_range says NA where it has no boundary to give", {
 
   expect_message(unknown <- response_range(fake_model(), fake_data()))
   expect_true(is.na(unknown$ceiling))
+
+  # cswald is a response-time model too. It joined adapter_classes() in
+  # 0.2.0, and an entry there without an entry here would have sent it to
+  # the count branch, which would have reported a missing `n_trials`
+  # column rather than an absent range.
+  for (version in c("simple", "crisk")) {
+    cswald <- bmm::cswald(rt = "rt", response = "resp", version = version)
+    expect_message(
+      rng <- response_range(cswald, data.frame(rt = 1, resp = 1)),
+      "No response range"
+    )
+    expect_true(is.na(rng$floor))
+    expect_true(is.na(rng$ceiling))
+  }
 })
 
 test_that("a count model without its n_trials column degrades to NA", {

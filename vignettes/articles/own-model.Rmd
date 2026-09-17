@@ -32,8 +32,9 @@ library(bmmtools)
 res <- readRDS(from_root("vignettes/articles/assets/own-model.rds"))
 ```
 
-bmmtools ships generator adapters for six bmm models: `sdt_yn`,
-`sdt_mafc`, the three-parameter `ezdm`, `ddm`, `mixture2p` and `sdm`.
+bmmtools ships generator adapters for seven bmm models: `sdt_yn`,
+`sdt_mafc`, the three-parameter `ezdm`, `ddm`, `cswald` (both the
+`simple` and the `crisk` version), `mixture2p` and `sdm`.
 A model you are developing, for example one started with
 `bmm::use_model_template()`, has none, and `simulate_recovery()` stops
 with an error asking for `generator`. This article shows how to write

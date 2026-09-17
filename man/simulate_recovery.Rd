@@ -121,7 +121,8 @@ precedence over the built-in one.
 }
 \details{
 Adapters exist for \code{sdt_yn}, \code{sdt_mafc}, \code{ezdm} (three parameters),
-\code{ddm}, \code{mixture2p} and \code{sdm}. Every other model takes a \code{generator}.
+\code{ddm}, \code{cswald} (both versions), \code{mixture2p} and \code{sdm}. Every other
+model takes a \code{generator}.
 The truth for the subjects and for the SDs lists only the parameters
 that vary, because a parameter that does not vary has nothing
 person-level to recover.

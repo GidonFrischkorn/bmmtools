@@ -46,7 +46,7 @@ bmm_fun <- function(name) {
 #' The class name an adapter is registered under
 #' @noRd
 adapter_classes <- function() {
-  c("sdt_yn", "sdt_mafc", "ezdm", "ddm", "mixture2p", "sdm")
+  c("sdt_yn", "sdt_mafc", "ezdm", "ddm", "cswald", "mixture2p", "sdm")
 }
 
 #' @noRd
@@ -74,6 +74,7 @@ generator_for <- function(model) {
     sdt_mafc = generate_sdt_mafc,
     ezdm = generate_ezdm,
     ddm = generate_ddm,
+    cswald = generate_cswald,
     mixture2p = generate_mixture2p,
     sdm = generate_sdm,
     NULL
@@ -141,6 +142,54 @@ generate_ddm <- function(pars, n_trials, model) {
     n_trials,
     drift = pars$drift, bound = pars$bound, ndt = pars$ndt, zr = pars$zr
   )
+  name_columns(
+    out[c("rt", "response")],
+    list(model$resp_vars$rt, model$resp_vars$response)
+  )
+}
+
+#' Censored-shifted Wald: one row per trial
+#'
+#' `bmm::rcswald()` takes no `version` argument --- measured 2026-09-17 on
+#' the installed 1.4.1.9000, on the study's pinned `develop` and in the
+#' 1.3.2 source. It draws from `rtdists::rdiffusion()` with `a = bound`
+#' and `z = zr * bound`, which is the `crisk` parameterisation, so the two
+#' versions differ here in the mapping and not in the generator.
+#'
+#' **`simple` doubles `bound`.** Its `bound` is the distance from an
+#' unbiased starting point to the correct boundary, half the separation
+#' `rcswald()` takes; bmm's own `?cswald` says to multiply by 2 to get the
+#' full separation. Measured 2026-09-17 on 20,000 draws generated with
+#' `bound = 2`: profiled over `bound`, the `simple` likelihood peaks at
+#' 0.995 and the `crisk` likelihood at 1.977. Passing `bound` straight
+#' through would have made every `simple` recovery report a bias of
+#' `log(2)` on the log link and read as a defect in bmm rather than in
+#' this adapter.
+#'
+#' `zr` is 0.5 for `simple`, which has no starting-point parameter and is
+#' defined against an unbiased start. `crisk` fixes `zr` at 0.5 too but a
+#' design may free it, so its own value is passed.
+#'
+#' `sndt` is passed only when the model carries it: the fork's cswald has
+#' it and both the pinned `develop` and released 1.3.2 have no `sndt`
+#' anywhere (measured 2026-09-17), and `rcswald()` there has no such
+#' argument to take. Reading it off the model rather than off the
+#' installed version keeps one adapter right on all three.
+#' @noRd
+generate_cswald <- function(pars, n_trials, model) {
+  crisk <- inherits(model, "cswald_crisk")
+  args <- list(
+    n = n_trials,
+    drift = pars$drift,
+    bound = if (crisk) pars$bound else 2 * pars$bound,
+    ndt = pars$ndt,
+    zr = if (crisk) pars$zr %||% 0.5 else 0.5,
+    s = pars$s %||% 1
+  )
+  if (!is.null(pars$sndt)) {
+    args$sndt <- pars$sndt
+  }
+  out <- do.call(bmm::rcswald, args)
   name_columns(
     out[c("rt", "response")],
     list(model$resp_vars$rt, model$resp_vars$response)
