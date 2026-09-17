@@ -229,7 +229,8 @@ cross_check_plot_example <- function(level = "subject",
                                      intervals = TRUE) {
   ids <- as.character(seq_len(n_subjects))
   fit <- structure(
-    list(parameters = c("kappa", "thetat"), ids = ids), class = "mockfit"
+    list(parameters = c("kappa", "thetat"), ids = ids),
+    class = "mockfit"
   )
   reference <- if (identical(level, "subject")) {
     tibble::tibble(

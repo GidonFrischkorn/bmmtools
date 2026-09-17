@@ -118,7 +118,8 @@ test_that("yrep_list names a matrix after the model's response", {
 
 test_that("yrep_list splits an array and falls back on names", {
   named <- array(
-    seq_len(12), dim = c(2L, 3L, 2L),
+    seq_len(12),
+    dim = c(2L, 3L, 2L),
     dimnames = list(NULL, NULL, c("rt", "resp"))
   )
   expect_named(yrep_list(named, fake_model()), c("rt", "resp"))
@@ -141,7 +142,8 @@ test_that("prior_sets names the sets", {
     prior_sets(list(loose = fake_prior(), tight = fake_prior())),
     c("loose", "tight")
   )
-  expect_named(prior_sets(list(default = NULL, tight = fake_prior())),
+  expect_named(
+    prior_sets(list(default = NULL, tight = fake_prior())),
     c("default", "tight")
   )
 })
@@ -554,7 +556,8 @@ test_that("a class-level prior covers its coefficient rows", {
       task_prior_data(),
       bmm::mixture2p(resp_error = "y"),
       list(covered = brms::set_prior(
-        "normal(0, 1)", class = "b", nlpar = "kappa"
+        "normal(0, 1)",
+        class = "b", nlpar = "kappa"
       ))
     )
   )
@@ -583,7 +586,8 @@ test_that("a class-level prior covers its own parameter only", {
       task_prior_data(),
       bmm::mixture2p(resp_error = "y"),
       list(half = brms::set_prior(
-        "normal(0, 1)", class = "b", nlpar = "kappa"
+        "normal(0, 1)",
+        class = "b", nlpar = "kappa"
       ))
     ),
     "thetat"
@@ -599,9 +603,11 @@ test_that("per-coefficient priors are covered as before", {
       task_prior_data(),
       bmm::mixture2p(resp_error = "y"),
       list(per_coef = brms::set_prior(
-        "normal(0, 1)", class = "b", coef = "tasktask1", nlpar = "kappa"
+        "normal(0, 1)",
+        class = "b", coef = "tasktask1", nlpar = "kappa"
       ) + brms::set_prior(
-        "normal(0, 1)", class = "b", coef = "tasktask2", nlpar = "kappa"
+        "normal(0, 1)",
+        class = "b", coef = "tasktask2", nlpar = "kappa"
       ))
     )
   )

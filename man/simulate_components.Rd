@@ -101,7 +101,8 @@ components <- list(
 cors <- diag(2)
 dimnames(cors) <- rep(list(c("m2p_thetat", "sdm_c")), 2)
 cors[1, 2] <- cors[2, 1] <- 0.6
-set <- simulate_components(components, n_subjects = 100, cors = cors,
+set <- simulate_components(components,
+  n_subjects = 100, cors = cors,
   seed = 1
 )
 fits <- fit_components(set, dir = "fits")

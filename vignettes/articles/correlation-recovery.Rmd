@@ -41,7 +41,7 @@ num <- function(x, digits = 2) {
 # one cell of by_type
 cell <- function(type, r, cor, est, column) {
   row <- by_type[by_type$pair_type == type & by_type$rho == r &
-                   by_type$re_cor == cor & by_type$estimator == est, ]
+    by_type$re_cor == cor & by_type$estimator == est, ]
   num(row[[column]])
 }
 lav <- function(r, cor, pair, column) {
@@ -54,7 +54,8 @@ lav_status <- function(cond, status) {
   if (length(n) == 0L) 0L else n
 }
 groups <- dplyr::left_join(res$convergence_groups, res$design,
-                           by = "condition")
+  by = "condition"
+)
 group_fits <- function(cor, grp, column) {
   g <- groups[groups$re_cor == cor & groups$group == grp, ]
   sum(g[[column]] > 0)
@@ -192,9 +193,11 @@ convergence_table <- res$convergence |>
     .by = condition
   ) |>
   dplyr::left_join(res$design, by = "condition")
-convergence_table[c("condition", "rho", "re_cor", "fits", "pass",
-                    "pass_strict", "max_rhat", "min_ess_bulk",
-                    "min_ess_tail", "n_divergent")]
+convergence_table[c(
+  "condition", "rho", "re_cor", "fits", "pass",
+  "pass_strict", "max_rhat", "min_ess_bulk",
+  "min_ess_tail", "n_divergent"
+)]
 ```
 
 Under the usual standard, Rhat below 1.01, bulk and tail ESS above 400
@@ -287,8 +290,10 @@ ggplot(
   geom_hline(aes(yintercept = true_value), linetype = "dashed") +
   geom_point(size = 2.5, position = position_dodge(width = 0.4)) +
   facet_grid(paste("rho =", rho) ~ pair_type) +
-  labs(x = NULL, y = "Mean estimate (dashed: generating value)",
-       colour = "re_cor")
+  labs(
+    x = NULL, y = "Mean estimate (dashed: generating value)",
+    colour = "re_cor"
+  )
 ```
 
 **The same parameter across tasks.** The generating correlation is .70.
@@ -384,8 +389,10 @@ from the same trials. Every fit is kept with its status:
 ```{r, echo = FALSE}
 res$lavaan_status
 lavaan_summary <- res$lavaan_grid_summary[
-  c("condition", "rho", "re_cor", "pair", "n_fits", "n_warning",
-    "mean_estimate", "sd_estimate", "coverage")
+  c(
+    "condition", "rho", "re_cor", "pair", "n_fits", "n_warning",
+    "mean_estimate", "sd_estimate", "coverage"
+  )
 ]
 dplyr::mutate(lavaan_summary, dplyr::across(mean_estimate:coverage, \(x) round(x, 3)))
 ```
@@ -450,8 +457,10 @@ fits pass the looser bar; fit `a` misses the strict one on Rhat.
 ```
 
 ```{r, echo = FALSE}
-res$attenuation[c("term", "estimator", "true_value", "mean_estimate",
-                  "rel_a", "rel_b", "expected", "disattenuated")]
+res$attenuation[c(
+  "term", "estimator", "true_value", "mean_estimate",
+  "rel_a", "rel_b", "expected", "disattenuated"
+)]
 ```
 
 Neither fit knows about the other model's subjects, so a correlation

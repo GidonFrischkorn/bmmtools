@@ -279,7 +279,8 @@ test_that("a wrapped grouping factor is refused, not silently mis-parsed", {
   # nothing on the real fit, in silence.
   for (term in c("gr(id, cor = FALSE)", "mm(id1, id2)", "id:session")) {
     formula <- fake_bmmformula(kappa = stats::as.formula(
-      paste0("kappa ~ 1 + (1 | ", term, ")"), env = globalenv()
+      paste0("kappa ~ 1 + (1 | ", term, ")"),
+      env = globalenv()
     ))
     err <- expect_error(sbc_formula_groups(formula))
     expect_match(conditionMessage(err), "kappa")
@@ -462,8 +463,10 @@ test_that("a partial mismatch errors instead of returning a narrower matrix", {
 test_that("select_variables returns the matched names in pattern order", {
   available <- c("b_kappa_Intercept", "b_thetat_Intercept", "lp__")
   out <- select_variables(
-    c("population:thetat" = "^b_thetat_Intercept$",
-      "population:kappa" = "^b_kappa_Intercept$"),
+    c(
+      "population:thetat" = "^b_thetat_Intercept$",
+      "population:kappa" = "^b_kappa_Intercept$"
+    ),
     available
   )
   expect_equal(out, c("b_thetat_Intercept", "b_kappa_Intercept"))
@@ -1338,7 +1341,8 @@ test_that("the generator emits deviations, under the prior fit's own labels", {
   rank <- select_variables(patterns, posterior::variables(draws))
 
   generator <- sbc_generator(
-    draws, rank, model, layout, correlated = FALSE, group = "id"
+    draws, rank, model, layout,
+    correlated = FALSE, group = "id"
   )
   out <- withr::with_seed(7, generator$f())
 
@@ -1394,7 +1398,8 @@ test_that("a label the prior fit did not see is an error naming both sets", {
   model <- bmm::mixture2p(resp_error = "y")
   draws <- sbc_prior_draws(3L, subjects = c("1", "2"))
   draws <- posterior::subset_draws(
-    draws, variable = grep("^cor_", posterior::variables(draws),
+    draws,
+    variable = grep("^cor_", posterior::variables(draws),
       invert = TRUE, value = TRUE
     )
   )
@@ -1550,10 +1555,12 @@ task_data <- function() {
 #' 4's check, noted in STATE-milestone-6.md, not fixed here).
 task_prior <- function() {
   brms::set_prior(
-    "normal(0, 1)", class = "b", coef = "tasktask1", nlpar = "kappa"
+    "normal(0, 1)",
+    class = "b", coef = "tasktask1", nlpar = "kappa"
   ) +
     brms::set_prior(
-      "normal(0, 1)", class = "b", coef = "tasktask2", nlpar = "kappa"
+      "normal(0, 1)",
+      class = "b", coef = "tasktask2", nlpar = "kappa"
     )
 }
 

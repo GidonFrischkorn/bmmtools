@@ -40,7 +40,8 @@ test_that("a component stores what it was given and prints one line", {
   expect_invisible(print(comp))
 
   tasked <- recovery_component(
-    m2p(), c(kappa = 2, thetat = 0), n_trials = 3,
+    m2p(), c(kappa = 2, thetat = 0),
+    n_trials = 3,
     tasks = c("1", "2"), task_col = "cond", name = "t"
   )
   expect_equal(tasked$tasks, c("1", "2"))
@@ -97,13 +98,15 @@ test_that("a component validates what needs no draw", {
   )
   expect_error(
     recovery_component(
-      m2p(), pars, n_trials = 2, sds = c(bogus = 1), name = "a"
+      m2p(), pars,
+      n_trials = 2, sds = c(bogus = 1), name = "a"
     ),
     "bogus"
   )
   expect_error(
     recovery_component(
-      m2p(), function() pars, n_trials = 2, sds = c(mu1 = 1), name = "a"
+      m2p(), function() pars,
+      n_trials = 2, sds = c(mu1 = 1), name = "a"
     ),
     "fixes"
   )
@@ -114,14 +117,16 @@ test_that("a component validates what needs no draw", {
   # a task term that does not exist is caught before any draw
   expect_error(
     recovery_component(
-      m2p(), c(pars, kappa_task3 = 1), n_trials = 2,
+      m2p(), c(pars, kappa_task3 = 1),
+      n_trials = 2,
       tasks = c("1", "2"), name = "a"
     ),
     "kappa_task3"
   )
   expect_s3_class(
     recovery_component(
-      m2p(), function() pars, n_trials = 2, sds = function() c(kappa = 1),
+      m2p(), function() pars,
+      n_trials = 2, sds = function() c(kappa = 1),
       formula = bmm::bmf(kappa ~ 1, thetat ~ 1), name = "a"
     ),
     "bmmtools_component"
@@ -133,7 +138,8 @@ test_that("a component validates what needs no draw", {
 test_that("the joint truth carries prefixed terms, tasks included", {
   skip_if_not_installed("bmm")
   a <- recovery_component(
-    m2p(), c(kappa = 2, thetat = 0), n_trials = 2,
+    m2p(), c(kappa = 2, thetat = 0),
+    n_trials = 2,
     sds = c(kappa = 0.3), tasks = c("1", "2"), name = "a",
     generator = zero_generator
   )
@@ -152,8 +158,10 @@ test_that("the joint truth carries prefixed terms, tasks included", {
   expect_s3_class(set$components$a, "bmmtools_simulation")
   expect_equal(
     set$truth$population$term,
-    c("a_kappa_task1", "a_kappa_task2", "a_thetat_task1", "a_thetat_task2",
-      "b_c", "b_kappa")
+    c(
+      "a_kappa_task1", "a_kappa_task2", "a_thetat_task1", "a_thetat_task2",
+      "b_c", "b_kappa"
+    )
   )
   varying <- c("a_kappa_task1", "a_kappa_task2", "b_c")
   expect_equal(unique(set$truth$subjects$term), varying)
@@ -210,11 +218,13 @@ test_that("the joint truth carries prefixed terms, tasks included", {
 test_that("components share one subject draw across models", {
   skip_if_not_installed("bmm")
   a <- recovery_component(
-    m2p(), c(kappa = 2, thetat = 0), n_trials = 1,
+    m2p(), c(kappa = 2, thetat = 0),
+    n_trials = 1,
     sds = c(kappa = 0.3), generator = zero_generator, name = "a"
   )
   b <- recovery_component(
-    sdm_model(), c(c = 1, kappa = 1), n_trials = 1,
+    sdm_model(), c(c = 1, kappa = 1),
+    n_trials = 1,
     sds = c(c = 0.5), generator = zero_generator, name = "b"
   )
   cors <- diag(3)
@@ -292,12 +302,14 @@ test_that("one component and no covariates equals simulate_recovery()", {
 test_that("a second component leaves the first one's subject values", {
   skip_if_not_installed("bmm")
   a <- recovery_component(
-    m2p(), c(kappa = 2, thetat = 0), n_trials = 2,
+    m2p(), c(kappa = 2, thetat = 0),
+    n_trials = 2,
     sds = c(kappa = 0.3, thetat = 0.2), generator = noisy_generator,
     name = "a"
   )
   b <- recovery_component(
-    sdm_model(), c(c = 1, kappa = 1), n_trials = 2,
+    sdm_model(), c(c = 1, kappa = 1),
+    n_trials = 2,
     sds = c(c = 0.5, kappa = 0.1), generator = noisy_generator, name = "b"
   )
   one_cors <- matrix(c(1, 0.5, 0.5, 1), 2,
@@ -321,11 +333,13 @@ test_that("a second component leaves the first one's subject values", {
 test_that("covariates are drawn after every generator", {
   skip_if_not_installed("bmm")
   a <- recovery_component(
-    m2p(), c(kappa = 2, thetat = 0), n_trials = 3,
+    m2p(), c(kappa = 2, thetat = 0),
+    n_trials = 3,
     sds = c(kappa = 0.3), generator = noisy_generator, name = "a"
   )
   b <- recovery_component(
-    sdm_model(), c(c = 1, kappa = 1), n_trials = 3,
+    sdm_model(), c(c = 1, kappa = 1),
+    n_trials = 3,
     sds = c(c = 0.5), generator = noisy_generator, name = "b"
   )
   cors <- diag(3)
@@ -372,7 +386,8 @@ test_that("simulate_components refuses bad sets", {
     "cannot be used"
   )
   tasked <- recovery_component(
-    m2p(), c(kappa = 2, thetat = 0), n_trials = 2, sds = c(kappa = 0.3),
+    m2p(), c(kappa = 2, thetat = 0),
+    n_trials = 2, sds = c(kappa = 0.3),
     tasks = c("1", "2"), task_col = "G", name = "t"
   )
   expect_error(
@@ -393,7 +408,8 @@ test_that("simulate_components refuses bad sets", {
   expect_error(simulate_components(list(a, b), 5, cors = unprefixed), "a_kappa")
   # an error inside a component names the component
   broken <- recovery_component(
-    m2p(), function() c(kappa = 1), n_trials = 2, name = "broken"
+    m2p(), function() c(kappa = 1),
+    n_trials = 2, name = "broken"
   )
   expect_error(simulate_components(list(broken), 5), "broken")
 })
@@ -402,12 +418,14 @@ test_that("simulate_components refuses bad sets", {
 
 two_component_set <- function(n_subjects = 8, seed = 4, ...) {
   a <- recovery_component(
-    m2p(), c(kappa = 2, thetat = 0), n_trials = 2,
+    m2p(), c(kappa = 2, thetat = 0),
+    n_trials = 2,
     sds = c(kappa = 0.3, thetat = 0.2), generator = zero_generator,
     name = "a"
   )
   b <- recovery_component(
-    sdm_model(), c(c = 1, kappa = 1), n_trials = 2,
+    sdm_model(), c(c = 1, kappa = 1),
+    n_trials = 2,
     sds = c(c_task1 = 0.5), generator = zero_generator, name = "b",
     tasks = c("1", "2")
   )
@@ -494,7 +512,8 @@ test_that("per-component prior, seed and refit reach fit_cached", {
   expect_null(seen$calls[[5L]]$dots$seed)
 
   custom <- recovery_component(
-    m2p(), c(kappa = 2, thetat = 0), n_trials = 2, sds = c(kappa = 0.3),
+    m2p(), c(kappa = 2, thetat = 0),
+    n_trials = 2, sds = c(kappa = 0.3),
     generator = zero_generator, name = "c",
     formula = bmm::bmf(kappa ~ 1 + (1 | id), thetat ~ 1)
   )

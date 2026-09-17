@@ -227,7 +227,8 @@ cross_check_example <- function(n_subjects = 6L,
                                 intervals = TRUE) {
   ids <- as.character(seq_len(n_subjects))
   fit <- structure(
-    list(parameters = terms, ids = ids), class = "mockfit"
+    list(parameters = terms, ids = ids),
+    class = "mockfit"
   )
   reference <- tibble::tibble(
     term = rep(terms, each = n_subjects),

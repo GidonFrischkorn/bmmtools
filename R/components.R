@@ -390,7 +390,8 @@ in_component <- function(name, expr, call) {
 #' cors <- diag(2)
 #' dimnames(cors) <- rep(list(c("m2p_thetat", "sdm_c")), 2)
 #' cors[1, 2] <- cors[2, 1] <- 0.6
-#' set <- simulate_components(components, n_subjects = 100, cors = cors,
+#' set <- simulate_components(components,
+#'   n_subjects = 100, cors = cors,
 #'   seed = 1
 #' )
 #' fits <- fit_components(set, dir = "fits")
@@ -430,19 +431,22 @@ simulate_components <- function(components,
 
   out <- with_seed_if(seed, {
     realised <- lapply(specs, function(spec) {
-      in_component(spec$name, {
-        pars <- resolve_truth_arg(spec$pars, "pars")
-        pars <- expand_task_values(
-          pars, spec$model, spec$tasks, spec$task_col, "pars"
-        )
-        pars <- check_pars(pars, spec$model, spec$tasks, spec$task_col)
-        sds <- resolve_truth_arg(spec$sds, "sds")
-        sds <- expand_task_values(
-          sds, spec$model, spec$tasks, spec$task_col, "sds"
-        )
-        sds <- check_sds(sds, pars, spec$model)
-        list(pars = pars, sds = sds)
-      }, call = error_call)
+      in_component(spec$name,
+        {
+          pars <- resolve_truth_arg(spec$pars, "pars")
+          pars <- expand_task_values(
+            pars, spec$model, spec$tasks, spec$task_col, "pars"
+          )
+          pars <- check_pars(pars, spec$model, spec$tasks, spec$task_col)
+          sds <- resolve_truth_arg(spec$sds, "sds")
+          sds <- expand_task_values(
+            sds, spec$model, spec$tasks, spec$task_col, "sds"
+          )
+          sds <- check_sds(sds, pars, spec$model)
+          list(pars = pars, sds = sds)
+        },
+        call = error_call
+      )
     })
     all_pars <- unlist(unname(lapply(specs, function(spec) {
       values <- realised[[spec$name]]$pars
@@ -537,17 +541,20 @@ simulate_component <- function(spec, realised, values, full, n_subjects,
     own_cors <- full[prefixed, prefixed, drop = FALSE]
     dimnames(own_cors) <- list(varying, varying)
   }
-  in_component(spec$name, {
-    simulate_recovery(
-      spec$model, realised$pars,
-      n_subjects = n_subjects, n_trials = spec$n_trials,
-      sds = realised$sds, cors = own_cors,
-      tasks = spec$tasks, task_col = spec$task_col %||% "task",
-      subject_pars = subject_pars,
-      generator = spec$generator,
-      seed = NULL
-    )
-  }, call = call)
+  in_component(spec$name,
+    {
+      simulate_recovery(
+        spec$model, realised$pars,
+        n_subjects = n_subjects, n_trials = spec$n_trials,
+        sds = realised$sds, cors = own_cors,
+        tasks = spec$tasks, task_col = spec$task_col %||% "task",
+        subject_pars = subject_pars,
+        generator = spec$generator,
+        seed = NULL
+      )
+    },
+    call = call
+  )
 }
 
 #' @export

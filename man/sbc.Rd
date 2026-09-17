@@ -215,7 +215,8 @@ generate <- function(draws, data) {
         draws[[paste0("r_id__thetat[", id, ",Intercept]")]]
     )
     data$y[rows] <- bmm::rmixture2p(
-      length(rows), kappa = kappa, p_mem = p_mem
+      length(rows),
+      kappa = kappa, p_mem = p_mem
     )
   }
   data

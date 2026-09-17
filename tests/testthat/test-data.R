@@ -38,7 +38,8 @@ test_that("the example objects plot", {
 test_that("no example object carries a local path", {
   for (x in list(recovery_mixture2p, prior_check_sdt_yn)) {
     text <- paste(utils::capture.output(utils::str(attributes(x))),
-                  collapse = "\n")
+      collapse = "\n"
+    )
     expect_false(grepl("/Users/|/home/|[A-Z]:\\\\", text))
   }
 })

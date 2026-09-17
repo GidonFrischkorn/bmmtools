@@ -1223,7 +1223,8 @@ sbc_user_generator <- function(draws, rank, generator, data, model, layout,
     )
     check_generated_data(
       generated, row_number, model, group, needs_group, layout$ids,
-      subject_ranked, call = call
+      subject_ranked,
+      call = call
     )
 
     variables <- as.list(row[rank])
@@ -1576,7 +1577,8 @@ check_sbc_args <- function(prior, seed, fitter, cache_mode, cache_location,
 #'         draws[[paste0("r_id__thetat[", id, ",Intercept]")]]
 #'     )
 #'     data$y[rows] <- bmm::rmixture2p(
-#'       length(rows), kappa = kappa, p_mem = p_mem
+#'       length(rows),
+#'       kappa = kappa, p_mem = p_mem
 #'     )
 #'   }
 #'   data

@@ -22,7 +22,8 @@ cg_a <- function(name = "a", ...) {
 
 cg_b <- function(tasks = c("1", "2"), ...) {
   recovery_component(
-    bmm::sdm(resp_error = "y"), c(c = 1, kappa = 1), n_trials = 2,
+    bmm::sdm(resp_error = "y"), c(c = 1, kappa = 1),
+    n_trials = 2,
     sds = c(c_task1 = 0.5), generator = cg_generator, name = "b",
     tasks = tasks, ...
   )
@@ -59,7 +60,8 @@ cg_parts <- function(out) {
 }
 
 cg_fit_files <- function(dir) {
-  list.files(dir, pattern = "^cell-[0-9]+-rep-[0-9]+-(a|b)\\.rds$",
+  list.files(dir,
+    pattern = "^cell-[0-9]+-rep-[0-9]+-(a|b)\\.rds$",
     full.names = TRUE
   )
 }
@@ -97,8 +99,10 @@ test_that("a component grid scores prefixed terms per cell and component", {
   expect_true(all(cells$status == "ok"))
   expect_true(all(file.exists(cells$file)))
   expect_true(all(file.exists(file.path(
-    dir, c("cell-1-rep-1-a-est.rds", "cell-1-rep-1-b-est.rds",
-           "cell-1-rep-1-cor.rds", "cell-1-rep-1-sim.rds")
+    dir, c(
+      "cell-1-rep-1-a-est.rds", "cell-1-rep-1-b-est.rds",
+      "cell-1-rep-1-cor.rds", "cell-1-rep-1-sim.rds"
+    )
   ))))
   expect_equal(attr(out, "grid"), cg_grid())
 
@@ -109,7 +113,7 @@ test_that("a component grid scores prefixed terms per cell and component", {
   expect_true("G__b_c_task1" %in% cors$term)
   truth_of <- function(row) {
     rows <- cors[cors$term == "a_kappa__b_c_task1" &
-                   cors$condition == row, ]
+      cors$condition == row, ]
     unique(rows$true_value)
   }
   expect_equal(truth_of("row-1"), 0.2)
@@ -292,7 +296,8 @@ test_that("component grid columns change each row's set", {
   expect_equal(one$pars[["a_kappa"]], 2)
   expect_equal(two$pars[["a_kappa"]], 3)
   # a bare column sets every task, a full term overrides it
-  expect_equal(two$pars[c("b_c_task1", "b_c_task2")],
+  expect_equal(
+    two$pars[c("b_c_task1", "b_c_task2")],
     c(b_c_task1 = 2, b_c_task2 = 4)
   )
   expect_equal(one$pars[["b_c_task2"]], 1)
@@ -509,7 +514,8 @@ test_that("rows must keep one link table and sd_ columns add missing SDs", {
       list(cg_a(), cg_b())
     } else {
       other <- recovery_component(
-        bmm::sdm(resp_error = "y"), c(c = 1, kappa = 1), n_trials = 2,
+        bmm::sdm(resp_error = "y"), c(c = 1, kappa = 1),
+        n_trials = 2,
         generator = cg_generator, name = "a"
       )
       list(other, cg_b())

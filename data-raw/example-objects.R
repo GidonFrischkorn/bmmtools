@@ -50,4 +50,5 @@ for (obj in list(recovery_mixture2p, prior_check_sdt_yn)) {
 }
 
 usethis::use_data(recovery_mixture2p, prior_check_sdt_yn,
-                  compress = "xz", overwrite = TRUE)
+  compress = "xz", overwrite = TRUE
+)

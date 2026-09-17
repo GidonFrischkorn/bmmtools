@@ -164,7 +164,8 @@ sbc_mock_fitter <- function(variables = NULL, n_draws = 60L, group = "id",
       seed = dots$seed, chains = dots$chains, iter = dots$iter
     )
     structure(
-      list(prior_draws = draws), class = c("sbcmockfit", "mockfit")
+      list(prior_draws = draws),
+      class = c("sbcmockfit", "mockfit")
     )
   }
   # SBC hashes the backend with rlang::hash(), which serialises this
