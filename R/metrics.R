@@ -59,6 +59,16 @@ metric_rmse <- function(estimate, truth) {
   sqrt(mean((p$x - p$y)^2))
 }
 
+#' Mean absolute error
+#' @noRd
+metric_mae <- function(estimate, truth) {
+  p <- complete_pairs(estimate, truth)
+  if (p$n == 0L) {
+    return(NA_real_)
+  }
+  mean(abs(p$x - p$y))
+}
+
 #' Share of credible intervals containing the generating value
 #'
 #' The interval is closed: a bound exactly equal to truth counts as

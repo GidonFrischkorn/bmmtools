@@ -67,7 +67,7 @@ recovery_summary_columns <- function() {
   c(
     "term", "estimator", "level", "scale", "n", "n_replications",
     "n_converged",
-    "bias", "rmse", "coverage", "ci_width",
+    "bias", "rmse", "mae", "coverage", "ci_width",
     "detected", "sign_recovery",
     "r", "r_low", "r_high", "rank_r",
     "ccc", "ccc_low", "ccc_high", "ccc_accuracy", "ccc_scale_shift",
@@ -381,6 +381,7 @@ summarise_errors <- function(rows) {
   list(
     bias = metric_bias(rows$estimate, rows$true_value),
     rmse = metric_rmse(rows$estimate, rows$true_value),
+    mae = metric_mae(rows$estimate, rows$true_value),
     coverage = metric_coverage(rows$true_value, rows$ci_low, rows$ci_high),
     ci_width = metric_ci_width(rows$ci_low, rows$ci_high)
   )
@@ -510,7 +511,7 @@ summarise_subject <- function(rows) {
 #' @return A `bmmtools_recovery_summary` tibble with the columns `term`,
 #'   `estimator`, `level`, `scale`, `n`, `n_replications`, `n_converged`,
 #'   `bias`,
-#'   `rmse`, `coverage`, `ci_width`, `detected`, `sign_recovery`, `r`,
+#'   `rmse`, `mae`, `coverage`, `ci_width`, `detected`, `sign_recovery`, `r`,
 #'   `r_low`, `r_high`, `rank_r`,
 #'   `ccc`, `ccc_low`, `ccc_high`, `ccc_accuracy`, `ccc_scale_shift`,
 #'   `ccc_location_shift`, `calibration_slope` and `truth_sd`, the
@@ -597,7 +598,7 @@ empty_recovery_summary <- function() {
     term = "character", estimator = "character", level = "character",
     scale = "character",
     n = "double", n_replications = "integer", n_converged = "integer",
-    bias = "double", rmse = "double", coverage = "double",
+    bias = "double", rmse = "double", mae = "double", coverage = "double",
     ci_width = "double", detected = "double", sign_recovery = "double",
     r = "double", r_low = "double",
     r_high = "double", rank_r = "double", ccc = "double",

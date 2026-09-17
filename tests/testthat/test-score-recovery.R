@@ -1006,3 +1006,23 @@ test_that("both columns are in the summary contract and its empty shape", {
   expect_type(empty$detected, "double")
   expect_type(empty$sign_recovery, "double")
 })
+
+# mae (spec 9.6) -----------------------------------------------------------
+
+test_that("mae is the mean absolute error across replications", {
+  # absolute errors 0.1, 0.5, 0.4, 0.1; mean = 1.1 / 4 = 0.275
+  estimates <- fake_estimates(
+    term = rep("kappa", 4L),
+    estimate = c(0.8, 1.2, 0.3, 0.6),
+    replication = 1:4
+  )
+  out <- summary(recover(estimates, fake_truth("kappa", 0.7), scale = "link"))
+  expect_equal(out$mae, 0.275)
+})
+
+test_that("mae is in the summary contract and its empty shape", {
+  expect_true("mae" %in% recovery_summary_columns())
+  empty <- empty_recovery_summary()
+  expect_true("mae" %in% names(empty))
+  expect_type(empty$mae, "double")
+})

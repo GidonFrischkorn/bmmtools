@@ -41,6 +41,20 @@ test_that("rmse punishes a single large miss more than bias does", {
   expect_equal(metric_rmse(estimate, truth), 10)
 })
 
+test_that("metric_mae is the mean absolute difference", {
+  # absolute differences c(1, 1, 0, 3); mean = 5 / 4 = 1.25
+  estimate <- c(2, 3, 4, 7)
+  truth <- c(1, 2, 4, 4)
+  expect_equal(metric_mae(estimate, truth), 1.25)
+})
+
+test_that("mae does not cancel offsetting errors, unlike bias", {
+  estimate <- c(-10, 10)
+  truth <- c(0, 0)
+  expect_equal(metric_bias(estimate, truth), 0)
+  expect_equal(metric_mae(estimate, truth), 10)
+})
+
 # coverage and interval width --------------------------------------------
 
 test_that("metric_coverage is the share of intervals containing truth", {
@@ -463,6 +477,7 @@ test_that("all-missing input returns NA rather than NaN", {
   truth <- c(NA_real_, NA_real_)
   expect_true(is.na(metric_bias(estimate, truth)))
   expect_true(is.na(metric_rmse(estimate, truth)))
+  expect_true(is.na(metric_mae(estimate, truth)))
   expect_true(is.na(metric_r(estimate, truth)$r))
   expect_equal(metric_r(estimate, truth)$n, 0L)
 })

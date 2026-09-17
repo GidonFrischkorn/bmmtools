@@ -19,7 +19,7 @@
 A \code{bmmtools_recovery_summary} tibble with the columns \code{term},
 \code{estimator}, \code{level}, \code{scale}, \code{n}, \code{n_replications}, \code{n_converged},
 \code{bias},
-\code{rmse}, \code{coverage}, \code{ci_width}, \code{detected}, \code{sign_recovery}, \code{r},
+\code{rmse}, \code{mae}, \code{coverage}, \code{ci_width}, \code{detected}, \code{sign_recovery}, \code{r},
 \code{r_low}, \code{r_high}, \code{rank_r},
 \code{ccc}, \code{ccc_low}, \code{ccc_high}, \code{ccc_accuracy}, \code{ccc_scale_shift},
 \code{ccc_location_shift}, \code{calibration_slope} and \code{truth_sd}, the
