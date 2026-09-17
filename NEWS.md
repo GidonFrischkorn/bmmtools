@@ -2,6 +2,29 @@
 
 ## Running a study
 
+* `collect_grid()` rebuilds what `recovery_grid()` returned from the
+  files it left behind, without fitting anything and without reading a
+  fit. The per-cell sidecars hold everything that was scored, so a study
+  can run on a server and be assembled on a laptop that has neither the
+  fits nor the versions of bmm, brms and Stan that produced them. It is
+  a reader, not a resume: it checks neither the cache key nor the
+  version, and a resume is still rerunning the identical call in the
+  same directory. `scale`, `levels` and `correlations` re-score the
+  stored rows, so a grid run on the link scale can be read again on the
+  natural one.
+* `recovery_grid(convergence = )` gives `check_convergence()` its
+  thresholds, checked before any cell runs. The gate is computed once
+  per cell and its whole diagnostics row is stored in the cell's
+  sidecar, so `attr(x, "cells")` now carries `max_rhat`,
+  `min_ess_bulk`, `min_ess_tail`, `n_divergent`, `n_max_treedepth`,
+  `n_variables` and `failed`, together with `fit_seconds`, `chains`,
+  `iter` and `threads` --- all of it without reading a fit. `elapsed`
+  keeps its meaning: how long the cell took in this run, read time
+  included, while `fit_seconds` is how long the fit itself took.
+* `recovery_grid()` writes `<dir>/grid.rds`, the record of what the grid
+  was called with, which is what `collect_grid()` reads. A directory
+  reused for a different design has its record rewritten, with a message
+  naming what differs.
 * `fit_cached()` records how long the fit took. The time is written to
   `<file>.meta.rds` beside the fit and comes back in the
   `bmmtools_cache` attribute as `seconds`, including when the call

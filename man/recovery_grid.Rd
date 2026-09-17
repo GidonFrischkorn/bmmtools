@@ -157,7 +157,7 @@ long the cell took in this run, read time included;
 \code{fit_seconds} is how long the fit itself took when it was run.
 \item \code{grid}: the grid as run. The same record, with everything else the
 grid was called with, is written to \verb{<dir>/grid.rds}, which is
-what \code{collect_grid()} reads.
+what \code{\link[=collect_grid]{collect_grid()}} reads.
 \item \code{correlations}: with \code{correlations} requested, a
 \code{bmmtools_cor_recovery} from \code{\link[=recover_correlations]{recover_correlations()}} over every
 cell, with \code{condition} and \code{replication}; otherwise \code{NULL}.

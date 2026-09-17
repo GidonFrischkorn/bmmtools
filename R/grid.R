@@ -933,7 +933,7 @@ run_cell <- function(sim, model, formula, prior, paths, seed, dots, fitter,
 #' Write what the grid was run with, once per directory
 #'
 #' The cell files say what each cell is; nothing until now said what the
-#' grid is. `collect_grid()` reads this record to rebuild a result from
+#' grid is. [collect_grid()] reads this record to rebuild a result from
 #' the cell files alone, on a machine that has neither the fits nor the
 #' package versions that produced them.
 #'
@@ -1294,7 +1294,7 @@ grid_formula <- function(formula, row, i, model, re_cor, task_col,
 #'     `fit_seconds` is how long the fit itself took when it was run.
 #'   * `grid`: the grid as run. The same record, with everything else the
 #'     grid was called with, is written to `<dir>/grid.rds`, which is
-#'     what `collect_grid()` reads.
+#'     what [collect_grid()] reads.
 #'   * `correlations`: with `correlations` requested, a
 #'     `bmmtools_cor_recovery` from [recover_correlations()] over every
 #'     cell, with `condition` and `replication`; otherwise `NULL`.
