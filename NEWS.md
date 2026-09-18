@@ -1,4 +1,4 @@
-# bmmtools (development version)
+# bmmtools 0.2.0
 
 ## Simulate
 

@@ -48,10 +48,14 @@ other package does. Scoring dispatches on `brmsfit`, so a plain brms fit
 can be scored too; only the simulation step, which reads a bmm model
 object to know what to generate, needs bmm itself.
 
-Version 0.1.0 is the first release. Every function this README names is
-built and documented: the five scorers of the table,
-`recover_subjects()`, and underneath them `simulate_recovery()`,
-`recovery_grid()` and `fit_cached()`. It is an early release even so.
+Version 0.2.0 adds what running a study needs: `collect_grid()`,
+`run_info()`, a convergence gate and a per-cell diagnostics record on
+`recovery_grid()`, contrast-coded effect designs, and `fit_ml()` for
+comparing hierarchical estimation with subject-wise maximum likelihood.
+Every function this README names is built and documented: the five
+scorers of the table, `recover_subjects()`, and underneath them
+`simulate_recovery()`, `recovery_grid()` and `fit_cached()`. It is an
+early release even so.
 bmmtools is not on CRAN, and the lifecycle badge says experimental
 because argument names and return shapes can still change before 1.0.
 
@@ -152,7 +156,7 @@ bmmtools is not on CRAN. Install the current release from GitHub:
 
 ```r
 # install.packages("pak")
-pak::pak("GidonFrischkorn/bmmtools@v0.1.0")
+pak::pak("GidonFrischkorn/bmmtools@v0.2.0")
 ```
 
 Without the tag you get the development version, which is whatever is on

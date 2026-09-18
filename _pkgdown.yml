@@ -5,7 +5,7 @@ template:
   math-rendering: mathjax
 
 development:
-  mode: auto
+  mode: release
 
 home:
   links:

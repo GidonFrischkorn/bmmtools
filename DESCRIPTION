@@ -1,6 +1,6 @@
 Package: bmmtools
 Title: Validate Cognitive Measurement Models Fitted with 'bmm'
-Version: 0.1.0
+Version: 0.2.0
 Authors@R: 
     person("Gidon T.", "Frischkorn", , "gfrischkorn@icloud.com", role = c("aut", "cre", "cph"),
            comment = c(ORCID = "0000-0002-5055-9764"))
