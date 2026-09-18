@@ -381,7 +381,17 @@ test_that("the estimates tibble satisfies the apabayes parameters contract", {
   skip_if_not_installed("brms")
   skip_if_not_installed("apabayes")
   out <- extract_estimates(mixture2p_fit())
-  expect_no_error(apabayes::apabayes_tidy(out, type = "parameters"))
+  # Resolved at call time, not as a literal `apabayes::apabayes_tidy()`, for
+  # the reason `bmm_fun()` gives in R/adapters.R: a literal is scanned
+  # statically, and `skip_if_not_installed()` guards the run, not the scan.
+  # apabayes is on no repository and is deliberately not a declared
+  # dependency (neither package depends on the other), so R CMD check reads
+  # it as an undeclared import. Measured 2026-09-18: with the CRAN and
+  # Bioconductor indices reachable the check is 0/0/0, and with them
+  # unreachable the same tree is 1 WARNING --- which the workflows, running
+  # `error-on = "warning"`, would fail on during any repository outage.
+  apabayes_tidy <- getExportedValue("apabayes", "apabayes_tidy")
+  expect_no_error(apabayes_tidy(out, type = "parameters"))
 })
 
 # the converged column (spec 2, section 2) -------------------------------
