@@ -41,6 +41,8 @@ reference:
   - fit_ml
   - check_convergence
   - recovery_grid
+  - collect_grid
+  - run_info
 
 - title: Score recovery
   desc: Estimates against generating values, per fit and per parameter.
