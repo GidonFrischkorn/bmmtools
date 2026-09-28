@@ -1,3 +1,11 @@
+# bmmtools (development version)
+
+* The README states what bmmtools reads off a fitted bmm model beyond
+  its exported API (`$links`, `$fixed_parameters`, `$resp_vars`,
+  `$other_vars`, and the generator adapters), and why a bmm parameter
+  rename can break an adapter. Tracked in
+  [#10](https://github.com/GidonFrischkorn/bmmtools/issues/10).
+
 # bmmtools 0.2.0
 
 ## Simulate
