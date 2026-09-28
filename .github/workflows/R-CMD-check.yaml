@@ -5,6 +5,12 @@ on:
     branches: [main, master]
   pull_request:
   workflow_dispatch:
+  schedule:
+    # Weekly: catches an unreleased bmm break between pushes. Only the
+    # develop leg runs here (see the job `if:` below) --- a scheduled
+    # release leg would check nothing a push doesn't, since CRAN bmm only
+    # changes on release.
+    - cron: "0 3 * * 1"
 
 name: R-CMD-check.yaml
 
@@ -13,6 +19,25 @@ permissions: read-all
 jobs:
   R-CMD-check:
     runs-on: ubuntu-latest
+    name: R-CMD-check (${{ matrix.label }})
+    # A break against develop fails this job outright (issue #7, Gidon's
+    # call): an unreleased model's adapter is meant to be caught here,
+    # loudly, before the model ships --- not kept green with
+    # continue-on-error while a regression waits for release to surface.
+    #
+    # Keyed on matrix.label, not matrix.bmm-source: if the release leg's
+    # bmm-source string is ever edited (e.g. pinned to a version), a
+    # condition written against that string would silently stop matching
+    # and the release leg would start running on the schedule too.
+    if: matrix.label != 'release' || github.event_name != 'schedule'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - bmm-source: any::bmm
+            label: release
+          - bmm-source: github::popov-lab/bmm@develop
+            label: develop
     env:
       GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
       R_KEEP_PKG_SOURCE: yes
@@ -28,9 +53,22 @@ jobs:
 
       # bmm and brms make most of the suite runnable; every test that needs
       # a Suggests guards itself with skip_if_not_installed(), so the ones
-      # needing cmdstanr or SBC skip rather than fail. Neither is installed:
+      # needing cmdstanr skip rather than fail. cmdstanr is not installed:
       # no test compiles Stan, and the CmdStan toolchain would dominate the
       # run without checking anything the package promises.
+      #
+      # SBC is installed unpinned, as the pkgdown workflow already does
+      # (issue #7, decision "where SBC comes from"): it is not on CRAN,
+      # and a pinned commit would freeze bmmtools on one SBC revision
+      # until someone updates it by hand.
+      #
+      # `bmm-source` matrix-selects the released bmm and bmm's own
+      # `develop` branch, so an unreleased model's adapter is tested
+      # before its release rather than only after (issue #7). Each
+      # model's tests guard on its own symbols with
+      # skip_if_no_bmm_model() (helper-skip.R), never on
+      # skip_if_not_installed("bmm") alone, which only answers "is bmm
+      # installed", never "does this build carry this model".
       - uses: r-lib/actions/setup-r-dependencies@v2
         with:
           dependencies: '"hard"'
@@ -41,7 +79,8 @@ jobs:
             any::rmarkdown
             any::ggplot2
             any::brms
-            any::bmm
+            ${{ matrix.bmm-source }}
+            github::hyunjimoon/SBC
           needs: check
 
       - uses: r-lib/actions/check-r-package@v2
