@@ -1230,6 +1230,7 @@ test_that("a draw the model cannot generate from names the draw", {
   # values near 9.5 on the log scale, and `rmixture2p()` then dies with
   # `node stack overflow`, naming neither the simulation nor a parameter
   skip_if_not_installed("bmm")
+  skip_if_not_installed("SBC")
   model <- bmm::mixture2p(resp_error = "y")
   draws <- posterior::as_draws_matrix(cbind(
     b_kappa_Intercept = c(1.4, 1.4),
