@@ -15,7 +15,10 @@ cell_case <- function(rho = 0.5, sd = 0.3, tasks = c("1", "2")) {
 }
 
 test_that("check_contrasts takes a matrix or a function and refuses the rest", {
-  expect_equal(check_contrasts(NULL, 2L), stats::contr.treatment(2))
+  expect_equal(
+    check_contrasts(NULL, 2L), stats::contr.treatment(2),
+    ignore_attr = "dimnames"
+  )
   expect_equal(
     check_contrasts(stats::contr.sum, 3L), stats::contr.sum(3)
   )
@@ -31,6 +34,31 @@ test_that("check_contrasts takes a matrix or a function and refuses the rest", {
   expect_error(
     check_contrasts(function(n) stop("no"), 2L), "failed when called"
   )
+})
+
+test_that("a contrast matrix loses its column names", {
+  # brms names a contrast coefficient after the design-matrix column, and
+  # model.matrix() takes the contrast's column names when it has them:
+  # stats::contr.treatment(2) would make the coefficient `task2` while
+  # contrast_terms() and the truth say `task1` (measured 2026-09-28 on a
+  # sampled fit, Milestone 12.3)
+  for (contrasts in list(
+    NULL, stats::contr.treatment, stats::contr.treatment(3),
+    stats::contr.helmert
+  )) {
+    k <- if (is.matrix(contrasts)) nrow(contrasts) else 3L
+    out <- check_contrasts(contrasts, k)
+    expect_null(colnames(out))
+    data <- data.frame(task = factor(letters[seq_len(k)]))
+    stats::contrasts(data$task) <- out
+    expect_equal(
+      colnames(stats::model.matrix(~task, data))[-1L],
+      paste0("task", seq_len(k - 1L))
+    )
+  }
+  named <- matrix(c(-0.5, 0.5), 2L, dimnames = list(NULL, "b_vs_a"))
+  expect_null(colnames(check_contrasts(named, 2L)))
+  expect_equal(check_contrasts(named, 2L), named, ignore_attr = "dimnames")
 })
 
 test_that("contrast_truth transforms treatment coding by hand", {

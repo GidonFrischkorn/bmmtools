@@ -56,9 +56,14 @@ mock_terms <- function(formula, data, model) {
   if (!mock_has_intercept(formula)) {
     return(task_terms(free, tasks, task_col))
   }
-  effects <- as.vector(t(outer(
-    free, paste0("_", task_col, seq_len(length(tasks) - 1L)), paste0
-  )))
+  # brms names a contrast coefficient after the design matrix column, which
+  # takes the contrast matrix's column names when it has them
+  # (stats::contr.treatment does): read it off the data as brms would,
+  # rather than assume `<task_col>1`, so a naming mismatch reaches the test
+  columns <- colnames(stats::model.matrix(
+    stats::reformulate(task_col), data
+  ))[-1L]
+  effects <- as.vector(t(outer(free, paste0("_", columns), paste0)))
   structure(c(free, effects), effects = effects)
 }
 

@@ -744,7 +744,11 @@ summary_print_columns <- function(x) {
     "rmse", "coverage", "coverage_50", "r", "ccc", "calibration_slope",
     "calibration_intercept"
   )
-  if (length(unique(x$estimator)) <= 1L) core <- setdiff(core, "estimator")
+  # `[[` rather than `$`: a column subset keeps the class, and a tibble
+  # warns on `$` of a column it does not have
+  if (length(unique(x[["estimator"]])) <= 1L) {
+    core <- setdiff(core, "estimator")
+  }
   intersect(core, names(x))
 }
 

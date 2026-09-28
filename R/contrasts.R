@@ -69,6 +69,11 @@ check_contrasts <- function(contrasts, k, call = rlang::caller_env()) {
       call = call
     )
   }
+  # brms names a contrast coefficient after the design-matrix column, and
+  # model.matrix() uses the contrast's column names when it has them:
+  # contr.treatment(2) would make it `task2`, not the `task1` that
+  # contrast_terms() and the truth use. Unnamed, it is always `task1`.
+  colnames(contrasts) <- NULL
   contrasts
 }
 
@@ -78,7 +83,9 @@ check_contrasts <- function(contrasts, k, call = rlang::caller_env()) {
 #' `kappa_task1` (the contrast), which is what brms names the coefficients
 #' of a factor carrying a contrast matrix: measured 2026-09-17, the
 #' coefficient of a two-level factor is `<task_col>1` whatever the levels
-#' are called.
+#' are called. *Amended 2026-09-28:* only for a contrast matrix without
+#' column names; `stats::contr.treatment` has them and gives `<task_col>2`,
+#' so [check_contrasts()] drops them.
 #'
 #' @noRd
 contrast_terms <- function(par, k, task_col) {

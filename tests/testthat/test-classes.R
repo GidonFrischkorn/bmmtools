@@ -154,6 +154,17 @@ test_that("the print leads with the condition of a grid", {
   expect_equal(summary_print_columns(s)[[1L]], "condition")
 })
 
+test_that("a summary cut to a few columns prints them without a warning", {
+  s <- summary(recovery_example())
+  for (cut in list(
+    s[, c("term", "level", "n")],
+    dplyr::select(s, "term", "bias", "rmse")
+  )) {
+    expect_no_warning(out <- utils::capture.output(print(cut)))
+    expect_equal(summary_print_columns(cut), setdiff(names(cut), "estimator"))
+  }
+})
+
 test_that("the recovery format carries the core print", {
   out <- format(recovery_example())
   expect_true(any(grepl("coverage_50", out, fixed = TRUE)))

@@ -27,6 +27,14 @@
   the row, and at subject level the replications' intercepts are
   averaged. It is `NA` wherever the slope is
   ([#1](https://github.com/GidonFrischkorn/bmmtools/issues/1)).
+* `coding = "contrast"` with the default contrasts
+  (`stats::contr.treatment`), or any contrast matrix with column names,
+  now recovers: the matrix's column names made brms call the contrast
+  `task2` where the truth says `task1`, and scoring stopped with "No
+  term in `truth` matches an estimated parameter". The column names are
+  dropped, so the contrast is always `<task_col>1` … `<task_col>(k-1)`.
+  Unnamed contrasts such as `bayestestR::contr.equalprior` were not
+  affected ([#1](https://github.com/GidonFrischkorn/bmmtools/issues/1)).
 * The README states what bmmtools reads off a fitted bmm model beyond
   its exported API (`$links`, `$fixed_parameters`, `$resp_vars`,
   `$other_vars`, and the generator adapters), and why a bmm parameter
