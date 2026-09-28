@@ -20,9 +20,9 @@
 #    dddm(), dezdm() and (added 2026-09-17) dcswald() default to TRUE. Every
 #    adapter passes log = TRUE explicitly; relying on the default would
 #    silently sum probabilities for four of the seven.
-# 2. sdt_yn and sdt_mafc exist only in the bmm fork. CRAN bmm 1.3.2 exports
-#    neither the models nor their densities, so those two adapters cannot be
-#    exercised on a runner and their tests guard with skip_if_no_bmm_sdt().
+# 2. sdt_yn and sdt_mafc are missing from CRAN bmm 1.3.2 entirely, and their
+#    densities land on bmm's develop branch on their own schedule, one model
+#    at a time. Their tests guard per model with skip_if_no_bmm_model().
 
 #' Look a density adapter up by the model's class
 #'

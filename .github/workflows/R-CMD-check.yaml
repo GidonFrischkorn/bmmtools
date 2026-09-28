@@ -5,14 +5,31 @@ on:
     branches: [main, master]
   pull_request:
   workflow_dispatch:
+  schedule:
+    # Weekly: catches an unreleased bmm break between pushes. Only
+    # R-CMD-check-develop runs here (see its `if:` below) --- a scheduled
+    # release leg would check nothing a push doesn't, since CRAN bmm only
+    # changes on release.
+    - cron: "0 3 * * 1"
 
 name: R-CMD-check.yaml
 
 permissions: read-all
 
 jobs:
-  R-CMD-check:
+  # Two jobs, not one job with a matrix, because the condition that skips
+  # the release leg on a schedule needs github.event_name only: the
+  # `matrix` context is not available in `jobs.<job_id>.if` (confirmed
+  # against GitHub's own context-availability table after a first attempt
+  # with `if: matrix.label != 'release' || ...` failed the whole workflow
+  # at parse time, 0 jobs run, before either leg could start). `matrix` IS
+  # available in `jobs.<job_id>.name`/`.strategy`/`.steps.*`, which is why
+  # only the job-level `if:` broke.
+  R-CMD-check-release:
     runs-on: ubuntu-latest
+    name: R-CMD-check (release)
+    # A scheduled run only checks the develop leg; see R-CMD-check-develop.
+    if: github.event_name != 'schedule'
     env:
       GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
       R_KEEP_PKG_SOURCE: yes
@@ -28,9 +45,22 @@ jobs:
 
       # bmm and brms make most of the suite runnable; every test that needs
       # a Suggests guards itself with skip_if_not_installed(), so the ones
-      # needing cmdstanr or SBC skip rather than fail. Neither is installed:
+      # needing cmdstanr skip rather than fail. cmdstanr is not installed:
       # no test compiles Stan, and the CmdStan toolchain would dominate the
       # run without checking anything the package promises.
+      #
+      # SBC is installed unpinned, as the pkgdown workflow already does
+      # (issue #7, decision "where SBC comes from"): it is not on CRAN,
+      # and a pinned commit would freeze bmmtools on one SBC revision
+      # until someone updates it by hand.
+      #
+      # This leg installs released bmm; R-CMD-check-develop installs
+      # bmm's own `develop` branch instead, so an unreleased model's
+      # adapter is tested before its release rather than only after
+      # (issue #7). Each model's tests guard on its own symbols with
+      # skip_if_no_bmm_model() (helper-skip.R), never on
+      # skip_if_not_installed("bmm") alone, which only answers "is bmm
+      # installed", never "does this build carry this model".
       - uses: r-lib/actions/setup-r-dependencies@v2
         with:
           dependencies: '"hard"'
@@ -42,6 +72,51 @@ jobs:
             any::ggplot2
             any::brms
             any::bmm
+            github::hyunjimoon/SBC
+          needs: check
+
+      - uses: r-lib/actions/check-r-package@v2
+        with:
+          args: 'c("--no-manual", "--as-cran")'
+          upload-snapshots: true
+          build_args: 'c("--no-manual", "--no-build-vignettes")'
+
+  R-CMD-check-develop:
+    runs-on: ubuntu-latest
+    name: R-CMD-check (develop)
+    # A break here fails the job outright (issue #7, Gidon's call): an
+    # unreleased model's adapter is meant to be caught loudly, before the
+    # model ships --- not kept green with continue-on-error while a
+    # regression waits for release to surface. No `if:` needed: this leg
+    # runs on every trigger, schedule included.
+    env:
+      GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
+      R_KEEP_PKG_SOURCE: yes
+      NOT_CRAN: true
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: r-lib/actions/setup-pandoc@v2
+
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          use-public-rspm: true
+
+      # See R-CMD-check-release for what's installed and why. This leg
+      # installs bmm's own `develop` branch instead of the released
+      # version (issue #7).
+      - uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          dependencies: '"hard"'
+          extra-packages: |
+            any::rcmdcheck
+            any::testthat
+            any::knitr
+            any::rmarkdown
+            any::ggplot2
+            any::brms
+            github::popov-lab/bmm@develop
+            github::hyunjimoon/SBC
           needs: check
 
       - uses: r-lib/actions/check-r-package@v2

@@ -5,6 +5,13 @@
   `$other_vars`, and the generator adapters), and why a bmm parameter
   rename can break an adapter. Tracked in
   [#10](https://github.com/GidonFrischkorn/bmmtools/issues/10).
+* The R-CMD-check workflow now checks bmmtools against both released
+  bmm and bmm's `develop` branch (weekly on a schedule, and on every
+  push and pull request), and installs SBC so `test-sbc.R`'s 47
+  previously-skipped tests run on the runner. Signal-detection tests
+  guard per model with the new `skip_if_no_bmm_model()`, replacing
+  `skip_if_no_bmm_sdt()`, which only ever checked for `sdt_yn`. Tracked
+  in [#7](https://github.com/GidonFrischkorn/bmmtools/issues/7).
 
 # bmmtools 0.2.0
 
