@@ -211,6 +211,9 @@ reading the fit when the key and the version match and it holds every
 requested level and estimator, so the fit files may be deleted once a
 grid has run. Otherwise the cell goes through \code{\link[=fit_cached]{fit_cached()}} again,
 which reuses a cached fit, and the sidecar is rewritten.
+A sidecar written before bmmtools stored the central 50 \% interval
+counts as out of date for the same reason: it is re-extracted from the
+cached fit, not refitted.
 }
 \section{Subject-wise ML}{
 

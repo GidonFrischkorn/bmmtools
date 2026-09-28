@@ -235,7 +235,7 @@ test_that("the returned columns follow the spec order and types", {
   expect_named(out, c(
     "term", "var1", "var2", "estimator", "estimate", "ci_low", "ci_high",
     "ci_method", "ci_level", "rhat", "ess_bulk", "ess_tail", "scale", "n",
-    "converged"
+    "converged", "ci_low_50", "ci_high_50"
   ))
   expect_type(out$n, "integer")
   expect_type(out$converged, "logical")
@@ -1187,4 +1187,61 @@ test_that("at rho = 0 with a posterior trade-off, point is biased, draws not", {
 
   expect_gt(abs(mean(reps["point", ])), 0.15)
   expect_lt(abs(mean(reps["draws", ])), 0.05)
+})
+
+# the 50 % interval (Milestone 12, D46, D51) ------------------------------
+
+test_that("draws gives the quartiles of the per-draw correlations", {
+  x <- fake_subject_draws(n_subjects = 7L)
+  out <- correlations_from_parts(x, estimator = "draws", ci_level = 0.8)
+  per_draw <- oracle_draw_cors(x, "kappa", "thetat")
+  expect_equal(out$ci_low_50, stats::quantile(per_draw, 0.25, names = FALSE))
+  expect_equal(out$ci_high_50, stats::quantile(per_draw, 0.75, names = FALSE))
+})
+
+test_that("point gives cor.test()'s 50 % interval", {
+  x <- fake_subject_draws(n_subjects = 9L)
+  out <- correlations_from_parts(x, estimator = "point")
+  means <- apply(x, c(3, 4), mean)
+  test <- stats::cor.test(means[, "kappa"], means[, "thetat"],
+    conf.level = 0.5
+  )
+  expect_equal(c(out$ci_low_50, out$ci_high_50), as.double(test$conf.int))
+})
+
+test_that("model rows carry the inner bounds of the cor estimates", {
+  rows <- tibble::tibble(
+    term = "kappa__thetat", estimate = 0.3, ci_low = -0.2, ci_high = 0.7,
+    rhat = 1, ess_bulk = 800, ess_tail = 800, level = "cor",
+    ci_low_50 = 0.1, ci_high_50 = 0.45
+  )
+  out <- model_cor_rows(rows)
+  expect_equal(out$ci_low_50, 0.1)
+  expect_equal(out$ci_high_50, 0.45)
+  # a cor table from an extractor that has no inner bounds
+  rows$ci_low_50 <- NULL
+  rows$ci_high_50 <- NULL
+  expect_true(is.na(model_cor_rows(rows)$ci_low_50))
+})
+
+test_that("recover_correlations scores covered_50 against the truth", {
+  input <- three_reps()
+  input$fits$ci_low_50 <- c(0.45, 0.4, 0.6)
+  input$fits$ci_high_50 <- c(0.7, 0.5, 0.8)
+  out <- recover_correlations(input$fits, input$truth, scale = "link")
+  expect_equal(out$covered_50, c(TRUE, TRUE, FALSE))
+
+  s <- summary(out)
+  expect_equal(s$coverage_50, 2 / 3)
+  expect_equal(s$ci_width_50, mean(c(0.25, 0.1, 0.2)))
+  cols <- cor_recovery_summary_columns()
+  expect_equal(cols[match("coverage", cols) + 1L], "coverage_50")
+  expect_equal(cols[match("ci_width", cols) + 1L], "ci_width_50")
+})
+
+test_that("a cor table without inner bounds scores NA, not 0", {
+  input <- three_reps()
+  out <- recover_correlations(input$fits, input$truth, scale = "link")
+  expect_true(all(is.na(out$covered_50)))
+  expect_true(is.na(summary(out)$coverage_50))
 })

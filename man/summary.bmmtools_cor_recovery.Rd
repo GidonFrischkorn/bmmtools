@@ -19,10 +19,13 @@
 A \code{bmmtools_cor_recovery_summary} tibble with the columns
 \code{term}, \code{estimator}, \code{scale}, \code{n_replications}, \code{n_converged},
 \code{true_value}, \code{sample_sd}, \code{mean_estimate}, \code{bias}, \code{rmse},
-\code{bias_sample}, \code{rmse_sample}, \code{coverage}, \code{coverage_sample},
-\code{ci_width}, \code{rejection_rate}, \code{false_positive_rate}, \code{power}, \code{r},
-\code{r_low}, \code{r_high}, \code{ccc}, \code{ccc_low} and \code{ccc_high}, preceded by
-\code{condition} when the object came from a grid.
+\code{bias_sample}, \code{rmse_sample}, \code{coverage}, \code{coverage_50},
+\code{coverage_sample}, \code{ci_width}, \code{ci_width_50}, \code{rejection_rate},
+\code{false_positive_rate}, \code{power}, \code{r}, \code{r_low}, \code{r_high}, \code{ccc},
+\code{ccc_low} and \code{ccc_high}, preceded by \code{condition} when the object
+came from a grid. \code{coverage_50} and \code{ci_width_50} are the coverage of
+the generating correlation and the mean width of the central 50 \%
+interval; they are \code{NA} when the estimates carry no such interval.
 }
 \description{
 One row per condition, pair, estimator and scale, summarised across

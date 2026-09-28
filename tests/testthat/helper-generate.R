@@ -69,7 +69,7 @@ mock_has_intercept <- function(formula) {
   grepl("~\\s*1\\s*\\+", population)
 }
 
-#' Estimates for a mock fit: 0 with a wide interval, converged
+#' Estimates for a mock fit: 0 with wide intervals, converged
 #'
 #' The `"sd"` level repeats the population rows under that level, so a
 #' grid can score SDs; `"cor"` gives no rows, as for an uncorrelated fit.
@@ -88,7 +88,8 @@ extract_estimates_mockfit <- function(fit,
     tibble::tibble(
       term = term, estimate = 0, ci_low = -10, ci_high = 10,
       ci_method = "eti", ci_level = ci_level, rhat = 1, ess_bulk = 1000,
-      ess_tail = 1000, level = lvl, id = id, converged = TRUE
+      ess_tail = 1000, level = lvl, id = id, converged = TRUE,
+      ci_low_50 = -5, ci_high_50 = 5
     )
   }
   effects <- attr(fit$parameters, "effects") %||% character()

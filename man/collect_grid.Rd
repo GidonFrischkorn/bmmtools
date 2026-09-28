@@ -43,6 +43,12 @@ installed bmm, brms and Stan toolchain. A resume is what it has always
 been --- rerunning the identical \code{\link[=recovery_grid]{recovery_grid()}} call in the same
 directory --- and it is the resume, not this function, that guarantees
 the files describe the call.
+
+Cell files written before bmmtools stored the central 50 \% interval
+are read with \code{ci_low_50}, \code{ci_high_50} and \code{covered_50} set to \code{NA},
+so their \code{coverage_50} is \code{NA}, and a message says how many there
+were. Rerunning the grid with the fits still in \code{dir} re-extracts them
+without refitting.
 }
 \examples{
 \dontrun{

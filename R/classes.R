@@ -10,7 +10,8 @@
 #'
 #' Column names and their `typeof()`. `replication` is listed separately
 #' because its type is the caller's choice --- an index, a name or a
-#' grid identifier --- and only its presence is required.
+#' grid identifier --- and only its presence is required. The 50 %
+#' interval and `covered_50` come last (Milestone 12, decision 46).
 #'
 #' @noRd
 recovery_contract <- function() {
@@ -32,7 +33,10 @@ recovery_contract <- function() {
     id = "character",
     converged = "logical",
     condition = "character",
-    estimator = "character"
+    estimator = "character",
+    ci_low_50 = "double",
+    ci_high_50 = "double",
+    covered_50 = "logical"
   )
 }
 
@@ -45,12 +49,16 @@ recovery_contract_columns <- function() {
 #'
 #' `converged` is unknown for a hand-built estimates tibble and
 #' `condition` exists only for a grid; both are filled with `NA` rather
-#' than demanded.
+#' than demanded. So are the 50 % interval and whether it covered, which
+#' a table from before that interval existed does not have: its 50 %
+#' coverage is then unknown, never 0.
 #'
 #' @noRd
 fill_optional_columns <- function(x) {
   if (!"converged" %in% names(x)) x$converged <- rep(NA, nrow(x))
   if (!"condition" %in% names(x)) x$condition <- rep(NA_character_, nrow(x))
+  x <- fill_inner_interval(x)
+  if (!"covered_50" %in% names(x)) x$covered_50 <- rep(NA, nrow(x))
   x
 }
 
@@ -67,8 +75,8 @@ recovery_summary_columns <- function() {
   c(
     "term", "estimator", "level", "scale", "n", "n_replications",
     "n_converged",
-    "bias", "rmse", "mae", "coverage", "ci_width",
-    "detected", "sign_recovery",
+    "bias", "rmse", "mae", "coverage", "coverage_50", "ci_width",
+    "ci_width_50", "detected", "sign_recovery",
     "r", "r_low", "r_high", "rank_r",
     "ccc", "ccc_low", "ccc_high", "ccc_accuracy", "ccc_scale_shift",
     "ccc_location_shift", "calibration_slope", "truth_sd"
@@ -383,7 +391,11 @@ summarise_errors <- function(rows) {
     rmse = metric_rmse(rows$estimate, rows$true_value),
     mae = metric_mae(rows$estimate, rows$true_value),
     coverage = metric_coverage(rows$true_value, rows$ci_low, rows$ci_high),
-    ci_width = metric_ci_width(rows$ci_low, rows$ci_high)
+    coverage_50 = metric_coverage(
+      rows$true_value, rows$ci_low_50, rows$ci_high_50
+    ),
+    ci_width = metric_ci_width(rows$ci_low, rows$ci_high),
+    ci_width_50 = metric_ci_width(rows$ci_low_50, rows$ci_high_50)
   )
 }
 
@@ -480,7 +492,8 @@ summarise_subject <- function(rows) {
 #' Summarise a recovery object into per-parameter metrics
 #'
 #' One row per parameter and level, with these recovery metrics: bias,
-#' RMSE, coverage, mean interval width, the Pearson correlation with a
+#' RMSE, the coverage and mean width of the `ci_level` interval and of the
+#' central 50 % interval, the Pearson correlation with a
 #' Fisher-z interval, the Spearman correlation, and Lin's concordance
 #' with its interval, its decomposition and a calibration slope (see
 #' [recovery_ccc()] for how to read them).
@@ -510,8 +523,8 @@ summarise_subject <- function(rows) {
 #'
 #' @return A `bmmtools_recovery_summary` tibble with the columns `term`,
 #'   `estimator`, `level`, `scale`, `n`, `n_replications`, `n_converged`,
-#'   `bias`,
-#'   `rmse`, `mae`, `coverage`, `ci_width`, `detected`, `sign_recovery`, `r`,
+#'   `bias`, `rmse`, `mae`, `coverage`, `coverage_50`, `ci_width`,
+#'   `ci_width_50`, `detected`, `sign_recovery`, `r`,
 #'   `r_low`, `r_high`, `rank_r`,
 #'   `ccc`, `ccc_low`, `ccc_high`, `ccc_accuracy`, `ccc_scale_shift`,
 #'   `ccc_location_shift`, `calibration_slope` and `truth_sd`, the
@@ -535,6 +548,22 @@ summarise_subject <- function(rows) {
 #' `sign_recovery` is `NA` when the truth is zero, which has no sign. Both
 #' are `NA` at the subject level, where a row summarises a correlation
 #' across people rather than one estimate against one truth.
+#'
+#' **Two coverages.** `coverage` is the share of `ci_level` intervals
+#' (95 % by default) that contain the generating value and `coverage_50`
+#' the share of central 50 % intervals that do. A calibrated posterior has
+#' both at their nominal mass; the 95 % interval checks the tails and the
+#' 50 % interval the centre, so a posterior that is too narrow near its
+#' median and too wide in its tails can be nominal on one and not on the
+#' other. `coverage_50` is `NA` when the estimates carry no 50 % interval,
+#' as with a hand-built tibble that has no `ci_low_50`/`ci_high_50`.
+#'
+#' **The print.** Printing the summary shows a core set of columns ---
+#' the condition, the term, the estimator when there is more than one,
+#' the level, the scale, `n`, `bias`, `rmse`, `coverage`, `coverage_50`,
+#' `r`, `ccc` and the calibration columns --- and says how many it hides.
+#' The object itself keeps all of them; `tibble::as_tibble()` prints
+#' every one.
 #'
 #' `n_converged` is the number of replications whose fit passed
 #' [check_convergence()], read from the `converged` column that
@@ -599,7 +628,8 @@ empty_recovery_summary <- function() {
     scale = "character",
     n = "double", n_replications = "integer", n_converged = "integer",
     bias = "double", rmse = "double", mae = "double", coverage = "double",
-    ci_width = "double", detected = "double", sign_recovery = "double",
+    coverage_50 = "double", ci_width = "double", ci_width_50 = "double",
+    detected = "double", sign_recovery = "double",
     r = "double", r_low = "double",
     r_high = "double", rank_r = "double", ccc = "double",
     ccc_low = "double", ccc_high = "double", ccc_accuracy = "double",
@@ -689,10 +719,36 @@ print.bmmtools_recovery <- function(x, ...) {
   invisible(x)
 }
 
+#' The columns the summary print shows (Milestone 12, decision 50)
+#'
+#' The ones a reader scans first, in contract order: which row, how far
+#' off, whether the intervals hold, and how well subjects are ordered.
+#' `condition` only for a grid and `estimator` only when there is a
+#' comparison to make; the calibration columns only when present.
+#'
+#' @noRd
+summary_print_columns <- function(x) {
+  core <- c(
+    "condition", "term", "estimator", "level", "scale", "n", "bias",
+    "rmse", "coverage", "coverage_50", "r", "ccc", "calibration_slope",
+    "calibration_intercept"
+  )
+  if (length(unique(x$estimator)) <= 1L) core <- setdiff(core, "estimator")
+  intersect(core, names(x))
+}
+
 #' @rdname format.bmmtools_recovery
 #' @export
 print.bmmtools_recovery_summary <- function(x, ...) {
-  print(tibble::as_tibble(x), n = Inf, width = Inf)
+  shown <- summary_print_columns(x)
+  print(tibble::as_tibble(x)[shown], n = Inf, width = Inf)
+  hidden <- length(names(x)) - length(shown)
+  if (hidden > 0L) {
+    cat(
+      "# ", hidden, " more columns; `tibble::as_tibble()` prints them all.\n",
+      sep = ""
+    )
+  }
   invisible(x)
 }
 
@@ -728,7 +784,10 @@ cor_recovery_contract <- function() {
     scale = "character",
     n = "integer",
     converged = "logical",
-    condition = "character"
+    condition = "character",
+    ci_low_50 = "double",
+    ci_high_50 = "double",
+    covered_50 = "logical"
   )
 }
 
@@ -743,8 +802,9 @@ cor_recovery_summary_columns <- function() {
   c(
     "term", "estimator", "scale", "n_replications", "n_converged",
     "true_value", "sample_sd", "mean_estimate", "bias", "rmse",
-    "bias_sample", "rmse_sample", "coverage", "coverage_sample", "ci_width",
-    "rejection_rate", "false_positive_rate", "power",
+    "bias_sample", "rmse_sample", "coverage", "coverage_50",
+    "coverage_sample", "ci_width", "ci_width_50", "rejection_rate",
+    "false_positive_rate", "power",
     "r", "r_low", "r_high", "ccc", "ccc_low", "ccc_high"
   )
 }
@@ -862,10 +922,14 @@ summarise_cor_rows <- function(rows) {
     bias_sample = metric_bias(rows$estimate, rows$sample_value),
     rmse_sample = metric_rmse(rows$estimate, rows$sample_value),
     coverage = metric_coverage(rows$true_value, rows$ci_low, rows$ci_high),
+    coverage_50 = metric_coverage(
+      rows$true_value, rows$ci_low_50, rows$ci_high_50
+    ),
     coverage_sample = metric_coverage(
       rows$sample_value, rows$ci_low, rows$ci_high
     ),
     ci_width = metric_ci_width(rows$ci_low, rows$ci_high),
+    ci_width_50 = metric_ci_width(rows$ci_low_50, rows$ci_high_50),
     rejection_rate = rejection,
     # an NA true_value is a nonzero correlation on the natural scale, so
     # it counts as "not 0"
@@ -916,10 +980,13 @@ new_cor_recovery_summary <- function(x) {
 #' @return A `bmmtools_cor_recovery_summary` tibble with the columns
 #'   `term`, `estimator`, `scale`, `n_replications`, `n_converged`,
 #'   `true_value`, `sample_sd`, `mean_estimate`, `bias`, `rmse`,
-#'   `bias_sample`, `rmse_sample`, `coverage`, `coverage_sample`,
-#'   `ci_width`, `rejection_rate`, `false_positive_rate`, `power`, `r`,
-#'   `r_low`, `r_high`, `ccc`, `ccc_low` and `ccc_high`, preceded by
-#'   `condition` when the object came from a grid.
+#'   `bias_sample`, `rmse_sample`, `coverage`, `coverage_50`,
+#'   `coverage_sample`, `ci_width`, `ci_width_50`, `rejection_rate`,
+#'   `false_positive_rate`, `power`, `r`, `r_low`, `r_high`, `ccc`,
+#'   `ccc_low` and `ccc_high`, preceded by `condition` when the object
+#'   came from a grid. `coverage_50` and `ci_width_50` are the coverage of
+#'   the generating correlation and the mean width of the central 50 %
+#'   interval; they are `NA` when the estimates carry no such interval.
 #'
 #' @details
 #' `true_value` is the generating correlation when it is the same in

@@ -96,7 +96,9 @@ extract_estimates_mlmockfit <- function(fit,
     level = "population",
     id = NA_character_,
     converged = TRUE,
-    estimator = estimator
+    estimator = estimator,
+    ci_low_50 = value - fit$sd / 2,
+    ci_high_50 = value + fit$sd / 2
   )
 }
 

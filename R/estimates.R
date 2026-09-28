@@ -9,8 +9,11 @@
 #' The estimates tibble contract
 #'
 #' Column names and their `typeof()`, in contract order. The first nine
-#' are the apabayes `parameters` columns; `level` and `id` are the
-#' bmmtools additions.
+#' are the apabayes `parameters` columns; the rest are the bmmtools
+#' additions. `ci_low_50` and `ci_high_50` are a second, central 50 %
+#' interval whose mass is fixed and carried in the name, so it reads the
+#' same whatever `ci_level` is (Milestone 12, decision 46). They come
+#' last, so that the apabayes columns keep their positions.
 #'
 #' @return A named character vector: column name to storage type.
 #' @noRd
@@ -28,8 +31,31 @@ estimates_contract <- function() {
     level = "character",
     id = "character",
     converged = "logical",
-    estimator = "character"
+    estimator = "character",
+    ci_low_50 = "double",
+    ci_high_50 = "double"
   )
+}
+
+#' The two bounds of the 50 % interval
+#' @noRd
+inner_interval_columns <- function() {
+  c("ci_low_50", "ci_high_50")
+}
+
+#' Give a table the 50 % interval it may not have
+#'
+#' An estimates tibble built by hand, by an `extract_estimates()` method of
+#' another fit class, or before the interval existed has no inner bounds.
+#' They become `NA`, so that its 50 % coverage is `NA` --- unknown --- and
+#' never 0, and the table still satisfies the contract.
+#'
+#' @noRd
+fill_inner_interval <- function(x) {
+  for (column in inner_interval_columns()) {
+    if (!column %in% names(x)) x[[column]] <- rep(NA_real_, nrow(x))
+  }
+  x
 }
 
 #' The columns an estimates tibble must bring
@@ -38,11 +64,15 @@ estimates_contract <- function() {
 #' so a hand-built tibble with the other eleven columns still scores.
 #' `estimator` is optional for the same reason: a tibble that does not say
 #' which estimator produced it is a posterior, which is what `"bayes"`
-#' means (milestone 8, decision 35).
+#' means (milestone 8, decision 35). The 50 % bounds are optional too, and
+#' filled with `NA` by [fill_inner_interval()].
 #'
 #' @noRd
 estimates_required_columns <- function() {
-  setdiff(names(estimates_contract()), c("converged", "estimator"))
+  setdiff(
+    names(estimates_contract()),
+    c("converged", "estimator", inner_interval_columns())
+  )
 }
 
 #' An empty estimates tibble
@@ -211,7 +241,8 @@ resolve_group <- function(group, groups, call = rlang::caller_env()) {
 #'
 #' The point estimate is the posterior median: it
 #' is invariant under the link transform, so scoring on the link scale
-#' and scoring on the natural scale use the same number.
+#' and scoring on the natural scale use the same number. Besides the
+#' `ci_level` interval, the central 50 % interval is always returned.
 #'
 #' `post_var` is carried alongside because a parameter bmm fixed to a
 #' constant is identified by zero posterior variance, never by a missing
@@ -239,6 +270,14 @@ summarise_selected <- function(draws, ci_level) {
       dm, 2L, stats::quantile,
       probs = probs[2], names = FALSE, na.rm = TRUE
     ),
+    ci_low_50 = apply(
+      dm, 2L, stats::quantile,
+      probs = 0.25, names = FALSE, na.rm = TRUE
+    ),
+    ci_high_50 = apply(
+      dm, 2L, stats::quantile,
+      probs = 0.75, names = FALSE, na.rm = TRUE
+    ),
     rhat = as.double(conv$rhat),
     ess_bulk = as.double(conv$ess_bulk),
     ess_tail = as.double(conv$ess_tail),
@@ -263,7 +302,9 @@ as_estimates <- function(x, level, ci_level, ci_method,
     level = level,
     id = as.character(x$id),
     converged = NA,
-    estimator = as.character(estimator)
+    estimator = as.character(estimator),
+    ci_low_50 = as.double(x$ci_low_50),
+    ci_high_50 = as.double(x$ci_high_50)
   )
 }
 
@@ -897,9 +938,12 @@ fit_converged <- function(fit, draws) {
 #'
 #' @return A tibble with the columns `term`, `estimate`, `ci_low`,
 #'   `ci_high`, `ci_method`, `ci_level`, `rhat`, `ess_bulk`, `ess_tail`,
-#'   `level`, `id`, `converged` and `estimator`, in that order. `id` is
-#'   `NA` except on subject rows; `converged` and `estimator` are the same
-#'   value on every row of a fit.
+#'   `level`, `id`, `converged`, `estimator`, `ci_low_50` and
+#'   `ci_high_50`, in that order. `id` is `NA` except on subject rows;
+#'   `converged` and `estimator` are the same value on every row of a fit.
+#'   `ci_low_50` and `ci_high_50` bound the central 50 % interval, the
+#'   25th and 75th percentiles of the draws, whatever `ci_level` is:
+#'   [recover()] scores the coverage of both intervals.
 #'
 #' @details
 #' Subject-level estimates are the **per-draw sum** of the population

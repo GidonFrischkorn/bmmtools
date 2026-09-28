@@ -683,3 +683,61 @@ test_that("a bmmtools_ml prints what format() builds", {
   # a tibble with the contract but no rows still names its interval method
   expect_match(paste(format(out[0, ]), collapse = "\n"), "wald")
 })
+
+# the 50 % interval (Milestone 12, D46) -----------------------------------
+
+test_that("the Wald route gives a 50 % interval at qnorm(0.75) standard errors", {
+  skip_if_not_installed("bmm")
+  dat <- fake_ml_data(n = 3L, n_trials = 5L)
+  out <- fit_ml(
+    fake_ml_model(free = "kappa"), dat,
+    method = "optim", nll = ml_square_nll()
+  )
+  expected <- unname(vapply(split(dat$y, dat$id), mean, numeric(1)))
+  se <- 1 / sqrt(5)
+  expect_equal(out$ci_low_50, expected - stats::qnorm(0.75) * se,
+    tolerance = 1e-5
+  )
+  expect_equal(out$ci_high_50, expected + stats::qnorm(0.75) * se,
+    tolerance = 1e-5
+  )
+})
+
+test_that("the 50 % Wald interval does not follow ci_level", {
+  skip_if_not_installed("bmm")
+  args <- list(
+    fake_ml_model(free = "kappa"), fake_ml_data(n = 2L),
+    method = "optim", nll = ml_square_nll()
+  )
+  wide <- do.call(fit_ml, c(args, list(ci_level = 0.95)))
+  narrow <- do.call(fit_ml, c(args, list(ci_level = 0.8)))
+  expect_equal(narrow$ci_low_50, wide$ci_low_50)
+  expect_equal(narrow$ci_high_50, wide$ci_high_50)
+})
+
+test_that("a singular Hessian costs the 50 % interval too", {
+  skip_if_not_installed("bmm")
+  flat <- function(pars, data, model) 0
+  out <- fit_ml(
+    fake_ml_model(free = "kappa"), fake_ml_data(n = 2L),
+    method = "optim", nll = flat
+  )
+  expect_true(all(is.na(out$ci_low_50)))
+  expect_true(all(is.na(out$ci_high_50)))
+})
+
+test_that("the Laplace route carries the 50 % interval and blanks it with the rest", {
+  est <- ml_population_rows(c("kappa_id1", "kappa_id2"), estimate = c(1, 40))
+  est$ci_low_50 <- est$estimate - 0.2
+  est$ci_high_50 <- est$estimate + 0.2
+  out <- ml_subject_rows(est, "kappa", c("1", "2"), "id", max_abs_link = 20)
+  expect_equal(out$ci_low_50, c(0.8, NA_real_))
+  expect_equal(out$ci_high_50, c(1.2, NA_real_))
+})
+
+test_that("a Laplace fit whose extractor has no inner bounds fills NA", {
+  est <- ml_population_rows(c("kappa_id1", "kappa_id2"))
+  out <- ml_subject_rows(est, "kappa", c("1", "2"), "id")
+  expect_named(out, names(estimates_contract()), ignore.order = TRUE)
+  expect_true(all(is.na(out$ci_low_50)))
+})

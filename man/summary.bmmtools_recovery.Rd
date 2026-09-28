@@ -18,8 +18,8 @@
 \value{
 A \code{bmmtools_recovery_summary} tibble with the columns \code{term},
 \code{estimator}, \code{level}, \code{scale}, \code{n}, \code{n_replications}, \code{n_converged},
-\code{bias},
-\code{rmse}, \code{mae}, \code{coverage}, \code{ci_width}, \code{detected}, \code{sign_recovery}, \code{r},
+\code{bias}, \code{rmse}, \code{mae}, \code{coverage}, \code{coverage_50}, \code{ci_width},
+\code{ci_width_50}, \code{detected}, \code{sign_recovery}, \code{r},
 \code{r_low}, \code{r_high}, \code{rank_r},
 \code{ccc}, \code{ccc_low}, \code{ccc_high}, \code{ccc_accuracy}, \code{ccc_scale_shift},
 \code{ccc_location_shift}, \code{calibration_slope} and \code{truth_sd}, the
@@ -29,7 +29,8 @@ at a similar spread.
 }
 \description{
 One row per parameter and level, with these recovery metrics: bias,
-RMSE, coverage, mean interval width, the Pearson correlation with a
+RMSE, the coverage and mean width of the \code{ci_level} interval and of the
+central 50 \% interval, the Pearson correlation with a
 Fisher-z interval, the Spearman correlation, and Lin's concordance
 with its interval, its decomposition and a calibration slope (see
 \code{\link[=recovery_ccc]{recovery_ccc()}} for how to read them).
@@ -69,6 +70,22 @@ at which an effect leaks into a parameter that has none.
 \code{sign_recovery} is \code{NA} when the truth is zero, which has no sign. Both
 are \code{NA} at the subject level, where a row summarises a correlation
 across people rather than one estimate against one truth.
+
+\strong{Two coverages.} \code{coverage} is the share of \code{ci_level} intervals
+(95 \% by default) that contain the generating value and \code{coverage_50}
+the share of central 50 \% intervals that do. A calibrated posterior has
+both at their nominal mass; the 95 \% interval checks the tails and the
+50 \% interval the centre, so a posterior that is too narrow near its
+median and too wide in its tails can be nominal on one and not on the
+other. \code{coverage_50} is \code{NA} when the estimates carry no 50 \% interval,
+as with a hand-built tibble that has no \code{ci_low_50}/\code{ci_high_50}.
+
+\strong{The print.} Printing the summary shows a core set of columns ---
+the condition, the term, the estimator when there is more than one,
+the level, the scale, \code{n}, \code{bias}, \code{rmse}, \code{coverage}, \code{coverage_50},
+\code{r}, \code{ccc} and the calibration columns --- and says how many it hides.
+The object itself keeps all of them; \code{tibble::as_tibble()} prints
+every one.
 
 \code{n_converged} is the number of replications whose fit passed
 \code{\link[=check_convergence]{check_convergence()}}, read from the \code{converged} column that

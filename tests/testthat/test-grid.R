@@ -1669,3 +1669,99 @@ test_that("the gate is computed once and its verdict reaches the estimates", {
   expect_match(strict$diagnostics$failed, "rhat")
   expect_false(unique(strict$estimates$converged))
 })
+
+# the 50 % interval in the cell files (Milestone 12, D46, D49) ------------
+
+strip_inner <- function(path) {
+  sidecar <- readRDS(path)
+  sidecar$estimates$ci_low_50 <- NULL
+  sidecar$estimates$ci_high_50 <- NULL
+  if (!is.null(sidecar$cor_estimates)) {
+    sidecar$cor_estimates$ci_low_50 <- NULL
+    sidecar$cor_estimates$ci_high_50 <- NULL
+  }
+  if (!is.null(sidecar$ml_estimates)) {
+    sidecar$ml_estimates$ci_low_50 <- NULL
+    sidecar$ml_estimates$ci_high_50 <- NULL
+  }
+  saveRDS(sidecar, path)
+}
+
+grid_sidecars <- function(dir) {
+  list.files(dir, pattern = "-est\\.rds$", full.names = TRUE)
+}
+
+test_that("a grid stores and scores the 50 % interval", {
+  skip_if_not_installed("bmm")
+  dir <- withr::local_tempdir()
+  out <- suppressMessages(grid_run(dir, grid_mock_fitter(), correlations = "draws"))
+
+  expect_false(anyNA(out$ci_low_50))
+  expect_false(anyNA(out$covered_50))
+  expect_false(anyNA(summary(out)$coverage_50))
+  sidecar <- readRDS(grid_sidecars(dir)[[1L]])
+  expect_true(all(c("ci_low_50", "ci_high_50") %in% names(sidecar$estimates)))
+  expect_true(all(
+    c("ci_low_50", "ci_high_50") %in% names(sidecar$cor_estimates)
+  ))
+  cors <- attr(out, "correlations")
+  expect_true("covered_50" %in% names(cors))
+})
+
+test_that("a sidecar without the 50 % interval is re-extracted, not refitted", {
+  skip_if_not_installed("bmm")
+  dir <- withr::local_tempdir()
+  first <- suppressMessages(
+    grid_run(dir, grid_mock_fitter(), correlations = "draws")
+  )
+  for (path in grid_sidecars(dir)) strip_inner(path)
+
+  mock <- grid_mock_fitter()
+  second <- suppressMessages(grid_run(dir, mock, correlations = "draws"))
+
+  # the fits are still cached, so fit_cached() reads them: no fitter call
+  expect_identical(mock$calls$n, 0L)
+  for (path in grid_sidecars(dir)) {
+    sidecar <- readRDS(path)
+    expect_true("ci_low_50" %in% names(sidecar$estimates))
+    expect_true("ci_low_50" %in% names(sidecar$cor_estimates))
+  }
+  expect_equal(second$ci_low_50, first$ci_low_50)
+})
+
+test_that("only cor estimates without the 50 % interval also count as stale", {
+  skip_if_not_installed("bmm")
+  dir <- withr::local_tempdir()
+  suppressMessages(grid_run(dir, grid_mock_fitter(), correlations = "draws"))
+  path <- grid_sidecars(dir)[[1L]]
+  sidecar <- readRDS(path)
+  sidecar$cor_estimates$ci_low_50 <- NULL
+  saveRDS(sidecar, path)
+
+  key <- readRDS(path)$key
+  request <- list(
+    levels = c("population", "subject"), correlations = "draws",
+    cor_scale = "link"
+  )
+  expect_null(read_sidecar(path, key, request))
+})
+
+test_that("ML rows without the 50 % interval rerun ML alone", {
+  skip_if_not_installed("bmm")
+  dir <- withr::local_tempdir()
+  quietly(suppressMessages(
+    grid_run(dir, grid_mock_fitter(), ml = list(method = "optim"))
+  ))
+  for (path in grid_sidecars(dir)) {
+    sidecar <- readRDS(path)
+    sidecar$ml_estimates$ci_low_50 <- NULL
+    saveRDS(sidecar, path)
+  }
+  mock <- grid_mock_fitter()
+  out <- quietly(suppressMessages(
+    grid_run(dir, mock, ml = list(method = "optim"))
+  ))
+  expect_identical(mock$calls$n, 0L)
+  ml <- out[out$estimator == "ml" & out$converged, ]
+  expect_false(anyNA(ml$ci_low_50))
+})

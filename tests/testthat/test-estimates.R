@@ -890,3 +890,66 @@ test_that("a task term takes the link of its parameter", {
     c("log", "log1p", "logit")
   )
 })
+
+# the 50 % interval (Milestone 12, D46) -----------------------------------
+
+test_that("the inner interval is the 25th and 75th percentile of the draws", {
+  withr::local_seed(1201)
+  x <- stats::rnorm(80, 2, 0.5)
+  draws <- fake_draws(list(b_a_Intercept = x, b_b_Intercept = x * 3 - 1))
+  out <- estimates_from_draws(draws, groups = character(0))
+
+  expect_equal(
+    out$ci_low_50,
+    unname(c(
+      stats::quantile(x, 0.25), stats::quantile(x * 3 - 1, 0.25)
+    ))
+  )
+  expect_equal(
+    out$ci_high_50,
+    unname(c(
+      stats::quantile(x, 0.75), stats::quantile(x * 3 - 1, 0.75)
+    ))
+  )
+})
+
+test_that("the inner interval does not follow ci_level", {
+  withr::local_seed(1202)
+  draws <- fake_draws(list(b_a_Intercept = stats::rnorm(80)))
+  wide <- estimates_from_draws(draws, groups = character(0), ci_level = 0.95)
+  narrow <- estimates_from_draws(draws, groups = character(0), ci_level = 0.3)
+
+  expect_equal(narrow$ci_low_50, wide$ci_low_50)
+  expect_equal(narrow$ci_high_50, wide$ci_high_50)
+  # at ci_level = 0.3 the "inner" interval is the wider one; the name
+  # carries its mass, so it stays true
+  expect_true(narrow$ci_low_50 < narrow$ci_low)
+})
+
+test_that("the fixture's inner interval lies inside its 95 % interval", {
+  skip_if_not_installed("brms")
+  out <- extract_estimates(
+    mixture2p_fit(),
+    level = c("population", "subject", "sd")
+  )
+  expect_false(anyNA(out$ci_low_50))
+  expect_true(all(out$ci_low <= out$ci_low_50))
+  expect_true(all(out$ci_low_50 <= out$estimate))
+  expect_true(all(out$estimate <= out$ci_high_50))
+  expect_true(all(out$ci_high_50 <= out$ci_high))
+
+  draws <- posterior::subset_draws(
+    posterior::as_draws_array(mixture2p_fit()),
+    variable = paste0("b_", out$term[out$level == "population"], "_Intercept")
+  )
+  oracle <- posterior::summarise_draws(
+    draws, ~ posterior::quantile2(.x, probs = c(0.25, 0.75))
+  )
+  expect_equal(out$ci_low_50[out$level == "population"], oracle$q25)
+  expect_equal(out$ci_high_50[out$level == "population"], oracle$q75)
+})
+
+test_that("the inner bounds are optional on an estimates tibble", {
+  expect_false("ci_low_50" %in% estimates_required_columns())
+  expect_false("ci_high_50" %in% estimates_required_columns())
+})

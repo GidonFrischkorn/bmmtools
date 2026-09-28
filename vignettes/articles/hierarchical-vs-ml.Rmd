@@ -347,9 +347,10 @@ argument is about, how much data each subject contributes:
 ```
 
 `ml = list(method = "optim")` means the whole maximum-likelihood side of
-this grid needs no compiler. Of the
-`r fmt(res$grid_secs + res$grid_ml_secs, 0)` seconds the cells took,
-`r fmt(res$grid_ml_secs, 1)` were the ML fits.
+this grid needs no compiler. Fitting its nine cells took
+`r fmt(res$grid_secs, 0)` seconds of sampling for the hierarchical model
+(the slowest chain of each fit, compilation not counted) and
+`r fmt(res$grid_ml_secs, 1)` seconds for all the ML fits together.
 
 The grid scores on the natural scale by default. Running it again with
 `scale = "link"` re-reads the stored per-cell estimates and refits

@@ -716,7 +716,7 @@ correlation_columns <- function() {
   c(
     "term", "var1", "var2", "estimator", "estimate", "ci_low", "ci_high",
     "ci_method", "ci_level", "rhat", "ess_bulk", "ess_tail", "scale", "n",
-    "converged"
+    "converged", "ci_low_50", "ci_high_50"
   )
 }
 
@@ -726,7 +726,8 @@ empty_correlation_rows <- function() {
     term = character(), var1 = character(), var2 = character(),
     estimator = character(), estimate = double(), ci_low = double(),
     ci_high = double(), ci_method = character(), rhat = double(),
-    ess_bulk = double(), ess_tail = double(), n = integer()
+    ess_bulk = double(), ess_tail = double(), n = integer(),
+    ci_low_50 = double(), ci_high_50 = double()
   )
 }
 
@@ -740,7 +741,8 @@ model_cor_rows <- function(cor_estimates, call = rlang::caller_env()) {
   empty <- tibble::tibble(
     term = character(), var1 = character(), var2 = character(),
     estimate = double(), ci_low = double(), ci_high = double(),
-    rhat = double(), ess_bulk = double(), ess_tail = double()
+    rhat = double(), ess_bulk = double(), ess_tail = double(),
+    ci_low_50 = double(), ci_high_50 = double()
   )
   if (is.null(cor_estimates) || nrow(cor_estimates) == 0L) {
     return(empty)
@@ -756,7 +758,9 @@ model_cor_rows <- function(cor_estimates, call = rlang::caller_env()) {
       call = call
     )
   }
-  rows <- tibble::as_tibble(cor_estimates)
+  # cor rows from before the 50 % interval, or from an extractor of
+  # another fit class, have no inner bounds: they are unknown, not absent
+  rows <- fill_inner_interval(tibble::as_tibble(cor_estimates))
   if ("level" %in% names(rows)) rows <- rows[rows$level %in% "cor", ]
   parts <- strsplit(rows$term, "__", fixed = TRUE)
   rows <- rows[lengths(parts) == 2L, ]
@@ -771,7 +775,9 @@ model_cor_rows <- function(cor_estimates, call = rlang::caller_env()) {
     ci_high = as.double(rows$ci_high),
     rhat = as.double(rows$rhat),
     ess_bulk = as.double(rows$ess_bulk),
-    ess_tail = as.double(rows$ess_tail)
+    ess_tail = as.double(rows$ess_tail),
+    ci_low_50 = as.double(rows$ci_low_50),
+    ci_high_50 = as.double(rows$ci_high_50)
   )
 }
 
@@ -1025,7 +1031,9 @@ draws_estimator_rows <- function(subject_draws, cov, pair_table, scale,
     rhat = unname(summary$rhat),
     ess_bulk = unname(summary$ess_bulk),
     ess_tail = unname(summary$ess_tail),
-    n = d[[3L]]
+    n = d[[3L]],
+    ci_low_50 = unname(summary$ci_low_50),
+    ci_high_50 = unname(summary$ci_high_50)
   )
 }
 
@@ -1043,14 +1051,14 @@ point_estimator_rows <- function(subject_draws, cov, pair_table, scale,
   }
   values <- cbind(means, cov)
   rows <- lapply(seq_len(nrow(pair_table)), function(k) {
-    r <- metric_r(
-      unname(values[, pair_table$var1[[k]]]),
-      unname(values[, pair_table$var2[[k]]]),
-      ci_level = ci_level
-    )
+    x <- unname(values[, pair_table$var1[[k]]])
+    y <- unname(values[, pair_table$var2[[k]]])
+    r <- metric_r(x, y, ci_level = ci_level)
+    # the same Fisher-z interval at a mass of one half (decision 46)
+    r_50 <- metric_r(x, y, ci_level = 0.5)
     tibble::tibble(
       estimate = r$r, ci_low = r$r_low, ci_high = r$r_high,
-      n = as.integer(r$n)
+      n = as.integer(r$n), ci_low_50 = r_50$r_low, ci_high_50 = r_50$r_high
     )
   })
   stats <- dplyr::bind_rows(rows)
@@ -1066,7 +1074,9 @@ point_estimator_rows <- function(subject_draws, cov, pair_table, scale,
     rhat = NA_real_,
     ess_bulk = NA_real_,
     ess_tail = NA_real_,
-    n = stats$n
+    n = stats$n,
+    ci_low_50 = stats$ci_low_50,
+    ci_high_50 = stats$ci_high_50
   )
 }
 
@@ -1289,6 +1299,8 @@ recover_correlations <- function(fits,
   joined$bias_sample <- joined$estimate - joined$sample_value
   joined$covered <- joined$true_value >= joined$ci_low &
     joined$true_value <= joined$ci_high
+  joined$covered_50 <- joined$true_value >= joined$ci_low_50 &
+    joined$true_value <= joined$ci_high_50
   joined$covered_sample <- joined$sample_value >= joined$ci_low &
     joined$sample_value <= joined$ci_high
   joined$excludes_zero <- joined$ci_high < 0 | joined$ci_low > 0
@@ -1417,7 +1429,9 @@ is_one_fit <- function(x) {
 #' Validate an extracted correlation tibble
 #' @noRd
 check_extracted_correlations <- function(fits, call = rlang::caller_env()) {
-  required <- setdiff(correlation_columns(), "converged")
+  required <- setdiff(
+    correlation_columns(), c("converged", inner_interval_columns())
+  )
   missing <- setdiff(required, names(fits))
   if (length(missing) > 0L) {
     cli::cli_abort(
@@ -1431,7 +1445,7 @@ check_extracted_correlations <- function(fits, call = rlang::caller_env()) {
   out <- tibble::as_tibble(fits)
   if (!"replication" %in% names(out)) out$replication <- rep(1L, nrow(out))
   if (!"converged" %in% names(out)) out$converged <- rep(NA, nrow(out))
-  out
+  fill_inner_interval(out)
 }
 
 #' @noRd

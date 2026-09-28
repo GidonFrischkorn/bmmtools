@@ -220,16 +220,17 @@ join_truth <- function(estimates, truth, keys,
   joined
 }
 
-#' Put estimates, both interval bounds and truth on the natural scale
+#' Put estimates, the interval bounds and truth on the natural scale
 #'
-#' All four quantities go through the same inverse link, so that both
-#' sides of the comparison are on one scale and `bias` and `covered` are
-#' computed after the transform rather than before it.
+#' All of them go through the same inverse link, so that both sides of the
+#' comparison are on one scale and `bias` and `covered` are computed after
+#' the transform rather than before it.
 #'
 #' `values` names the point columns to transform; the interval bounds are
-#' always transformed. `cross_check()` passes `"estimate"` alone, because
-#' its reference arrives on the comparison scale already and must not be
-#' transformed a second time.
+#' always transformed, the 95 % pair and, when the table has it, the 50 %
+#' pair. `cross_check()` passes `"estimate"` alone, because its reference
+#' arrives on the comparison scale already and must not be transformed a
+#' second time.
 #'
 #' The bounds are reordered afterwards. Two links in the vocabulary are
 #' decreasing (`inverse` and `loglog`), so the transform of the lower
@@ -248,33 +249,23 @@ join_truth <- function(estimates, truth, keys,
 #' @noRd
 to_natural_scale <- function(x, links, values = c("estimate", "true_value"),
                              call = rlang::caller_env()) {
+  bounds <- list(c("ci_low", "ci_high"), inner_interval_columns())
+  bounds <- Filter(function(pair) all(pair %in% names(x)), bounds)
   unbounded <- character()
   for (term in unique(x$term)) {
     link <- link_of(term, links)
     rows <- x$term == term
-
-    spans_zero <- x$ci_low[rows] < 0 & x$ci_high[rows] > 0
-    # a row with no interval --- a failed ML fit keeps its row with
-    # estimate and bounds NA (decision 40) --- neither spans zero nor
-    # does not. Left NA it would both index NA rows here and make
-    # `any()` return NA, which `if ()` refuses.
-    spans_zero[is.na(spans_zero)] <- FALSE
-    low <- inverse_link(x$ci_low[rows], link)
-    high <- inverse_link(x$ci_high[rows], link)
-    if (identical(link, "sqrt") && any(spans_zero)) {
-      high[spans_zero] <- pmax(low, high)[spans_zero]
-      low[spans_zero] <- 0
-    }
-    if (identical(link, "inverse") && any(spans_zero)) {
-      low[spans_zero] <- NA_real_
-      high[spans_zero] <- NA_real_
-      unbounded <- c(unbounded, term)
+    for (pair in bounds) {
+      low <- x[[pair[[1L]]]][rows]
+      high <- x[[pair[[2L]]]][rows]
+      image <- natural_interval(low, high, link)
+      x[[pair[[1L]]]][rows] <- image$low
+      x[[pair[[2L]]]][rows] <- image$high
+      if (image$unbounded) unbounded <- union(unbounded, term)
     }
     for (value in values) {
       x[[value]][rows] <- inverse_link(x[[value]][rows], link)
     }
-    x$ci_low[rows] <- pmin(low, high)
-    x$ci_high[rows] <- pmax(low, high)
   }
   if (length(unbounded) > 0L) {
     cli::cli_warn(
@@ -289,6 +280,32 @@ to_natural_scale <- function(x, links, values = c("estimate", "true_value"),
     )
   }
   x
+}
+
+#' The natural-scale image of link-scale intervals under one link
+#'
+#' @return A list: `low`, `high`, and `unbounded`, whether any interval
+#'   spanned zero under the `inverse` link and was set to `NA`.
+#' @noRd
+natural_interval <- function(ci_low, ci_high, link) {
+  spans_zero <- ci_low < 0 & ci_high > 0
+  # a row with no interval --- a failed ML fit keeps its row with
+  # estimate and bounds NA (decision 40) --- neither spans zero nor
+  # does not. Left NA it would both index NA rows here and make
+  # `any()` return NA, which `if ()` refuses.
+  spans_zero[is.na(spans_zero)] <- FALSE
+  low <- inverse_link(ci_low, link)
+  high <- inverse_link(ci_high, link)
+  if (identical(link, "sqrt") && any(spans_zero)) {
+    high[spans_zero] <- pmax(low, high)[spans_zero]
+    low[spans_zero] <- 0
+  }
+  unbounded <- identical(link, "inverse") && any(spans_zero)
+  if (unbounded) {
+    low[spans_zero] <- NA_real_
+    high[spans_zero] <- NA_real_
+  }
+  list(low = pmin(low, high), high = pmax(low, high), unbounded = unbounded)
 }
 
 #' Score the estimates of one level against its truth
@@ -316,6 +333,8 @@ score_level <- function(estimates, truth, level, resolved, error_call) {
   joined$bias <- joined$estimate - joined$true_value
   joined$covered <- joined$true_value >= joined$ci_low &
     joined$true_value <= joined$ci_high
+  joined$covered_50 <- joined$true_value >= joined$ci_low_50 &
+    joined$true_value <= joined$ci_high_50
   joined$scale <- rep(scale, nrow(joined))
   joined
 }
@@ -375,10 +394,10 @@ check_truth_frame <- function(truth, call = rlang::caller_env()) {
 #' @noRd
 score_recovery <- function(fits, truth, level, group, scale, links,
                            ci_level, drop_constants, call, error_call) {
-  estimates <- as_estimates_input(
+  estimates <- fill_inner_interval(as_estimates_input(
     fits, level, group, ci_level, drop_constants,
     call = error_call
-  )
+  ))
   truths <- truth_by_level(truth, level, call = error_call)
   # every input is checked before resolve_links() can print its message
   for (lv in level) {

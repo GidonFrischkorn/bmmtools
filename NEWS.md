@@ -1,5 +1,25 @@
 # bmmtools (development version)
 
+* Every estimate now carries a central 50 % interval, `ci_low_50` and
+  `ci_high_50`, beside the `ci_level` interval: the 25th and 75th
+  percentiles of the draws, a Wald interval at `qnorm(0.75)` standard
+  errors on `fit_ml(method = "optim")`, and a Fisher-z interval for the
+  `point` correlation estimator. Recovery rows gain `covered_50`, and
+  `summary()` of a recovery or a correlation recovery gains
+  `coverage_50` and `ci_width_50`: the 95 % interval checks the tails of
+  the posterior, the 50 % interval its centre. The mass is fixed and
+  carried in the name, so it does not follow `ci_level`. An estimates
+  tibble without the inner bounds still scores, with `coverage_50` `NA`.
+  `cross_check()` keeps one interval.
+* `recovery_grid()` stores the 50 % interval in each cell's file. A cell
+  file written before it is re-extracted from its cached fit on the next
+  run, without refitting; `collect_grid()` reads such files with the
+  inner columns `NA` and says how many there were.
+* Printing a recovery summary shows a core set of columns (the row, `n`,
+  `bias`, `rmse`, both coverages, `r`, `ccc` and the calibration
+  columns) and names how many it hides; `tibble::as_tibble()` prints all
+  of them. The summary itself still has every column.
+  Tracked in [#1](https://github.com/GidonFrischkorn/bmmtools/issues/1).
 * The README states what bmmtools reads off a fitted bmm model beyond
   its exported API (`$links`, `$fixed_parameters`, `$resp_vars`,
   `$other_vars`, and the generator adapters), and why a bmm parameter
