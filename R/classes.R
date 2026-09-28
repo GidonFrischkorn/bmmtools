@@ -79,7 +79,8 @@ recovery_summary_columns <- function() {
     "ci_width_50", "detected", "sign_recovery",
     "r", "r_low", "r_high", "rank_r",
     "ccc", "ccc_low", "ccc_high", "ccc_accuracy", "ccc_scale_shift",
-    "ccc_location_shift", "calibration_slope", "truth_sd"
+    "ccc_location_shift", "calibration_slope", "calibration_intercept",
+    "truth_sd"
   )
 }
 
@@ -424,6 +425,7 @@ summarise_population <- function(rows) {
       ccc_scale_shift = ccc$scale_shift,
       ccc_location_shift = ccc$location_shift,
       calibration_slope = ccc$calibration_slope,
+      calibration_intercept = ccc$calibration_intercept,
       truth_sd = ccc$truth_sd
     )
   )
@@ -445,6 +447,7 @@ summarise_subject <- function(rows) {
       ccc_scale_shift = ccc$scale_shift,
       ccc_location_shift = ccc$location_shift,
       calibration_slope = ccc$calibration_slope,
+      calibration_intercept = ccc$calibration_intercept,
       truth_sd = ccc$truth_sd
     )
   })
@@ -484,6 +487,8 @@ summarise_subject <- function(rows) {
       ccc_scale_shift = geomean_or_na(pull("ccc_scale_shift")),
       ccc_location_shift = mean_or_na(pull("ccc_location_shift")),
       calibration_slope = geomean_or_na(pull("calibration_slope")),
+      # an intercept can be 0 or negative: arithmetic mean (decision 48)
+      calibration_intercept = mean_or_na(pull("calibration_intercept")),
       truth_sd = sqrt(mean_or_na(pull("truth_sd")^2))
     )
   )
@@ -495,8 +500,8 @@ summarise_subject <- function(rows) {
 #' RMSE, the coverage and mean width of the `ci_level` interval and of the
 #' central 50 % interval, the Pearson correlation with a
 #' Fisher-z interval, the Spearman correlation, and Lin's concordance
-#' with its interval, its decomposition and a calibration slope (see
-#' [recovery_ccc()] for how to read them).
+#' with its interval, its decomposition and a calibration line, slope and
+#' intercept (see [recovery_ccc()] for how to read them).
 #'
 #' Correlation metrics are `NA`, never `0`, when fewer than three
 #' complete pairs are available or when either side has no spread: `0`
@@ -513,8 +518,12 @@ summarise_subject <- function(rows) {
 #' Z scale with weights from his asymptotic variance, and without an
 #' interval if any replication has no variance (three subjects, or a
 #' coefficient of exactly 0 or 1); `ccc_scale_shift` and
-#' `calibration_slope` as geometric means; `ccc_accuracy` and
-#' `ccc_location_shift` as means; `truth_sd` as the root mean variance.
+#' `calibration_slope` as geometric means; `ccc_accuracy`,
+#' `ccc_location_shift` and `calibration_intercept` as means (an
+#' intercept can be 0 or negative); `truth_sd` as the root mean variance.
+#' `calibration_intercept` is read on the scale of the row: the same
+#' fits scored on the link and on the natural scale give two different
+#' intercepts, each the value of its own calibration line at 0.
 #' At this level `ccc = r * ccc_accuracy` holds only approximately.
 #'
 #' @param object A `bmmtools_recovery` object from [recover()] or
@@ -527,7 +536,8 @@ summarise_subject <- function(rows) {
 #'   `ci_width_50`, `detected`, `sign_recovery`, `r`,
 #'   `r_low`, `r_high`, `rank_r`,
 #'   `ccc`, `ccc_low`, `ccc_high`, `ccc_accuracy`, `ccc_scale_shift`,
-#'   `ccc_location_shift`, `calibration_slope` and `truth_sd`, the
+#'   `ccc_location_shift`, `calibration_slope`, `calibration_intercept`
+#'   and `truth_sd`, the
 #'   standard deviation of the generating values. `r` and `ccc` both grow
 #'   with `truth_sd` at a fixed measurement error, so compare them only
 #'   at a similar spread.
@@ -634,7 +644,8 @@ empty_recovery_summary <- function() {
     r_high = "double", rank_r = "double", ccc = "double",
     ccc_low = "double", ccc_high = "double", ccc_accuracy = "double",
     ccc_scale_shift = "double", ccc_location_shift = "double",
-    calibration_slope = "double", truth_sd = "double"
+    calibration_slope = "double", calibration_intercept = "double",
+    truth_sd = "double"
   )
   tibble::as_tibble(lapply(types, function(type) vector(type, 0L)))
 }

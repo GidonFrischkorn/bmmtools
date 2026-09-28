@@ -124,6 +124,19 @@ These four are `NA` only when no complete pair exists.
   $s_{\hat\theta\theta} / s^2_{\hat\theta} = r / v$. See
   [Reading the concordance](#reading-the-concordance).
 
+`calibration_intercept`
+: The intercept of the same regression,
+  $a = \bar\theta - b\,\bar{\hat\theta}$ with $b$ the calibration
+  slope: the generating value the line predicts at an estimate of 0. It
+  is read on the scale of the row, so a summary on the link scale and
+  one on the natural scale give different intercepts for the same fits.
+  It is not calibration-in-the-large, $\bar\theta - \bar{\hat\theta}$,
+  which fixes the slope at 1 and equals $-$`bias`. The two are related
+  by $a = (\bar\theta - \bar{\hat\theta}) - (b - 1)\,\bar{\hat\theta}$,
+  so when the slope is far from 1 and 0 lies far from the estimates, the
+  intercept mostly restates the slope. Read the two together, as one
+  line.
+
 `truth_sd`
 : The standard deviation of the generating values, $s_\theta$
   (population moments).
@@ -169,8 +182,9 @@ replication its coverage was .936 with 5 replications and .928 with 20
 
 `ccc_scale_shift` and `calibration_slope` are ratios and are combined
 as geometric means, so that $v$ and $1/v$ count as equal departures
-from 1. `ccc_accuracy` and `ccc_location_shift` are plain means, and
-`truth_sd` is the square root of the mean variance. At subject level
+from 1. `ccc_accuracy`, `ccc_location_shift` and
+`calibration_intercept` are plain means (an intercept can be 0 or
+negative), and `truth_sd` is the square root of the mean variance. At subject level
 $\rho_c = r \cdot C_b$ therefore holds only approximately.
 
 ## Reading the concordance

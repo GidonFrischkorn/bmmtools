@@ -20,6 +20,13 @@
   columns) and names how many it hides; `tibble::as_tibble()` prints all
   of them. The summary itself still has every column.
   Tracked in [#1](https://github.com/GidonFrischkorn/bmmtools/issues/1).
+* `summary()` of a recovery object and `recovery_ccc()` gain
+  `calibration_intercept`, after `calibration_slope`: the intercept of
+  the generating value regressed on the estimate, so that the two
+  columns give the whole calibration line. It is read on the scale of
+  the row, and at subject level the replications' intercepts are
+  averaged. It is `NA` wherever the slope is
+  ([#1](https://github.com/GidonFrischkorn/bmmtools/issues/1)).
 * The README states what bmmtools reads off a fitted bmm model beyond
   its exported API (`$links`, `$fixed_parameters`, `$resp_vars`,
   `$other_vars`, and the generator adapters), and why a bmm parameter

@@ -13,7 +13,8 @@ test_that("recovery_ccc returns one row with the documented columns", {
   expect_equal(nrow(out), 1L)
   expect_named(out, c(
     "ccc", "ccc_low", "ccc_high", "ccc_accuracy", "ccc_scale_shift",
-    "ccc_location_shift", "calibration_slope", "n"
+    "ccc_location_shift", "calibration_slope", "calibration_intercept",
+    "n"
   ))
   expect_identical(out$n, 30L)
 
@@ -21,6 +22,7 @@ test_that("recovery_ccc returns one row with the documented columns", {
   expect_equal(out$ccc, inner$ccc)
   expect_equal(out$ccc_low, inner$ccc_low)
   expect_equal(out$ccc_scale_shift, inner$scale_shift)
+  expect_equal(out$calibration_intercept, inner$calibration_intercept)
 })
 
 test_that("recovery_ccc drops incomplete pairs and counts the rest", {

@@ -13,9 +13,9 @@ pairs are dropped.}
 \value{
 A one-row tibble with \code{ccc}, \code{ccc_low}, \code{ccc_high},
 \code{ccc_accuracy}, \code{ccc_scale_shift}, \code{ccc_location_shift},
-\code{calibration_slope} and \code{n}, the number of complete pairs. The
-coefficient and its components are \code{NA} with fewer than three pairs
-or when either vector has no spread.
+\code{calibration_slope}, \code{calibration_intercept} and \code{n}, the number of
+complete pairs. The coefficient and its components are \code{NA} with
+fewer than three pairs or when either vector has no spread.
 }
 \description{
 Lin's concordance correlation coefficient with its 95\% interval and
@@ -40,6 +40,14 @@ are shrunk too little. Because accuracy treats \code{v} and \code{1/v} alike,
 \code{ccc} rewards too little shrinkage: read it together with the RMSE and
 the calibration slope, and prefer \code{r} when only the rank order of
 subjects matters.
+
+\strong{The calibration line.} \code{calibration_intercept} is the intercept of
+the same regression, \code{mean_t - calibration_slope * mean_e}: the truth
+the line predicts at an estimate of 0. It is read on the scale of the
+input, so it depends on where 0 lies on that scale, and with the slope
+it gives the whole line. It is not calibration-in-the-large
+(\code{mean_t - mean_e}, the slope fixed at 1), which is minus the bias; the
+two are related by \code{calibration_intercept = (mean_t - mean_e) - (calibration_slope - 1) * mean_e}, so at a slope of 1 they agree.
 
 \strong{The interval} uses Lin's Z transformation, \code{atanh(ccc)}, with the
 asymptotic variance for random bivariate normal pairs, and is \code{NA}

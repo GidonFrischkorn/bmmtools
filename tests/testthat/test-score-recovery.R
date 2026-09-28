@@ -1164,3 +1164,85 @@ test_that("subject-level summaries carry coverage_50 as well", {
 
   expect_equal(out$coverage_50, 0.75)
 })
+
+# calibration_intercept (Milestone 12, D47, D48) -------------------------
+
+test_that("the summary puts calibration_intercept after calibration_slope", {
+  cols <- recovery_summary_columns()
+  expect_equal(
+    cols[match("calibration_slope", cols) + 1L], "calibration_intercept"
+  )
+  empty <- empty_recovery_summary()
+  expect_named(empty, cols)
+  expect_type(empty$calibration_intercept, "double")
+})
+
+test_that("a population summary reports metric_ccc's intercept", {
+  withr::local_seed(108)
+  n <- 12
+  true_value <- stats::rnorm(n)
+  estimates <- fake_estimates(rep("kappa", n),
+    estimate = 0.6 * true_value + 0.4 + stats::rnorm(n, sd = 0.2),
+    replication = seq_len(n)
+  )
+  truth <- fake_truth(rep("kappa", n),
+    true_value = true_value, replication = seq_len(n)
+  )
+  rec <- recover(estimates, truth, scale = "link")
+  out <- summary(rec)
+  ccc <- metric_ccc(rec$estimate, rec$true_value)
+  expect_equal(out$calibration_intercept, ccc$calibration_intercept)
+  expect_false(is.na(out$calibration_intercept))
+})
+
+test_that("a population intercept is NA when the truth does not vary", {
+  estimates <- fake_estimates(rep("kappa", 4),
+    estimate = c(0.9, 1.2, 1.0, 1.1), replication = 1:4
+  )
+  truth <- fake_truth(rep("kappa", 4), true_value = 1, replication = 1:4)
+  out <- summary(recover(estimates, truth, scale = "link"))
+  expect_true(is.na(out$calibration_slope))
+  expect_true(is.na(out$calibration_intercept))
+})
+
+test_that("subject-level intercepts combine as the arithmetic mean", {
+  # two exact calibration lines: intercepts 1 and -0.5, mean 0.25
+  ids <- as.character(1:5)
+  est <- c(0.5, 1, 2, 3.5, 5)
+  estimates <- dplyr::bind_rows(
+    fake_estimates(rep("p", 5),
+      estimate = est, level = "subject", id = ids, replication = 1
+    ),
+    fake_estimates(rep("p", 5),
+      estimate = est, level = "subject", id = ids, replication = 2
+    )
+  )
+  truth <- tibble::tibble(
+    id = rep(ids, 2), term = "p",
+    true_value = c(1 + 2 * est, -0.5 + 0.8 * est),
+    replication = rep(1:2, each = 5)
+  )
+  out <- summary(recover_subjects(estimates, truth, scale = "link"))
+  expect_equal(out$calibration_intercept, 0.25, tolerance = 1e-12)
+  # the slope keeps its geometric mean
+  expect_equal(out$calibration_slope, sqrt(2 * 0.8), tolerance = 1e-12)
+})
+
+test_that("subject-level intercept is the mean of the per-replication ones", {
+  rec <- subject_ccc_case(c(20L, 35L, 28L))
+  out <- summary(rec)
+  per <- per_replication_ccc(rec)
+  expect_equal(
+    out$calibration_intercept,
+    mean(vapply(per, function(p) p$calibration_intercept, 0))
+  )
+})
+
+test_that("one replication at subject level has recovery_ccc's intercept", {
+  rec <- subject_ccc_case(25L)
+  expect_equal(
+    summary(rec)$calibration_intercept,
+    recovery_ccc(rec$estimate, rec$true_value)$calibration_intercept,
+    tolerance = 1e-10
+  )
+})
