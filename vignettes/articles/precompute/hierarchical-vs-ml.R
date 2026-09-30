@@ -147,13 +147,18 @@ attr(grid, "ml_cells")
 # it survives. A Stan fit keeps each chain's warmup and sampling time; the
 # four chains ran in parallel, so a fit took as long as its slowest chain
 # (compilation excluded). The optim route keeps no fit, so it is timed
-# again here, on each cell's own simulated data.
+# again here, on each cell's own simulated data: the median of five
+# timings, because one wall-clock timing moves with whatever else the
+# machine is running (a single timing gave 9.5 s under load and 2.3 s
+# idle for the same nine fits).
 stan_secs <- function(file) {
   max(rowSums(rstan::get_elapsed_time(readRDS(file)$fit)))
 }
-ml_secs <- function(file) {
+ml_secs <- function(file, times = 5) {
   data <- readRDS(sub("\\.rds$", "-sim.rds", file))$data
-  system.time(fit_ml(model, data, method = "optim"))[["elapsed"]]
+  stats::median(vapply(seq_len(times), function(i) {
+    system.time(fit_ml(model, data, method = "optim"))[["elapsed"]]
+  }, numeric(1)))
 }
 
 results <- list(
