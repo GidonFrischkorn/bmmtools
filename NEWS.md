@@ -35,6 +35,12 @@
   dropped, so the contrast is always `<task_col>1` … `<task_col>(k-1)`.
   Unnamed contrasts such as `bayestestR::contr.equalprior` were not
   affected ([#1](https://github.com/GidonFrischkorn/bmmtools/issues/1)).
+* "Running a recovery study" gains a section on a combined design: one
+  grid that recovers population intercepts, a contrast-coded task
+  effect, between-subject SDs, correlated subject values and their
+  correlations, reported as one table per estimand family, from 20
+  sampled fits of `mixture2p`
+  ([#1](https://github.com/GidonFrischkorn/bmmtools/issues/1)).
 * The README states what bmmtools reads off a fitted bmm model beyond
   its exported API (`$links`, `$fixed_parameters`, `$resp_vars`,
   `$other_vars`, and the generator adapters), and why a bmm parameter

@@ -212,3 +212,171 @@ sum(cells$elapsed) / 60
 
 After a resume, a cell whose fit was read from disk records the time it
 took to read it, not the time it once took to fit.
+
+## One grid, every estimand
+
+A study usually needs more than one kind of number from the same data:
+the population value of each parameter, an experimental effect, how much
+people differ, whether those differences go together, and each
+person's own values. `recovery_grid()` scores all of them from one fit
+per cell. The result is then split back into one table per estimand
+family, because a summary that pools subject values with population
+effects answers no single question.
+
+```{r combined-load, include = FALSE}
+combined <- readRDS(from_root("vignettes/articles/assets/recovery-grid-combined.rds"))
+combined_file <- "vignettes/articles/precompute/recovery-grid-combined.R"
+families <- combined$families
+fmt <- function(x, digits = 2) formatC(x, format = "f", digits = digits)
+pick <- function(table, condition, term, column) {
+  table[[column]][table$condition == condition & table$term == term]
+}
+truth <- function(level, term) {
+  rows <- combined$out[combined$out$level == level &
+    combined$out$term == term, ]
+  unique(rows$true_value)
+}
+cor_truth <- function(term) {
+  unique(combined$correlations$true_value[combined$correlations$term == term])
+}
+cells_combined <- combined$cells
+```
+
+The example is `mixture2p` with two tasks. The second task lowers both
+precision and the probability of recall. People vary around the task
+values, and a person who is precise in one task tends to be precise in
+the other:
+
+```{r combined-model, eval = FALSE, code = shown("model", combined_file)}
+```
+
+`coding = "contrast"` fits an intercept and a task effect for each
+parameter instead of one value per task, and `re_cor = "all"` lets
+every subject deviation correlate with every other. Asking for the
+`"effect"` and `"sd"` levels and for `correlations` adds those families
+to the population and subject rows. Two cells, 40 and 100 subjects with
+100 trials per task, ten replications each:
+
+```{r combined-run, eval = FALSE, code = shown("run", combined_file)}
+```
+
+The data are generated per task. What the fit estimates is the
+intercept (task 1, under the default treatment contrasts) and the
+difference to task 2, so the grid transforms the generating values into
+the truth for each of those terms. The two correlations of .7 between
+tasks become a true SD of the `kappa` effect of
+`r fmt(truth("sd", "kappa_task1"), 3)` and a true correlation of
+`r fmt(cor_truth("kappa__kappa_task1"), 3)` between a person's `kappa`
+intercept and their `kappa` effect; the correlations across parameters
+are 0.
+
+**Convergence.** The fits ran with bmm
+`r combined$toolchain[["bmm"]]`, brms `r combined$toolchain[["brms"]]`
+and CmdStan `r combined$toolchain[["cmdstan"]]`, 4 chains of 4000
+iterations with 1000 of them warmup, and took
+`r fmt(combined$minutes_fitting, 0)` minutes of sampling. All
+`r sum(cells_combined$converged)` of `r nrow(cells_combined)` cells
+converged: the largest Rhat of any fit was
+`r fmt(max(cells_combined$max_rhat), 3)`, the smallest bulk ESS
+`r fmt(min(cells_combined$min_ess_bulk), 0)` and the smallest tail ESS
+`r fmt(min(cells_combined$min_ess_tail), 0)`. One fit had
+`r sum(cells_combined$n_divergent)` divergent transition out of 12000.
+An earlier run with 1000 iterations missed the convergence rule in most
+cells; in its worst fit
+the slowest variables were the correlations of the task effects, the
+terms a design like this is least informative about.
+
+### The families
+
+`summary()` of the whole result has one row per cell, level and term.
+Splitting it by `level` gives one table per family:
+
+```{r combined-families, eval = FALSE, code = shown("families", combined_file)}
+```
+
+```{r combined-families-shown}
+names(families)
+```
+
+Ten replications per cell set how finely the numbers below can be read:
+a coverage over ten intervals moves in steps of .1, so .9 and 1 are
+both consistent with a nominal 95 % interval, and a calibration slope
+from ten replications shows a direction rather than a size (see
+[Hierarchical estimation against subject-wise maximum
+likelihood](hierarchical-vs-ml.html)).
+
+**Effects** are scored on the link scale, the scale the contrast is
+estimated on:
+
+```{r combined-effects}
+tibble::as_tibble(families$effect[c(
+  "condition", "term", "bias", "rmse", "coverage", "coverage_50",
+  "ci_width", "sign_recovery"
+)])
+```
+
+The sign of both effects was recovered in every replication. The 95 %
+intervals of the `kappa` effect narrow from
+`r fmt(pick(families$effect, "row-1", "kappa_task1", "ci_width"))` with
+40 subjects to `r fmt(pick(families$effect, "row-2", "kappa_task1", "ci_width"))`
+with 100.
+
+**Population values** are the intercepts, on the natural scale. Every
+replication of a cell shares them, so there is no spread in the truth
+and the correlation columns are `NA`, as in the grid above:
+
+```{r combined-population}
+tibble::as_tibble(families$population[c(
+  "condition", "term", "bias", "rmse", "coverage", "coverage_50"
+)])
+```
+
+**Between-subject SDs**, on the link scale:
+
+```{r combined-sd}
+tibble::as_tibble(families$sd[c(
+  "condition", "term", "bias", "rmse", "coverage", "coverage_50",
+  "ci_width"
+)])
+```
+
+**Subject values** are summarised within each replication and then
+combined, so here `r`, `ccc` and the calibration line are defined:
+
+```{r combined-subject}
+tibble::as_tibble(families$subject[c(
+  "condition", "term", "rmse", "coverage", "r", "calibration_slope",
+  "calibration_intercept"
+)])
+```
+
+People are ordered better on their task-1 values than on how much they
+change between tasks: with 100 subjects, `r` is
+`r fmt(pick(families$subject, "row-2", "kappa", "r"))` for the `kappa`
+intercept and `r fmt(pick(families$subject, "row-2", "kappa_task1", "r"))`
+for the `kappa` effect, whose true SD is smaller. The calibration slope
+of the `kappa` effect is above 1 in both cells
+(`r fmt(pick(families$subject, "row-1", "kappa_task1", "calibration_slope"))`
+and `r fmt(pick(families$subject, "row-2", "kappa_task1", "calibration_slope"))`),
+so its subject estimates are shrunk more than the data warrant. With
+ten replications that is the direction, not its size.
+
+**Correlations** come as their own recovery object,
+`attr(out, "correlations")`, with its own summary:
+
+```{r combined-cors}
+tibble::as_tibble(combined$correlations[c(
+  "condition", "term", "true_value", "mean_estimate", "bias",
+  "coverage"
+)])
+```
+
+The correlations that are 0 in the truth stay near 0. The one between
+a person's `kappa` intercept and `kappa` effect, truly
+`r fmt(cor_truth("kappa__kappa_task1"))`, is estimated at
+`r fmt(pick(combined$correlations, "row-1", "kappa__kappa_task1", "mean_estimate"))`
+on average with 40 subjects and
+`r fmt(pick(combined$correlations, "row-2", "kappa__kappa_task1", "mean_estimate"))`
+with 100: pulled towards 0, less so with more people.
+[Recovering between-subject correlations](correlation-recovery.html) looks at that
+attenuation in detail.
