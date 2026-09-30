@@ -1026,3 +1026,223 @@ test_that("mae is in the summary contract and its empty shape", {
   expect_true("mae" %in% names(empty))
   expect_type(empty$mae, "double")
 })
+
+# the 50 % interval (Milestone 12, D46) -----------------------------------
+
+with_inner <- function(estimates, ci_low_50, ci_high_50) {
+  estimates$ci_low_50 <- as.double(ci_low_50)
+  estimates$ci_high_50 <- as.double(ci_high_50)
+  estimates
+}
+
+test_that("covered_50 is TRUE exactly when truth lies inside the 50 % interval", {
+  estimates <- with_inner(
+    fake_estimates(c("a", "b", "c", "d"), estimate = c(0, 0, 0, 0)),
+    ci_low_50 = c(-0.5, -0.5, -0.5, 0.2),
+    ci_high_50 = c(0.5, 0.5, 0.5, 0.4)
+  )
+  truth <- fake_truth(c("a", "b", "c", "d"), true_value = c(0, -0.5, 0.8, 0))
+
+  out <- recover(estimates, truth, scale = "link")
+
+  # inside, on the boundary (closed), outside the inner but inside the
+  # outer, outside the inner
+  expect_equal(out$covered_50, c(TRUE, TRUE, FALSE, FALSE))
+  expect_equal(out$covered, c(TRUE, TRUE, TRUE, TRUE))
+})
+
+test_that("an estimates tibble without inner bounds scores NA, not 0", {
+  estimates <- fake_estimates(c("a", "b"), estimate = c(0, 1))
+  truth <- fake_truth(c("a", "b"), true_value = c(0, 1))
+
+  out <- recover(estimates, truth, scale = "link")
+
+  expect_true(all(is.na(out$ci_low_50)))
+  expect_type(out$ci_low_50, "double")
+  expect_true(all(is.na(out$covered_50)))
+  expect_type(out$covered_50, "logical")
+  expect_true(is.na(summary(out)$coverage_50[[1]]))
+  expect_true(is.na(summary(out)$ci_width_50[[1]]))
+})
+
+test_that("scale = natural transforms the inner bounds too", {
+  estimates <- with_inner(
+    fake_estimates("kappa", estimate = 0, ci_low = -1, ci_high = 1),
+    ci_low_50 = -0.4, ci_high_50 = 0.3
+  )
+  truth <- fake_truth("kappa", true_value = 0)
+
+  out <- recover(estimates, truth, scale = "natural", links = c(kappa = "log"))
+
+  expect_equal(out$ci_low_50, exp(-0.4))
+  expect_equal(out$ci_high_50, exp(0.3))
+  expect_true(out$covered_50)
+})
+
+test_that("a decreasing link leaves ci_low_50 below ci_high_50", {
+  estimates <- with_inner(
+    fake_estimates("a", estimate = 1, ci_low = 0.5, ci_high = 2),
+    ci_low_50 = 0.8, ci_high_50 = 1.25
+  )
+  truth <- fake_truth("a", true_value = 1)
+
+  out <- recover(estimates, truth, scale = "natural", links = c(a = "inverse"))
+
+  expect_equal(out$ci_low_50, 1 / 1.25)
+  expect_equal(out$ci_high_50, 1 / 0.8)
+})
+
+test_that("an inner interval spanning zero under inverse is NA, and warns once", {
+  estimates <- with_inner(
+    fake_estimates("a", estimate = 0.1, ci_low = -1, ci_high = 2),
+    ci_low_50 = -0.2, ci_high_50 = 0.5
+  )
+  truth <- fake_truth("a", true_value = 1)
+
+  expect_warning(
+    out <- recover(estimates, truth, scale = "natural", links = c(a = "inverse")),
+    "span"
+  )
+  expect_true(is.na(out$ci_low_50))
+  expect_true(is.na(out$covered_50))
+})
+
+test_that("summary gives coverage_50 and ci_width_50 from the inner bounds", {
+  withr::local_seed(1203)
+  n <- 12L
+  true_value <- stats::rnorm(n)
+  estimate <- true_value + stats::rnorm(n, sd = 0.3)
+  estimates <- with_inner(
+    fake_estimates(
+      rep("kappa", n),
+      estimate = estimate,
+      ci_low = estimate - 0.6, ci_high = estimate + 0.6,
+      replication = seq_len(n)
+    ),
+    ci_low_50 = estimate - 0.2, ci_high_50 = estimate + 0.2
+  )
+  truth <- fake_truth(rep("kappa", n),
+    true_value = true_value,
+    replication = seq_len(n)
+  )
+
+  rec <- recover(estimates, truth, scale = "link")
+  out <- summary(rec)
+
+  expect_equal(
+    out$coverage_50,
+    metric_coverage(rec$true_value, rec$ci_low_50, rec$ci_high_50)
+  )
+  expect_equal(out$coverage_50, mean(abs(estimate - true_value) <= 0.2))
+  expect_equal(out$ci_width_50, 0.4)
+  expect_equal(out$ci_width, 1.2)
+})
+
+test_that("the summary puts each 50 % column after its 95 % one", {
+  cols <- recovery_summary_columns()
+  expect_equal(
+    cols[match("coverage", cols) + 1L], "coverage_50"
+  )
+  expect_equal(
+    cols[match("ci_width", cols) + 1L], "ci_width_50"
+  )
+})
+
+test_that("subject-level summaries carry coverage_50 as well", {
+  estimates <- with_inner(
+    fake_estimates(
+      rep("kappa", 4),
+      estimate = c(1, 2, 3, 4), level = "subject", id = as.character(1:4)
+    ),
+    ci_low_50 = c(0.9, 1.5, 2.9, 3.9), ci_high_50 = c(1.1, 1.8, 3.1, 4.1)
+  )
+  truth <- fake_truth(rep("kappa", 4),
+    true_value = c(1, 2, 3, 4), id = as.character(1:4)
+  )
+
+  out <- summary(recover_subjects(estimates, truth, scale = "link"))
+
+  expect_equal(out$coverage_50, 0.75)
+})
+
+# calibration_intercept (Milestone 12, D47, D48) -------------------------
+
+test_that("the summary puts calibration_intercept after calibration_slope", {
+  cols <- recovery_summary_columns()
+  expect_equal(
+    cols[match("calibration_slope", cols) + 1L], "calibration_intercept"
+  )
+  empty <- empty_recovery_summary()
+  expect_named(empty, cols)
+  expect_type(empty$calibration_intercept, "double")
+})
+
+test_that("a population summary reports metric_ccc's intercept", {
+  withr::local_seed(108)
+  n <- 12
+  true_value <- stats::rnorm(n)
+  estimates <- fake_estimates(rep("kappa", n),
+    estimate = 0.6 * true_value + 0.4 + stats::rnorm(n, sd = 0.2),
+    replication = seq_len(n)
+  )
+  truth <- fake_truth(rep("kappa", n),
+    true_value = true_value, replication = seq_len(n)
+  )
+  rec <- recover(estimates, truth, scale = "link")
+  out <- summary(rec)
+  ccc <- metric_ccc(rec$estimate, rec$true_value)
+  expect_equal(out$calibration_intercept, ccc$calibration_intercept)
+  expect_false(is.na(out$calibration_intercept))
+})
+
+test_that("a population intercept is NA when the truth does not vary", {
+  estimates <- fake_estimates(rep("kappa", 4),
+    estimate = c(0.9, 1.2, 1.0, 1.1), replication = 1:4
+  )
+  truth <- fake_truth(rep("kappa", 4), true_value = 1, replication = 1:4)
+  out <- summary(recover(estimates, truth, scale = "link"))
+  expect_true(is.na(out$calibration_slope))
+  expect_true(is.na(out$calibration_intercept))
+})
+
+test_that("subject-level intercepts combine as the arithmetic mean", {
+  # two exact calibration lines: intercepts 1 and -0.5, mean 0.25
+  ids <- as.character(1:5)
+  est <- c(0.5, 1, 2, 3.5, 5)
+  estimates <- dplyr::bind_rows(
+    fake_estimates(rep("p", 5),
+      estimate = est, level = "subject", id = ids, replication = 1
+    ),
+    fake_estimates(rep("p", 5),
+      estimate = est, level = "subject", id = ids, replication = 2
+    )
+  )
+  truth <- tibble::tibble(
+    id = rep(ids, 2), term = "p",
+    true_value = c(1 + 2 * est, -0.5 + 0.8 * est),
+    replication = rep(1:2, each = 5)
+  )
+  out <- summary(recover_subjects(estimates, truth, scale = "link"))
+  expect_equal(out$calibration_intercept, 0.25, tolerance = 1e-12)
+  # the slope keeps its geometric mean
+  expect_equal(out$calibration_slope, sqrt(2 * 0.8), tolerance = 1e-12)
+})
+
+test_that("subject-level intercept is the mean of the per-replication ones", {
+  rec <- subject_ccc_case(c(20L, 35L, 28L))
+  out <- summary(rec)
+  per <- per_replication_ccc(rec)
+  expect_equal(
+    out$calibration_intercept,
+    mean(vapply(per, function(p) p$calibration_intercept, 0))
+  )
+})
+
+test_that("one replication at subject level has recovery_ccc's intercept", {
+  rec <- subject_ccc_case(25L)
+  expect_equal(
+    summary(rec)$calibration_intercept,
+    recovery_ccc(rec$estimate, rec$true_value)$calibration_intercept,
+    tolerance = 1e-10
+  )
+})

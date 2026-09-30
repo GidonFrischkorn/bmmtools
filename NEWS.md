@@ -1,5 +1,46 @@
 # bmmtools (development version)
 
+* Every estimate now carries a central 50 % interval, `ci_low_50` and
+  `ci_high_50`, beside the `ci_level` interval: the 25th and 75th
+  percentiles of the draws, a Wald interval at `qnorm(0.75)` standard
+  errors on `fit_ml(method = "optim")`, and a Fisher-z interval for the
+  `point` correlation estimator. Recovery rows gain `covered_50`, and
+  `summary()` of a recovery or a correlation recovery gains
+  `coverage_50` and `ci_width_50`: the 95 % interval checks the tails of
+  the posterior, the 50 % interval its centre. The mass is fixed and
+  carried in the name, so it does not follow `ci_level`. An estimates
+  tibble without the inner bounds still scores, with `coverage_50` `NA`.
+  `cross_check()` keeps one interval.
+* `recovery_grid()` stores the 50 % interval in each cell's file. A cell
+  file written before it is re-extracted from its cached fit on the next
+  run, without refitting; `collect_grid()` reads such files with the
+  inner columns `NA` and says how many there were.
+* Printing a recovery summary shows a core set of columns (the row, `n`,
+  `bias`, `rmse`, both coverages, `r`, `ccc` and the calibration
+  columns) and names how many it hides; `tibble::as_tibble()` prints all
+  of them. The summary itself still has every column.
+  Tracked in [#1](https://github.com/GidonFrischkorn/bmmtools/issues/1).
+* `summary()` of a recovery object and `recovery_ccc()` gain
+  `calibration_intercept`, after `calibration_slope`: the intercept of
+  the generating value regressed on the estimate, so that the two
+  columns give the whole calibration line. It is read on the scale of
+  the row, and at subject level the replications' intercepts are
+  averaged. It is `NA` wherever the slope is
+  ([#1](https://github.com/GidonFrischkorn/bmmtools/issues/1)).
+* `coding = "contrast"` with the default contrasts
+  (`stats::contr.treatment`), or any contrast matrix with column names,
+  now recovers: the matrix's column names made brms call the contrast
+  `task2` where the truth says `task1`, and scoring stopped with "No
+  term in `truth` matches an estimated parameter". The column names are
+  dropped, so the contrast is always `<task_col>1` … `<task_col>(k-1)`.
+  Unnamed contrasts such as `bayestestR::contr.equalprior` were not
+  affected ([#1](https://github.com/GidonFrischkorn/bmmtools/issues/1)).
+* "Running a recovery study" gains a section on a combined design: one
+  grid that recovers population intercepts, a contrast-coded task
+  effect, between-subject SDs, correlated subject values and their
+  correlations, reported as one table per estimand family, from 20
+  sampled fits of `mixture2p`
+  ([#1](https://github.com/GidonFrischkorn/bmmtools/issues/1)).
 * The README states what bmmtools reads off a fitted bmm model beyond
   its exported API (`$links`, `$fixed_parameters`, `$resp_vars`,
   `$other_vars`, and the generator adapters), and why a bmm parameter

@@ -56,9 +56,14 @@ mock_terms <- function(formula, data, model) {
   if (!mock_has_intercept(formula)) {
     return(task_terms(free, tasks, task_col))
   }
-  effects <- as.vector(t(outer(
-    free, paste0("_", task_col, seq_len(length(tasks) - 1L)), paste0
-  )))
+  # brms names a contrast coefficient after the design matrix column, which
+  # takes the contrast matrix's column names when it has them
+  # (stats::contr.treatment does): read it off the data as brms would,
+  # rather than assume `<task_col>1`, so a naming mismatch reaches the test
+  columns <- colnames(stats::model.matrix(
+    stats::reformulate(task_col), data
+  ))[-1L]
+  effects <- as.vector(t(outer(free, paste0("_", columns), paste0)))
   structure(c(free, effects), effects = effects)
 }
 
@@ -69,7 +74,7 @@ mock_has_intercept <- function(formula) {
   grepl("~\\s*1\\s*\\+", population)
 }
 
-#' Estimates for a mock fit: 0 with a wide interval, converged
+#' Estimates for a mock fit: 0 with wide intervals, converged
 #'
 #' The `"sd"` level repeats the population rows under that level, so a
 #' grid can score SDs; `"cor"` gives no rows, as for an uncorrelated fit.
@@ -88,7 +93,8 @@ extract_estimates_mockfit <- function(fit,
     tibble::tibble(
       term = term, estimate = 0, ci_low = -10, ci_high = 10,
       ci_method = "eti", ci_level = ci_level, rhat = 1, ess_bulk = 1000,
-      ess_tail = 1000, level = lvl, id = id, converged = TRUE
+      ess_tail = 1000, level = lvl, id = id, converged = TRUE,
+      ci_low_50 = -5, ci_high_50 = 5
     )
   }
   effects <- attr(fit$parameters, "effects") %||% character()

@@ -488,3 +488,55 @@ test_that("metrics error on inputs of different lengths", {
   expect_error(metric_r(c(1, 2), c(1, 2, 3)), "same length")
   expect_error(metric_coverage(c(1, 2), c(1, 2, 3), c(1, 2, 3)), "same length")
 })
+
+# calibration_intercept (Milestone 12, D47) ------------------------------
+
+test_that("calibration_intercept recovers an exact calibration line", {
+  estimate <- c(0.5, 1, 2, 4, 8, 16)
+  truth <- 0.25 + 0.5 * estimate
+  out <- metric_ccc(estimate, truth)
+  expect_equal(out$calibration_intercept, 0.25, tolerance = 1e-12)
+  expect_equal(out$calibration_slope, 0.5, tolerance = 1e-12)
+})
+
+test_that("calibration_intercept is the OLS intercept of truth on estimate", {
+  withr::local_seed(106)
+  estimate <- stats::rnorm(2000, mean = 3, sd = 1.5)
+  truth <- -0.8 + 1.2 * estimate + stats::rnorm(2000, sd = 0.3)
+  out <- metric_ccc(estimate, truth)
+  oracle <- unname(stats::coef(stats::lm(truth ~ estimate))[[1L]])
+  expect_equal(out$calibration_intercept, oracle, tolerance = 1e-10)
+  # and, with 2000 pairs and residual sd 0.3, close to the generating line
+  expect_equal(out$calibration_intercept, -0.8, tolerance = 0.05)
+})
+
+test_that("calibration_intercept restates the slope and the bias", {
+  # a = CITL - (b - 1) * mean(estimate), and CITL = -bias
+  withr::local_seed(107)
+  truth <- stats::rnorm(40, mean = 2)
+  estimate <- 0.7 * truth + 0.9 + stats::rnorm(40, sd = 0.4)
+  out <- metric_ccc(estimate, truth)
+  citl <- -metric_bias(estimate, truth)
+  expect_equal(
+    out$calibration_intercept,
+    citl - (out$calibration_slope - 1) * mean(estimate),
+    tolerance = 1e-10
+  )
+})
+
+test_that("calibration_intercept is NA exactly where calibration_slope is", {
+  cases <- list(
+    none = list(numeric(0), numeric(0)),
+    two_pairs = list(c(1, 2), c(1, 3)),
+    flat_estimate = list(c(2, 2, 2, 2), c(1, 2, 3, 4)),
+    flat_truth = list(c(1, 2, 3, 4), c(5, 5, 5, 5)),
+    incomplete = list(c(1, NA, 3, 4), c(1, 2, NA, 4))
+  )
+  for (name in names(cases)) {
+    out <- metric_ccc(cases[[name]][[1L]], cases[[name]][[2L]])
+    expect_true(is.na(out$calibration_slope), info = name)
+    expect_true(is.na(out$calibration_intercept), info = name)
+  }
+  out <- metric_ccc(c(1, 3, 2), c(1, 2, 3))
+  expect_false(is.na(out$calibration_intercept))
+})

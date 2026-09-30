@@ -141,7 +141,25 @@ ggplot(by_trials, aes(factor(n_trials), rmse, colour = estimator)) +
 attr(grid, "ml_cells")
 
 ## ---- save
-elapsed_secs <- function(x) sum(x$elapsed, na.rm = TRUE)
+# The cells' `elapsed` is the wall time of whatever run wrote this asset:
+# once the fits are cached, a rerun only re-reads them and takes seconds,
+# which says nothing about fitting. So the fitting time is taken from where
+# it survives. A Stan fit keeps each chain's warmup and sampling time; the
+# four chains ran in parallel, so a fit took as long as its slowest chain
+# (compilation excluded). The optim route keeps no fit, so it is timed
+# again here, on each cell's own simulated data: the median of five
+# timings, because one wall-clock timing moves with whatever else the
+# machine is running (a single timing gave 9.5 s under load and 2.3 s
+# idle for the same nine fits).
+stan_secs <- function(file) {
+  max(rowSums(rstan::get_elapsed_time(readRDS(file)$fit)))
+}
+ml_secs <- function(file, times = 5) {
+  data <- readRDS(sub("\\.rds$", "-sim.rds", file))$data
+  stats::median(vapply(seq_len(times), function(i) {
+    system.time(fit_ml(model, data, method = "optim"))[["elapsed"]]
+  }, numeric(1)))
+}
 
 results <- list(
   convergence = check_convergence(fit),
@@ -160,8 +178,8 @@ results <- list(
   by_trials = by_trials,
   cells = cells,
   ml_cells = attr(grid, "ml_cells"),
-  grid_secs = elapsed_secs(cells),
-  grid_ml_secs = elapsed_secs(attr(grid, "ml_cells")),
+  grid_secs = sum(vapply(cells$file, stan_secs, numeric(1))),
+  grid_ml_secs = sum(vapply(cells$file, ml_secs, numeric(1))),
   minutes = as.double(difftime(Sys.time(), started, units = "mins"))
 )
 saveRDS(results, "vignettes/articles/assets/hierarchical-vs-ml.rds")

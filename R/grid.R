@@ -675,12 +675,16 @@ read_sidecar <- function(path, key, request, key_field = "key") {
   stored <- tryCatch(readRDS(path), error = function(e) NULL)
   scale_ok <- is.null(request$correlations) ||
     identical(stored$cor_scale, request$cor_scale)
+  # decision 49: a table without the 50 % interval is out of date
+  inner_ok <- is.list(stored) && has_inner_interval(stored$estimates) &&
+    (is.null(request$correlations) || has_inner_interval(stored$cor_estimates))
   matches <- is.list(stored) &&
     identical(stored[[key_field]], key) &&
     identical(stored$bmmtools_version, bmmtools_version()) &&
     all(request$levels %in% stored$levels) &&
     all(request$correlations %in% stored$correlations) &&
-    scale_ok
+    scale_ok &&
+    inner_ok
   if (!matches) {
     return(NULL)
   }
@@ -692,7 +696,7 @@ read_sidecar <- function(path, key, request, key_field = "key") {
   # holding `ml_estimates` and no `ml` would answer with the rows
   if (is.null(request$ml)) {
     stored["ml_estimates"] <- list(NULL)
-  } else if (!identical(stored[["ml"]], request$ml)) {
+  } else if (!ml_current(stored, request)) {
     # the ML record is stale or absent while the hierarchical extraction
     # is current. Dropping the whole sidecar would refit the hierarchical
     # model too --- and once the fit files have been deleted, as
@@ -712,6 +716,30 @@ read_sidecar <- function(path, key, request, key_field = "key") {
     ]
   }
   stored
+}
+
+#' Whether a stored table has the 50 % interval
+#'
+#' The version stays 0.2.0 across Milestone 12 (decision 49), so a
+#' sidecar written before the interval existed passes the version test.
+#' Its tables are what give it away: without `ci_low_50` the cell is
+#' re-extracted from its cached fit, which costs a read and no refit. A
+#' table that is absent (the set-level sidecar has no estimates) or empty
+#' has nothing to be missing.
+#'
+#' @noRd
+has_inner_interval <- function(x) {
+  if (is.null(x) || !is.data.frame(x) || nrow(x) == 0L) {
+    return(TRUE)
+  }
+  all(inner_interval_columns() %in% names(x))
+}
+
+#' Whether a sidecar's ML rows answer the ML request
+#' @noRd
+ml_current <- function(stored, request) {
+  identical(stored[["ml"]], request$ml) &&
+    has_inner_interval(stored[["ml_estimates"]])
 }
 
 #' Write a sidecar: its key(s), what it was extracted with, the extraction
@@ -747,10 +775,12 @@ extract_cell <- function(fit, sim, request) {
   # the gate cannot be applied to keeps whatever verdict its own
   # extract_estimates() method reaches.
   gate <- if (is.na(diagnostics$pass)) NULL else as.logical(diagnostics$pass)
-  estimates <- extract_estimates(
+  # an extract_estimates() method of another fit class may not give the
+  # 50 % interval; stored as NA, the sidecar still has the columns
+  estimates <- fill_inner_interval(extract_estimates(
     fit,
     level = request$levels, converged = gate
-  )
+  ))
   converged <- NULL
   if (nrow(estimates) > 0L) converged <- as.logical(estimates$converged[[1L]])
 
@@ -1370,6 +1400,9 @@ grid_formula <- function(formula, row, i, model, re_cor, task_col,
 #' requested level and estimator, so the fit files may be deleted once a
 #' grid has run. Otherwise the cell goes through [fit_cached()] again,
 #' which reuses a cached fit, and the sidecar is rewritten.
+#' A sidecar written before bmmtools stored the central 50 % interval
+#' counts as out of date for the same reason: it is re-extracted from the
+#' cached fit, not refitted.
 #'
 #' @section Subject-wise ML:
 #' With `ml`, every cell is fitted twice on the same simulated data: the

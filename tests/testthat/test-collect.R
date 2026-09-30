@@ -116,3 +116,34 @@ test_that("a bad dir is refused before anything is read", {
   expect_error(collect_grid(1), "single path")
   expect_error(collect_grid(c("a", "b")), "single path")
 })
+
+# cell files written before the 50 % interval (Milestone 12, D49) ---------
+
+test_that("cell files without the 50 % interval collect with NA, and say so", {
+  skip_if_not_installed("bmm")
+  dir <- withr::local_tempdir()
+  original <- collect_run(dir)
+  delete_fits(dir)
+  for (path in list.files(dir, pattern = "-est\\.rds$", full.names = TRUE)) {
+    sidecar <- readRDS(path)
+    sidecar$estimates$ci_low_50 <- NULL
+    sidecar$estimates$ci_high_50 <- NULL
+    saveRDS(sidecar, path)
+  }
+
+  expect_message(out <- collect_grid(dir), "50 %")
+  expect_s3_class(out, "bmmtools_recovery")
+  expect_true(all(is.na(out$ci_low_50)))
+  expect_true(all(is.na(out$covered_50)))
+  expect_equal(out$covered, original$covered)
+  expect_true(all(is.na(summary(out)$coverage_50)))
+})
+
+test_that("current cell files collect without the message", {
+  skip_if_not_installed("bmm")
+  dir <- withr::local_tempdir()
+  collect_run(dir)
+  delete_fits(dir)
+  expect_no_message(out <- collect_grid(dir))
+  expect_false(anyNA(out$ci_low_50))
+})

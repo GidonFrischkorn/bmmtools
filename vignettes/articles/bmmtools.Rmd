@@ -241,11 +241,10 @@ SBC::plot_rank_hist(res$ranks)
 ```
 
 The run ranked `r length(res$sbc_info$variables)` variables over
-`r res$sbc_info$diagnostics$n_fits` simulations, with
-`r res$sbc_info$diagnostics$n_high_rhat` fits above bmmtools' rhat bar of
-`r res$sbc_info$diagnostics$rhat_max` and
-`r res$sbc_info$diagnostics$n_low_ess_to_rank` below SBC's rank-ESS bar,
-and no backend errors.
+`r res$sbc_info$diagnostics$n_fits` simulations with no backend errors.
+Fits above bmmtools' rhat bar of `r res$sbc_info$diagnostics$rhat_max`:
+`r res$sbc_info$diagnostics$n_high_rhat`; below SBC's rank-ESS bar:
+`r res$sbc_info$diagnostics$n_low_ess_to_rank`.
 
 **Twenty simulations is a smoke test, not a verdict.** It shows that the
 pipeline runs end to end, that the truths and the draws are named

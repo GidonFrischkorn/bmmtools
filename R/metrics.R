@@ -217,14 +217,15 @@ ccc_z_variance <- function(ccc, r, u, n) {
 #' `v = sd(estimate) / sd(truth)` and the location shift
 #' `u = (mean(estimate) - mean(truth)) / sqrt(sd(estimate) sd(truth))`;
 #' the calibration slope, r divided by `v`, which is the slope of truth
-#' regressed on the estimate; and a 95% interval from Lin's Z transformation.
+#' regressed on the estimate, and the intercept of that line (Milestone 12,
+#' decision 47); and a 95% interval from Lin's Z transformation.
 #'
 #' A calibrated posterior mean has `v = r` and `calibration_slope = 1`,
 #' not `v = 1`: shrinkage is not scale bias.
 #'
 #' @return A named list: `ccc`, `ccc_low`, `ccc_high`, `accuracy`,
-#'   `scale_shift`, `location_shift`, `calibration_slope`, `r`, `var_z`,
-#'   `truth_sd`, `n`.
+#'   `scale_shift`, `location_shift`, `calibration_slope`,
+#'   `calibration_intercept`, `r`, `var_z`, `truth_sd`, `n`.
 #' @noRd
 metric_ccc <- function(estimate, truth) {
   p <- complete_pairs(estimate, truth)
@@ -235,8 +236,8 @@ metric_ccc <- function(estimate, truth) {
   out <- list(
     ccc = NA_real_, ccc_low = NA_real_, ccc_high = NA_real_,
     accuracy = NA_real_, scale_shift = NA_real_, location_shift = NA_real_,
-    calibration_slope = NA_real_, r = NA_real_, var_z = NA_real_,
-    truth_sd = NA_real_, n = n
+    calibration_slope = NA_real_, calibration_intercept = NA_real_,
+    r = NA_real_, var_z = NA_real_, truth_sd = NA_real_, n = n
   )
   if (n == 0L) {
     return(out)
@@ -262,6 +263,7 @@ metric_ccc <- function(estimate, truth) {
   shifts <- out$scale_shift + 1 / out$scale_shift + out$location_shift^2
   out$accuracy <- 2 / shifts
   out$calibration_slope <- cov_xy / var_y
+  out$calibration_intercept <- mean_x - out$calibration_slope * mean_y
 
   out$var_z <- ccc_z_variance(out$ccc, out$r, out$location_shift, n)
   if (!is.na(out$var_z)) {
@@ -298,6 +300,15 @@ metric_ccc <- function(estimate, truth) {
 #' the calibration slope, and prefer `r` when only the rank order of
 #' subjects matters.
 #'
+#' **The calibration line.** `calibration_intercept` is the intercept of
+#' the same regression, `mean_t - calibration_slope * mean_e`: the truth
+#' the line predicts at an estimate of 0. It is read on the scale of the
+#' input, so it depends on where 0 lies on that scale, and with the slope
+#' it gives the whole line. It is not calibration-in-the-large
+#' (`mean_t - mean_e`, the slope fixed at 1), which is minus the bias; the
+#' two are related by `calibration_intercept = (mean_t - mean_e) -
+#' (calibration_slope - 1) * mean_e`, so at a slope of 1 they agree.
+#'
 #' **The interval** uses Lin's Z transformation, `atanh(ccc)`, with the
 #' asymptotic variance for random bivariate normal pairs, and is `NA`
 #' with three or fewer pairs, at `ccc = +/-1` and when the Pearson
@@ -310,9 +321,9 @@ metric_ccc <- function(estimate, truth) {
 #'
 #' @return A one-row tibble with `ccc`, `ccc_low`, `ccc_high`,
 #'   `ccc_accuracy`, `ccc_scale_shift`, `ccc_location_shift`,
-#'   `calibration_slope` and `n`, the number of complete pairs. The
-#'   coefficient and its components are `NA` with fewer than three pairs
-#'   or when either vector has no spread.
+#'   `calibration_slope`, `calibration_intercept` and `n`, the number of
+#'   complete pairs. The coefficient and its components are `NA` with
+#'   fewer than three pairs or when either vector has no spread.
 #'
 #' @references Lin, L. I.-K. (1989). A concordance correlation
 #'   coefficient to evaluate reproducibility. *Biometrics, 45*(1),
@@ -355,6 +366,7 @@ recovery_ccc <- function(estimate, truth) {
     ccc_scale_shift = out$scale_shift,
     ccc_location_shift = out$location_shift,
     calibration_slope = out$calibration_slope,
+    calibration_intercept = out$calibration_intercept,
     n = as.integer(out$n)
   )
 }

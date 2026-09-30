@@ -97,6 +97,80 @@ test_that("the summary prints and returns invisibly", {
   expect_true(any(grepl("kappa", out)))
 })
 
+# the core print (Milestone 12, D50) -------------------------------------
+
+test_that("the summary print shows the core columns and hides the rest", {
+  s <- summary(recovery_example())
+  out <- utils::capture.output(print(s))
+  # the column names, wherever the console width wraps them
+  header <- paste(out, collapse = " ")
+
+  for (col in c(
+    "term", "level", "scale", "n", "bias", "rmse", "coverage",
+    "coverage_50", "r", "ccc", "calibration_slope"
+  )) {
+    expect_match(header, paste0("\\b", col, "\\b"), info = col)
+  }
+  for (col in c(
+    "rank_r", "ccc_accuracy", "ccc_scale_shift", "r_low",
+    "truth_sd", "n_replications", "ci_width_50"
+  )) {
+    expect_no_match(header, paste0("\\b", col, "\\b"), info = col)
+  }
+  # one estimator is the ordinary case and is not a column worth a place
+  expect_no_match(header, "estimator")
+  hidden <- length(names(s)) - length(summary_print_columns(s))
+  expect_true(any(grepl(
+    paste0(hidden, " more columns"), out,
+    fixed = TRUE
+  )))
+  expect_true(any(grepl("as_tibble", out, fixed = TRUE)))
+})
+
+test_that("the summary keeps every column whatever the print shows", {
+  s <- summary(recovery_example())
+  expect_named(s, recovery_summary_columns())
+  expect_named(tibble::as_tibble(s), recovery_summary_columns())
+})
+
+test_that("the print names the estimator when there are two", {
+  estimates <- dplyr::bind_rows(
+    fake_estimates("a", estimate = 1),
+    fake_estimates("a", estimate = 1.1)
+  )
+  estimates$estimator <- c("bayes", "ml")
+  s <- summary(recover(estimates, fake_truth("a", 1), scale = "link"))
+  expect_equal(nrow(s), 2L)
+  expect_true("estimator" %in% summary_print_columns(s))
+  expect_false(
+    "estimator" %in% summary_print_columns(summary(recovery_example()))
+  )
+})
+
+test_that("the print leads with the condition of a grid", {
+  a <- recovery_example()
+  a$condition <- rep(c("row-1", "row-2"), length.out = nrow(a))
+  s <- summary(a)
+  expect_equal(summary_print_columns(s)[[1L]], "condition")
+})
+
+test_that("a summary cut to a few columns prints them without a warning", {
+  s <- summary(recovery_example())
+  for (cut in list(
+    s[, c("term", "level", "n")],
+    dplyr::select(s, "term", "bias", "rmse")
+  )) {
+    expect_no_warning(out <- utils::capture.output(print(cut)))
+    expect_equal(summary_print_columns(cut), setdiff(names(cut), "estimator"))
+  }
+})
+
+test_that("the recovery format carries the core print", {
+  out <- format(recovery_example())
+  expect_true(any(grepl("coverage_50", out, fixed = TRUE)))
+  expect_false(any(grepl("ccc_accuracy", out, fixed = TRUE)))
+})
+
 # dplyr ------------------------------------------------------------------
 
 test_that("dplyr verbs keep the object usable", {

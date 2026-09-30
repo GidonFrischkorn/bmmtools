@@ -50,7 +50,9 @@ all and accepts \code{"flat"} only.}
 \item{ci_level}{The interval level. The interval is the Laplace
 approximation's on the Stan route (\code{ci_method = "laplace"}) and a
 Wald interval from the optimiser's Hessian on the other
-(\code{ci_method = "wald"}).}
+(\code{ci_method = "wald"}). Both routes also return the central 50 \%
+interval of the same kind in \code{ci_low_50} and \code{ci_high_50}, whatever
+\code{ci_level} is.}
 
 \item{draws}{How many draws to take from the Laplace approximation.
 \code{method = "stan"} only.}

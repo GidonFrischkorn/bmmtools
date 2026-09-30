@@ -218,9 +218,14 @@ ml_finalise <- function(out, free, levels, max_abs_link, ci_method,
   # Decision 40: the row stays, so `n` differs visibly between estimators
   # and check_estimator_balance() warns. Dropping it would score ML on the
   # easiest subjects and the Bayesian estimator on all of them.
+  # a Laplace fit's extractor gives the 50 % interval; one from another
+  # fit class may not, and its bounds are then unknown
+  out <- fill_inner_interval(out)
   out$estimate[!ok] <- NA_real_
   out$ci_low[!ok] <- NA_real_
   out$ci_high[!ok] <- NA_real_
+  out$ci_low_50[!ok] <- NA_real_
+  out$ci_high_50[!ok] <- NA_real_
 
   # ordered by the parameter and then the level as the data has them, not
   # by the character sort that would put id 10 before id 2
@@ -379,6 +384,8 @@ fit_ml_optim_rows <- function(model, data, by, levels, free, objective,
   # large finite objective and a fit that "converged" at the start value
   force(objective)
   z <- stats::qnorm(1 - (1 - ci_level) / 2)
+  # the central 50 % interval, whatever ci_level is (decision 46)
+  z_50 <- stats::qnorm(0.75)
   n_par <- length(free)
   per_subject <- lapply(levels, function(lv) {
     y <- data[as.character(data[[by]]) == lv, , drop = FALSE]
@@ -389,6 +396,8 @@ fit_ml_optim_rows <- function(model, data, by, levels, free, objective,
       ci_low = as.numeric(o$par) - z * se,
       ci_high = as.numeric(o$par) + z * se,
       ci_level = rep(ci_level, n_par),
+      ci_low_50 = as.numeric(o$par) - z_50 * se,
+      ci_high_50 = as.numeric(o$par) + z_50 * se,
       optim_ok = rep(isTRUE(o$convergence == 0L), n_par),
       stringsAsFactors = FALSE
     )
@@ -533,7 +542,9 @@ ml_cells_table <- function(rows) {
 #' @param ci_level The interval level. The interval is the Laplace
 #'   approximation's on the Stan route (`ci_method = "laplace"`) and a
 #'   Wald interval from the optimiser's Hessian on the other
-#'   (`ci_method = "wald"`).
+#'   (`ci_method = "wald"`). Both routes also return the central 50 %
+#'   interval of the same kind in `ci_low_50` and `ci_high_50`, whatever
+#'   `ci_level` is.
 #' @param draws How many draws to take from the Laplace approximation.
 #'   `method = "stan"` only.
 #' @param max_abs_link The largest `abs(estimate)` on the link scale that

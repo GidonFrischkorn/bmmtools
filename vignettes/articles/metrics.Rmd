@@ -14,9 +14,16 @@ This page defines every column `summary()` returns for a
 the value is `NA`. It describes the computation only.
 
 ```{r}
-s <- summary(recovery_mixture2p)
-s[1:4, 1:14]
-s[1:4, c(1:3, 15:23)]
+s <- tibble::as_tibble(summary(recovery_mixture2p))
+print(s[1:4, c(
+  "condition", "term", "level", "scale", "n", "n_replications",
+  "n_converged", "bias", "rmse", "coverage", "coverage_50", "ci_width",
+  "ci_width_50"
+)], width = Inf)
+print(s[1:4, c(
+  "condition", "term", "level", "r", "r_low", "r_high", "rank_r", "ccc",
+  "calibration_slope", "calibration_intercept"
+)], width = Inf)
 ```
 
 ## Which rows each row summarises
@@ -72,7 +79,18 @@ always reports the pairs a metric used.
 `ci_width`
 : The mean interval width, $\frac{1}{n}\sum_i (u_i - l_i)$.
 
-These four are `NA` only when no complete pair exists.
+`coverage_50`, `ci_width_50`
+: The same two for the central 50 % interval, the 25th to the 75th
+  percentile of the draws, stored beside the `ci_level` interval as
+  `ci_low_50` and `ci_high_50`. Its nominal coverage is 0.5 whatever
+  `ci_level` is. Where the 95 % interval checks the tails of the
+  posterior, this one checks its centre: a coverage of 0.95 with a
+  `coverage_50` far above 0.5 says the intervals are too wide in the
+  middle. `NA` when the estimates carry no inner bounds, as in a
+  hand-built estimates tibble.
+
+These are `NA` only when no complete pair exists, except for the inner
+columns as just described.
 
 ## Correlation metrics
 
@@ -124,6 +142,19 @@ These four are `NA` only when no complete pair exists.
   $s_{\hat\theta\theta} / s^2_{\hat\theta} = r / v$. See
   [Reading the concordance](#reading-the-concordance).
 
+`calibration_intercept`
+: The intercept of the same regression,
+  $a = \bar\theta - b\,\bar{\hat\theta}$ with $b$ the calibration
+  slope: the generating value the line predicts at an estimate of 0. It
+  is read on the scale of the row, so a summary on the link scale and
+  one on the natural scale give different intercepts for the same fits.
+  It is not calibration-in-the-large, $\bar\theta - \bar{\hat\theta}$,
+  which fixes the slope at 1 and equals $-$`bias`. The two are related
+  by $a = (\bar\theta - \bar{\hat\theta}) - (b - 1)\,\bar{\hat\theta}$,
+  so when the slope is far from 1 and 0 lies far from the estimates, the
+  intercept mostly restates the slope. Read the two together, as one
+  line.
+
 `truth_sd`
 : The standard deviation of the generating values, $s_\theta$
   (population moments).
@@ -169,8 +200,9 @@ replication its coverage was .936 with 5 replications and .928 with 20
 
 `ccc_scale_shift` and `calibration_slope` are ratios and are combined
 as geometric means, so that $v$ and $1/v$ count as equal departures
-from 1. `ccc_accuracy` and `ccc_location_shift` are plain means, and
-`truth_sd` is the square root of the mean variance. At subject level
+from 1. `ccc_accuracy`, `ccc_location_shift` and
+`calibration_intercept` are plain means (an intercept can be 0 or
+negative), and `truth_sd` is the square root of the mean variance. At subject level
 $\rho_c = r \cdot C_b$ therefore holds only approximately.
 
 ## Reading the concordance
