@@ -38,7 +38,9 @@ subject.}
 \item{group}{The grouping factor. \code{NULL} uses the fit's only one.}
 
 \item{scale}{\code{"link"} or \code{"natural"}. On the natural scale each term is
-back-transformed with \code{\link[=inverse_link]{inverse_link()}} before correlating.}
+back-transformed with \code{\link[=inverse_link]{inverse_link()}} before correlating, except a
+term with a \code{softmax} link, which stays on the link scale (a message
+says so).}
 
 \item{links}{A named character vector mapping a term to a link name.
 \code{NULL} reads the link table of a \code{bmmfit}; without one, the natural

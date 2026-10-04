@@ -121,3 +121,55 @@ link_of <- function(term, links) {
     as.character(links[[prefixes[[which.max(nchar(prefixes))]]]])
   }, character(1), USE.NAMES = FALSE)
 }
+
+#' Links with no elementwise inverse
+#'
+#' `softmax` (D56): `mixture3p`'s `thetat` and `thetant` are log weights
+#' against a guessing weight fixed at 0, and a trial's probabilities are
+#' the softmax of the whole group, which at set size 1 drops the lure
+#' weight. No inverse of one term gives a natural value, so such a term
+#' reaches a generator, and is scored, on the link scale.
+#'
+#' @noRd
+joint_links <- function() {
+  "softmax"
+}
+
+#' A term's values on the natural scale, or left alone under a joint link
+#'
+#' The internal counterpart of [inverse_link()], which stays elementwise
+#' and keeps refusing a joint link by name.
+#'
+#' @noRd
+natural_value <- function(x, link) {
+  if (link %in% joint_links()) {
+    return(as.double(x))
+  }
+  inverse_link(x, link)
+}
+
+#' The terms whose link is joint, so that stay on the link scale
+#'
+#' @param terms A character vector of terms, task or component terms
+#'   included (see [link_of()]).
+#' @noRd
+joint_link_terms <- function(terms, links) {
+  terms <- unique(as.character(terms))
+  if (length(terms) == 0L || is.null(links)) {
+    return(character())
+  }
+  terms[link_of(terms, links) %in% joint_links()]
+}
+
+#' Say which terms a natural-scale request leaves on the link scale
+#' @noRd
+inform_joint_link_terms <- function(terms) {
+  if (length(terms) == 0L) {
+    return(invisible(NULL))
+  }
+  cli::cli_inform(c(
+    "{.val {terms}} {?has/have} a {.val softmax} link, with no inverse \\
+     for one term alone, so {?it is/they are} scored on the link scale.",
+    i = "Their {.field scale} column reads {.val link}, where there is one."
+  ))
+}

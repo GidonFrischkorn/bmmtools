@@ -1246,3 +1246,53 @@ test_that("one replication at subject level has recovery_ccc's intercept", {
     tolerance = 1e-10
   )
 })
+
+# a softmax link (D56) --------------------------------------------------
+
+test_that("a softmax term is scored on the link scale, with a message", {
+  # mixture3p's thetat and thetant: no elementwise inverse exists, so
+  # their rows stay on the link scale and say so, as sd rows do
+  estimates <- fake_estimates(
+    c("kappa", "thetat", "thetant"),
+    estimate = c(2, 1, -0.5), ci_low = c(1, 0, -1), ci_high = c(3, 2, 0)
+  )
+  truth <- fake_truth(c("kappa", "thetat", "thetant"), c(2, 1.5, -0.5))
+  links <- c(
+    mu1 = "tan_half", kappa = "log", thetat = "softmax",
+    thetant = "softmax"
+  )
+  expect_message(
+    out <- recover(estimates, truth, scale = "natural", links = links),
+    "thetat.*thetant.*link scale"
+  )
+  weights <- out[out$term %in% c("thetat", "thetant"), ]
+  expect_equal(weights$estimate, c(1, -0.5))
+  expect_equal(weights$ci_low, c(0, -1))
+  expect_equal(weights$true_value, c(1.5, -0.5))
+  expect_equal(weights$bias, c(-0.5, 0))
+  expect_identical(weights$scale, c("link", "link"))
+  kappa <- out[out$term == "kappa", ]
+  expect_equal(kappa$estimate, exp(2))
+  expect_identical(kappa$scale, "natural")
+})
+
+test_that("softmax terms at the subject level and on the link scale", {
+  estimates <- fake_estimates(
+    c("thetat", "thetat"),
+    estimate = c(1, 2),
+    level = "subject", id = c("1", "2")
+  )
+  truth <- fake_truth(c("thetat", "thetat"), c(1, 2), id = c("1", "2"))
+  # the softmax message is tested above
+  out <- suppressMessages(recover_subjects(
+    estimates, truth,
+    scale = "natural", links = c(thetat = "softmax")
+  ))
+  expect_identical(out$scale, c("link", "link"))
+  expect_equal(out$estimate, c(1, 2))
+  # asked for the link scale, nothing to say
+  expect_silent(recover_subjects(
+    estimates, truth,
+    scale = "link", links = c(thetat = "softmax")
+  ))
+})

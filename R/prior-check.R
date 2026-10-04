@@ -125,7 +125,7 @@ response_range <- function(model, data, call = rlang::caller_env()) {
       "No response range is known for a model of class {.cls {class(model)}}."
     ))
   }
-  if (key %in% c("mixture2p", "sdm")) {
+  if (key %in% c("mixture2p", "sdm", "mixture3p", "imm")) {
     return(list(floor = -pi, ceiling = pi))
   }
   # sdt_yn and sdt_mafc: a count out of the trials in that row

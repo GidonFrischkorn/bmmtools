@@ -218,7 +218,7 @@ natural_pars <- function(link_values, model) {
     all_values[[p]] <- info$fixed_values[[p]]
   }
   lapply(stats::setNames(names(all_values), names(all_values)), function(p) {
-    inverse_link(all_values[[p]], info$links[[p]] %||% "identity")
+    natural_value(all_values[[p]], info$links[[p]] %||% "identity")
   })
 }
 
@@ -824,7 +824,8 @@ truth_tables <- function(pars, sds, values, cors = NULL, covariates = NULL) {
 #' that [recover()] and [recover_subjects()] can score a fit of that
 #' data. Subject values are drawn on the link scale around the
 #' population values, converted to the natural scale through
-#' [inverse_link()], and handed to the model's own `r<model>()` generator,
+#' [inverse_link()] (a `softmax` term excepted, see the details), and
+#' handed to the model's own `r<model>()` generator,
 #' or to the function you pass as `generator`, which always takes
 #' precedence over the built-in one.
 #'
@@ -901,7 +902,9 @@ truth_tables <- function(pars, sds, values, cors = NULL, covariates = NULL) {
 #' @param generator A function `(pars, n_trials, model)` returning one
 #'   subject's rows as a data frame with the model's column names;
 #'   `pars` is a named list on the natural scale, fixed parameters
-#'   included. With a `trial_design` it is called as `(pars, n_trials,
+#'   included, except a parameter whose link is `softmax`, which arrives
+#'   on the link scale (see the details). With a `trial_design` it is
+#'   called as `(pars, n_trials,
 #'   model, trial_design)` and must have that fourth argument or `...`.
 #'   `NULL` uses the adapter bmmtools ships for the model.
 #' @param seed A seed applied with `withr::with_seed()` around the draws
@@ -923,8 +926,10 @@ truth_tables <- function(pars, sds, values, cors = NULL, covariates = NULL) {
 #'
 #' @details
 #' Adapters exist for `sdt_yn`, `sdt_mafc`, `ezdm` (three parameters),
-#' `ddm`, `cswald` (both versions), `mixture2p` and `sdm`. Every other
-#' model takes a `generator`.
+#' `ddm`, `cswald` (both versions), `mixture2p`, `sdm`, `mixture3p` and
+#' `imm` (`full`, `bsc` and `abc`). Every other model takes a `generator`.
+#' The `mixture3p` and `imm` adapters need a `trial_design`; see the
+#' section "Trial design".
 #' The truth for the subjects and for the SDs lists only the parameters
 #' that vary, because a parameter that does not vary has nothing
 #' person-level to recover.
@@ -961,6 +966,24 @@ truth_tables <- function(pars, sds, values, cors = NULL, covariates = NULL) {
 #' columns only, and returning a design column is an error. A design
 #' column must differ from the model's response columns, the covariates
 #' and the task column.
+#'
+#' **`mixture3p` and `imm`.** Their adapters read, from the columns the
+#' model names: the set size, when `set_size` is a column name (a number
+#' is every trial's set size); the non-target locations `nt_features`,
+#' relative to the target, in radians; and for `imm` `full` and `bsc` the
+#' distances `nt_distances`. A trial of set size `k` has its lures in the
+#' first `k - 1` non-target columns, which must not be `NA`; columns
+#' beyond are ignored and are `NA` by bmm's convention. Each trial is one
+#' call of [bmm::rmixture3p()] or [bmm::rimm()], with the weights bmm's
+#' likelihood gives that trial.
+#'
+#' **The `softmax` link.** `mixture3p`'s `thetat` and `thetant` are log
+#' weights against a guessing weight of 0: on a trial with lures,
+#' `(p_mem, p_nt, p_guess)` is the softmax of `(thetat, thetant, 0)`, the
+#' lures sharing `p_nt` equally, and on a set-size-1 trial there is no
+#' lure weight. Since no inverse of one term gives its natural value, a
+#' parameter whose link is `softmax` reaches the generator on the link
+#' scale, and [recover()] scores it there (its `scale` column says so).
 #'
 #' Without `trial_design` nothing changes: the generator is called with
 #' three arguments, as in bmmtools 0.2.0, and a seeded simulation gives
@@ -1015,6 +1038,21 @@ truth_tables <- function(pars, sds, values, cors = NULL, covariates = NULL) {
 #'     data.frame(cond = sample(c("a", "b"), n_trials, replace = TRUE))
 #'   },
 #'   generator = shifted, seed = 1
+#' )
+#'
+#' # mixture3p: set size 2 to 4, non-target locations drawn per trial
+#' lures <- function(n_trials) {
+#'   ss <- sample(2:4, n_trials, replace = TRUE)
+#'   nt <- matrix(runif(3 * n_trials, -pi, pi), n_trials)
+#'   nt[col(nt) >= ss] <- NA
+#'   data.frame(ss = ss, nt1 = nt[, 1], nt2 = nt[, 2], nt3 = nt[, 3])
+#' }
+#' sim <- simulate_recovery(
+#'   bmm::mixture3p(
+#'     resp_error = "y", nt_features = paste0("nt", 1:3), set_size = "ss"
+#'   ),
+#'   pars = c(kappa = log(8), thetat = 1.5, thetant = 0),
+#'   n_subjects = 10, n_trials = 60, trial_design = lures, seed = 1
 #' )
 #' }
 #'

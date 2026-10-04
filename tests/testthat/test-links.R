@@ -239,3 +239,34 @@ test_that("link_of finds a term's link by name, then by prefix", {
     c("log", "softplus", "identity")
   )
 })
+
+# a joint link (D56) ----------------------------------------------------
+
+test_that("natural_value leaves a softmax term on the link scale", {
+  expect_identical(natural_value(c(-1, 0.5), "softmax"), c(-1, 0.5))
+  expect_equal(natural_value(c(0, 1), "log"), exp(c(0, 1)))
+  expect_identical(
+    joint_link_terms(
+      c("thetat", "thetant_task1", "kappa"),
+      c(thetat = "softmax", thetant = "softmax", kappa = "log")
+    ),
+    c("thetat", "thetant_task1")
+  )
+  expect_identical(joint_link_terms("kappa", NULL), character())
+})
+
+test_that("the subject table keeps a softmax term on the link scale", {
+  long <- tibble::tibble(
+    condition = "1", replication = 1L, id = c("1", "1"),
+    term = c("kappa", "thetat"), covariate = FALSE,
+    mean = c(1, 0.5), true_value = c(1, 0.7)
+  )
+  resolved <- list(
+    links = c(kappa = "log", thetat = "softmax"), scale = "natural"
+  )
+  # the softmax message is tested in test-score-recovery.R
+  out <- suppressMessages(subject_table_wide(long, "mean", resolved))
+  expect_equal(out$est_thetat, 0.5)
+  expect_equal(out$true_thetat, 0.7)
+  expect_equal(out$est_kappa, exp(1))
+})

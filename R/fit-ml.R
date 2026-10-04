@@ -264,7 +264,7 @@ ml_objective <- function(model, nll = NULL, call = rlang::caller_env()) {
       c(
         "{.fn fit_ml} has no density for {.cls {class(model)[1]}} with \\
          {.code method = \"optim\"}.",
-        i = "It carries one for {.val {adapter_classes()}}.",
+        i = "It carries one for {.val {density_classes()}}.",
         i = "The {.code \"stan\"} method needs no density: it optimises \\
              bmm's own generated likelihood and works for any bmm model.",
         i = "Otherwise supply {.arg nll}."

@@ -16,6 +16,17 @@
   called as before, and a seeded simulation gives the same data and the
   same cache key. `sbc()` takes the design from its `data` for a model
   whose built-in generator reads one (#15).
+* `simulate_recovery()` has built-in generators for `mixture3p` and for
+  `imm` in all three versions (`full`, `bsc`, `abc`). Both read the set
+  size, the non-target locations and, for `imm`, the distances per trial
+  from `trial_design`, and draw each trial with the weights bmm's
+  likelihood gives it. `prior_check()` knows their response range.
+  `mixture3p`'s `thetat` and `thetant` have bmm's `softmax` link, which
+  has no inverse for one term: they reach a generator on the link scale,
+  and `recover()`, `recover_subjects()`, `cross_check()`,
+  `subject_table()` and the correlation scorers keep them there under
+  `scale = "natural"` with a message, where they used to stop with an
+  error (#15).
 * Every estimate now carries a central 50 % interval, `ci_low_50` and
   `ci_high_50`, beside the `ci_level` interval: the 25th and 75th
   percentiles of the draws, a Wald interval at `qnorm(0.75)` standard

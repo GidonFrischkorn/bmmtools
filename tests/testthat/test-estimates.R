@@ -303,7 +303,9 @@ test_that("terms that do not reduce to unique names are an error", {
 
 test_that("an intercept with other coefficients is a contrast design", {
   # what `coding = "contrast"` fits: the intercept is the parameter's
-  # population value and every other coefficient is an effect
+  # population value and every other coefficient is an effect. Seeded:
+  # some unseeded draws made posterior cap the ESS with a warning.
+  withr::local_seed(1)
   draws <- fake_draws(list(
     b_kappa_Intercept = seq_len(80) / 10,
     b_kappa_setsize2 = stats::rnorm(80)

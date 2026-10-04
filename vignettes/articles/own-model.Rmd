@@ -32,18 +32,23 @@ library(bmmtools)
 res <- readRDS(from_root("vignettes/articles/assets/own-model.rds"))
 ```
 
-bmmtools ships generator adapters for seven bmm models: `sdt_yn`,
+bmmtools ships generator adapters for nine bmm models: `sdt_yn`,
 `sdt_mafc`, the three-parameter `ezdm`, `ddm`, `cswald` (both the
-`simple` and the `crisk` version), `mixture2p` and `sdm`.
+`simple` and the `crisk` version), `mixture2p`, `sdm`, `mixture3p` and
+`imm` (all three versions).
 A model you are developing, for example one started with
 `bmm::use_model_template()`, has none, and `simulate_recovery()` stops
 with an error asking for `generator`. This article shows how to write
-one, what the rest of the loop needs from it, and how to score fits and
+one, including one that needs to know what was shown on each trial,
+what the rest of the loop needs from it, and how to score fits and
 estimates that did not come from the generate layer at all.
 
-The example is bmm's three-parameter mixture model, `mixture3p`, which
-has no adapter. The code was run once and its results saved, so this
-page was built without Stan.
+The example is bmm's three-parameter mixture model, `mixture3p`. It has
+a built-in adapter, so you would not write this generator for it; it is
+here because its responses depend on the non-target locations of each
+trial, which is the case a generator of your own most often has to
+handle. The code was run once and its results saved, so this page was
+built without Stan.
 
 ## What a generator is
 
@@ -58,6 +63,9 @@ subject and adds the `id` column itself.
   `simulate_recovery()` or in a grid row.
 - `model` is the model object, so the generator can read column names
   or other settings from it.
+- `trial_design`, a fourth argument, holds that subject's rows of the
+  per-trial design when `simulate_recovery()` is given one (below).
+  A generator for a model that needs no per-trial input leaves it out.
 
 `simulate_recovery()` takes `pars` on the link scale, draws subject
 values there and converts them with `inverse_link()` using the model's
@@ -70,21 +78,40 @@ link table before calling the generator. Check that table first:
 res$links
 ```
 
-`kappa` arrives in the generator as a precision, but `thetat` and
-`thetant` have an identity link: in `mixture3p` they are softmax weights
-against a guessing weight fixed at 0. The generator has to turn them
-into probabilities itself.
+`kappa` arrives in the generator as a precision. `thetat` and `thetant`
+have bmm's `softmax` link: they are log weights against a guessing
+weight fixed at 0, and a trial's probabilities are the softmax of all
+three, so no inverse of one of them alone gives its natural value.
+`simulate_recovery()` therefore passes them to the generator **on the
+link scale**, and the generator turns them into probabilities itself.
+
+## The trial design
+
+Each response depends on where the non-targets were on that trial, and
+the fit needs those locations as data columns. They are the trial
+design: what was shown, as opposed to what the subject did. Give it to
+`simulate_recovery()` as `trial_design`, and it reaches both the
+generator and the data:
+
+```{r design, eval = FALSE, code = shown("design", "vignettes/articles/precompute/own-model.R")}
+```
+
+`trial_design` takes a data frame of `n_trials` rows (one trial list
+for every subject), a data frame with an `id` column (one list per
+subject), or, as here, a function of `n_trials`, called once per
+subject under the seed so that every subject sees new locations.
 
 ## Writing the generator
 
 ```{r generator, eval = FALSE, code = shown("generator", "vignettes/articles/precompute/own-model.R")}
 ```
 
-The non-target locations are drawn inside the generator, so they are
-part of the simulated data. `simulate_recovery()` applies its `seed`
-around the generator too, so these draws are reproducible with the
-rest. The generator's output is checked against the model's response
-columns before anything is fitted.
+The generator reads its subject's trials from `trial_design` and
+returns the response column only. `simulate_recovery()` binds the
+design columns into the data itself, so the fit sees exactly the
+trials the responses were drawn from; a generator that returned `nt1`
+as well would be stopped with an error. Its output is checked against
+the model's response columns before anything is fitted.
 
 ## Simulate, fit and score
 
@@ -125,10 +152,19 @@ recovery_grid(
   grid = expand.grid(n_subjects = c(30, 60), n_trials = c(50, 100)),
   pars = c(kappa = log(8), thetat = 1.5, thetant = 0),
   sds = c(kappa = 0.3, thetat = 0.5),
-  generator = generate_mixture3p,
+  trial_design = lures,
+  generator = my_mixture3p,
   dir = "fits/mixture3p", reps = 10, seed = 1
 )
 ```
+
+With the built-in adapter, the same grid needs no `generator`, and the
+design names the set size too when it varies; see the section "Trial
+design" of `?simulate_recovery`.
+
+`thetat` and `thetant` stay on the link scale when they are scored:
+`recover()` says so in a message, and their `scale` column reads
+`"link"`.
 
 ## Scoring estimates you already have
 
@@ -202,6 +238,7 @@ warning that lists the available terms.
 - `prior_check()` derives the floor and ceiling of the response only
   for the models with an adapter; for your model, pass `range` or a
   `summary` function of your own.
+- A parameter with a `softmax` link is scored on the link scale only.
 
 ## Contributing an adapter
 
@@ -210,6 +247,7 @@ an adapter in bmmtools saves every user from writing it. Adapters live
 in `R/adapters.R`: a function per model that maps one subject's
 natural-scale parameters onto the model's `r*()` function and names the
 output columns from the model object, plus an entry in the table that
-looks them up by class. A response range for `prior_check()` goes in
+looks them up by class, and, when it reads a trial design, the columns
+it reads in `trial_design_columns()`. A response range for `prior_check()` goes in
 `response_range()` in `R/prior-check.R`. Open an issue or a pull request
 on [GitHub](https://github.com/GidonFrischkorn/bmmtools).

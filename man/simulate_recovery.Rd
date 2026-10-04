@@ -110,7 +110,9 @@ column. See the section "Trial design".}
 \item{generator}{A function \verb{(pars, n_trials, model)} returning one
 subject's rows as a data frame with the model's column names;
 \code{pars} is a named list on the natural scale, fixed parameters
-included. With a \code{trial_design} it is called as \verb{(pars, n_trials, model, trial_design)} and must have that fourth argument or \code{...}.
+included, except a parameter whose link is \code{softmax}, which arrives
+on the link scale (see the details). With a \code{trial_design} it is
+called as \verb{(pars, n_trials, model, trial_design)} and must have that fourth argument or \code{...}.
 \code{NULL} uses the adapter bmmtools ships for the model.}
 
 \item{seed}{A seed applied with \code{withr::with_seed()} around the draws
@@ -137,14 +139,17 @@ the link scale become a data set and the truth that produced it, so
 that \code{\link[=recover]{recover()}} and \code{\link[=recover_subjects]{recover_subjects()}} can score a fit of that
 data. Subject values are drawn on the link scale around the
 population values, converted to the natural scale through
-\code{\link[=inverse_link]{inverse_link()}}, and handed to the model's own \verb{r<model>()} generator,
+\code{\link[=inverse_link]{inverse_link()}} (a \code{softmax} term excepted, see the details), and
+handed to the model's own \verb{r<model>()} generator,
 or to the function you pass as \code{generator}, which always takes
 precedence over the built-in one.
 }
 \details{
 Adapters exist for \code{sdt_yn}, \code{sdt_mafc}, \code{ezdm} (three parameters),
-\code{ddm}, \code{cswald} (both versions), \code{mixture2p} and \code{sdm}. Every other
-model takes a \code{generator}.
+\code{ddm}, \code{cswald} (both versions), \code{mixture2p}, \code{sdm}, \code{mixture3p} and
+\code{imm} (\code{full}, \code{bsc} and \code{abc}). Every other model takes a \code{generator}.
+The \code{mixture3p} and \code{imm} adapters need a \code{trial_design}; see the
+section "Trial design".
 The truth for the subjects and for the SDs lists only the parameters
 that vary, because a parameter that does not vary has nothing
 person-level to recover.
@@ -182,6 +187,24 @@ trials the responses were drawn from; a generator returns the response
 columns only, and returning a design column is an error. A design
 column must differ from the model's response columns, the covariates
 and the task column.
+
+\strong{\code{mixture3p} and \code{imm}.} Their adapters read, from the columns the
+model names: the set size, when \code{set_size} is a column name (a number
+is every trial's set size); the non-target locations \code{nt_features},
+relative to the target, in radians; and for \code{imm} \code{full} and \code{bsc} the
+distances \code{nt_distances}. A trial of set size \code{k} has its lures in the
+first \code{k - 1} non-target columns, which must not be \code{NA}; columns
+beyond are ignored and are \code{NA} by bmm's convention. Each trial is one
+call of \code{\link[bmm:rmixture3p]{bmm::rmixture3p()}} or \code{\link[bmm:rimm]{bmm::rimm()}}, with the weights bmm's
+likelihood gives that trial.
+
+\strong{The \code{softmax} link.} \code{mixture3p}'s \code{thetat} and \code{thetant} are log
+weights against a guessing weight of 0: on a trial with lures,
+\verb{(p_mem, p_nt, p_guess)} is the softmax of \verb{(thetat, thetant, 0)}, the
+lures sharing \code{p_nt} equally, and on a set-size-1 trial there is no
+lure weight. Since no inverse of one term gives its natural value, a
+parameter whose link is \code{softmax} reaches the generator on the link
+scale, and \code{\link[=recover]{recover()}} scores it there (its \code{scale} column says so).
 
 Without \code{trial_design} nothing changes: the generator is called with
 three arguments, as in bmmtools 0.2.0, and a seeded simulation gives
@@ -237,6 +260,21 @@ sim <- simulate_recovery(
     data.frame(cond = sample(c("a", "b"), n_trials, replace = TRUE))
   },
   generator = shifted, seed = 1
+)
+
+# mixture3p: set size 2 to 4, non-target locations drawn per trial
+lures <- function(n_trials) {
+  ss <- sample(2:4, n_trials, replace = TRUE)
+  nt <- matrix(runif(3 * n_trials, -pi, pi), n_trials)
+  nt[col(nt) >= ss] <- NA
+  data.frame(ss = ss, nt1 = nt[, 1], nt2 = nt[, 2], nt3 = nt[, 3])
+}
+sim <- simulate_recovery(
+  bmm::mixture3p(
+    resp_error = "y", nt_features = paste0("nt", 1:3), set_size = "ss"
+  ),
+  pars = c(kappa = log(8), thetat = 1.5, thetant = 0),
+  n_subjects = 10, n_trials = 60, trial_design = lures, seed = 1
 )
 }
 

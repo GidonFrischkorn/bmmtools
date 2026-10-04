@@ -560,7 +560,7 @@ test_that("recovery_formula gives every free parameter a random intercept", {
 
 # the adapter table -----------------------------------------------------
 
-test_that("generator_for knows seven models and nothing else", {
+test_that("generator_for knows the seven 0.2.0 models", {
   skip_if_not_installed("bmm")
   skip_if_no_bmm_model("sdt_yn")
   skip_if_no_bmm_model("sdt_mafc")

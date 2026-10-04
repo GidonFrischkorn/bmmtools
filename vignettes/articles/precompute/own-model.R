@@ -18,21 +18,27 @@ model <- bmm::mixture3p(
 )
 model$links
 
-## ---- generator
-generate_mixture3p <- function(pars, n_trials, model) {
-  # non-target locations relative to the target, one pair per trial
+## ---- design
+# non-target locations relative to the target, one pair per trial
+lures <- function(n_trials) {
   nt <- matrix(stats::runif(2 * n_trials, -pi, pi), ncol = 2)
-  # thetat and thetant are softmax weights against guessing, fixed at 0
+  data.frame(nt1 = nt[, 1], nt2 = nt[, 2])
+}
+
+## ---- generator
+my_mixture3p <- function(pars, n_trials, model, trial_design) {
+  # thetat and thetant arrive on the link scale: log weights against a
+  # guessing weight fixed at 0
   weights <- exp(c(pars$thetat, pars$thetant, 0))
   weights <- weights / sum(weights)
   y <- vapply(seq_len(n_trials), function(i) {
     bmm::rmixture3p(
       1,
-      mu = c(pars$mu1, nt[i, ]), kappa = pars$kappa,
-      p_mem = weights[[1]], p_nt = weights[[2]]
+      mu = c(pars$mu1, trial_design$nt1[[i]], trial_design$nt2[[i]]),
+      kappa = pars$kappa, p_mem = weights[[1]], p_nt = weights[[2]]
     )
   }, numeric(1))
-  data.frame(y = y, nt1 = nt[, 1], nt2 = nt[, 2])
+  data.frame(y = y)
 }
 
 ## ---- simulate
@@ -41,7 +47,8 @@ sim <- simulate_recovery(
   pars = c(kappa = log(8), thetat = 1.5, thetant = 0),
   sds = c(kappa = 0.3, thetat = 0.5),
   n_subjects = 30, n_trials = 100,
-  generator = generate_mixture3p,
+  trial_design = lures,
+  generator = my_mixture3p,
   seed = 1
 )
 sim$data
@@ -61,6 +68,11 @@ summary(recover_subjects(fit, sim$truth$subjects))
 
 ## ---- save
 results <- list(
+  bmm = list(
+    version = as.character(utils::packageVersion("bmm")),
+    built = utils::packageDescription("bmm")$Built,
+    cmdstan = cmdstanr::cmdstan_version()
+  ),
   links = model$links,
   data = sim$data,
   truth = sim$truth,

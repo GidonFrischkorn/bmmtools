@@ -191,7 +191,9 @@ check_subject_draws <- function(x, call = rlang::caller_env()) {
 #'   subject.
 #' @param group The grouping factor. `NULL` uses the fit's only one.
 #' @param scale `"link"` or `"natural"`. On the natural scale each term is
-#'   back-transformed with [inverse_link()] before correlating.
+#'   back-transformed with [inverse_link()] before correlating, except a
+#'   term with a `softmax` link, which stays on the link scale (a message
+#'   says so).
 #' @param links A named character vector mapping a term to a link name.
 #'   `NULL` reads the link table of a `bmmfit`; without one, the natural
 #'   scale falls back to the link scale with a message.
@@ -678,6 +680,11 @@ correlations_from_parts <- function(subject_draws = NULL,
   }
   cov <- check_cor_covariates(covariates, group, ids, terms, call = call)
   pair_table <- resolve_pairs(pairs, c(terms, colnames(cov)), call = call)
+  if (identical(scale, "natural") && !is.null(subject_draws)) {
+    inform_joint_link_terms(joint_link_terms(
+      setdiff(c(pair_table$var1, pair_table$var2), colnames(cov)), links
+    ))
+  }
   n <- if (is.null(subject_draws)) {
     as.integer(n_subjects %||% NA_integer_)
   } else {
@@ -969,7 +976,7 @@ term_draw_matrix <- function(subject_draws, cov, term, scale, links) {
   }
   values <- matrix(subject_draws[, , , term], nrow = n_draws, ncol = d[[3L]])
   if (identical(scale, "natural")) {
-    values[] <- inverse_link(as.vector(values), link_of(term, links))
+    values[] <- natural_value(as.vector(values), link_of(term, links))
   }
   values
 }
@@ -1046,7 +1053,7 @@ point_estimator_rows <- function(subject_draws, cov, pair_table, scale,
   means <- colMeans(subject_draws, dims = 2L)
   if (identical(scale, "natural")) {
     for (term in colnames(means)) {
-      means[, term] <- inverse_link(means[, term], link_of(term, links))
+      means[, term] <- natural_value(means[, term], link_of(term, links))
     }
   }
   values <- cbind(means, cov)
@@ -1138,7 +1145,8 @@ point_estimator_rows <- function(subject_draws, cov, pair_table, scale,
 #' `excludes_zero` is `ci_high < 0 | ci_low > 0`.
 #'
 #' **On the natural scale** `sample_value` is recomputed from the subject
-#' values after [inverse_link()], covariates untransformed. A generating
+#' values after [inverse_link()], covariates and `softmax` terms
+#' untransformed. A generating
 #' correlation on the link scale has no natural-scale counterpart that
 #' one transform gives, so `true_value` is `0` where the link-scale value
 #' is 0 (independence survives a monotone transform) and `NA` otherwise.
@@ -1725,7 +1733,7 @@ sample_correlations <- function(cor, subjects, covariates, scale, links) {
       at <- sub[sub$term == term, ]
       values <- as.double(at$true_value[match(ids, at$id)])
       if (identical(scale, "natural")) {
-        values <- inverse_link(values, link_of(term, links))
+        values <- natural_value(values, link_of(term, links))
       }
       values
     }

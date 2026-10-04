@@ -245,9 +245,12 @@ subject_table_wide <- function(long, point, resolved) {
     for (term in unique(long$term[!long$covariate])) {
       at <- long$term == term & !long$covariate
       link <- link_of(term, resolved$links)
-      estimate[at] <- inverse_link(estimate[at], link)
-      true_value[at] <- inverse_link(true_value[at], link)
+      estimate[at] <- natural_value(estimate[at], link)
+      true_value[at] <- natural_value(true_value[at], link)
     }
+    inform_joint_link_terms(joint_link_terms(
+      long$term[!long$covariate], resolved$links
+    ))
   }
 
   key <- paste(long$condition, long$replication, long$id, sep = "\r")

@@ -1245,3 +1245,27 @@ test_that("a cor table without inner bounds scores NA, not 0", {
   expect_true(all(is.na(out$covered_50)))
   expect_true(is.na(summary(out)$coverage_50))
 })
+
+test_that("a softmax term is correlated on the link scale, with a message", {
+  # D56: no elementwise inverse, so its values stay on the link scale
+  x <- fake_subject_draws()
+  links <- c(kappa = "log", thetat = "softmax")
+  expect_message(
+    natural <- correlations_from_parts(
+      x,
+      estimator = "point", scale = "natural", links = links
+    ),
+    "thetat"
+  )
+  linked <- correlations_from_parts(
+    x,
+    estimator = "point", scale = "natural",
+    links = c(kappa = "log", thetat = "identity")
+  )
+  expect_equal(natural$estimate, linked$estimate)
+  # nothing to say when no pair involves one
+  expect_silent(correlations_from_parts(
+    x,
+    estimator = "point", scale = "natural", links = c(kappa = "log")
+  ))
+})
