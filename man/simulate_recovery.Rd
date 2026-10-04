@@ -17,6 +17,7 @@ simulate_recovery(
   coding = c("cell", "contrast"),
   contrasts = NULL,
   subject_pars = NULL,
+  trial_design = NULL,
   generator = NULL,
   seed = NULL
 )
@@ -88,10 +89,29 @@ scale) of subject values to use instead of drawing them, so that
 replications can share the same simulated people. With \code{covariates}
 it must give their values too.}
 
+\item{trial_design}{\code{NULL}, or the per-trial variables of the design
+(set sizes, non-target locations, option counts): what a generator
+needs per trial and the model reads from the data but does not hold.
+One of
+\itemize{
+\item a data frame of \code{n_trials} rows, one trial list used for every
+subject (and every task);
+\item a data frame with an \code{id} column holding the subjects \code{1} to
+\code{n_subjects}, \code{n_trials} rows each, one trial list per subject;
+\item a function \code{(n_trials)} returning a data frame of \code{n_trials} rows,
+called once per subject and task under \code{seed}, for designs drawn at
+random, such as non-target locations.
+}
+
+Each generator call receives its rows as \code{trial_design}, and the same
+rows are bound into \code{data} after \code{id}, the covariates and the task
+column. See the section "Trial design".}
+
 \item{generator}{A function \verb{(pars, n_trials, model)} returning one
 subject's rows as a data frame with the model's column names;
 \code{pars} is a named list on the natural scale, fixed parameters
-included. \code{NULL} uses the adapter bmmtools ships for the model.}
+included. With a \code{trial_design} it is called as \verb{(pars, n_trials, model, trial_design)} and must have that fourth argument or \code{...}.
+\code{NULL} uses the adapter bmmtools ships for the model.}
 
 \item{seed}{A seed applied with \code{withr::with_seed()} around the draws
 and the generator; \code{NULL} leaves the random number generator alone.}
@@ -107,7 +127,9 @@ list of tibbles on the link scale: \code{population} with \code{term} and
 \code{pars}, \code{sds}, \code{cors} (the full matrix over varying parameters then
 covariates, \code{NULL} with fewer than two) and \code{covariates},
 \code{n_subjects}, \code{n_trials}, \code{seed} (\code{NA} when none), \code{model},
-\code{generator}, \code{tasks} and \code{task_col} (both \code{NULL} without tasks).
+\code{generator}, \code{tasks} and \code{task_col} (both \code{NULL} without tasks),
+\code{trial_design} (\code{NULL}, the data frame, or a function's text) and
+\code{trial_design_columns} (the columns it contributed to \code{data}).
 }
 \description{
 The generate half of the engine: a model plus population values on
@@ -149,6 +171,29 @@ same in every task. Adding tasks changes the random numbers drawn
 compared with a simulation without them; \code{tasks = NULL} gives exactly
 the simulation of earlier versions.
 }
+\section{Trial design}{
+
+A generator learns one subject's parameters and a number of trials. A
+model whose responses depend on what was shown on each trial ---
+\code{mixture3p} and \code{imm} need a set size and non-target locations --- gets
+those through \code{trial_design}. The engine hands each generator call its
+rows and binds the same rows into \code{data}, so the fit sees exactly the
+trials the responses were drawn from; a generator returns the response
+columns only, and returning a design column is an error. A design
+column must differ from the model's response columns, the covariates
+and the task column.
+
+Without \code{trial_design} nothing changes: the generator is called with
+three arguments, as in bmmtools 0.2.0, and a seeded simulation gives
+the same data, and so the same \code{\link[=fit_cached]{fit_cached()}} key. A data frame draws
+no random numbers; a function draws its own, interleaved with the
+generator's, once per subject and task. What a function returns can
+only be checked once it has been called, so an error in it (wrong row
+count, a missing column) stops the simulation after some random numbers
+have been drawn; under \code{seed} that changes nothing, and without one the
+random number stream has moved.
+}
+
 \examples{
 \dontrun{
 sim <- simulate_recovery(
@@ -175,6 +220,23 @@ two_tasks <- simulate_recovery(
 formula <- recovery_formula(
   two_tasks$model,
   re_cor = "within", task_col = "task"
+)
+
+# a per-trial design: a condition the generator reads on every trial
+shifted <- function(pars, n_trials, model, trial_design) {
+  mu <- ifelse(trial_design$cond == "a", 0, 0.5)
+  data.frame(y = vapply(mu, function(m) {
+    bmm::rmixture2p(1, mu = m, kappa = pars$kappa, p_mem = pars$thetat)
+  }, numeric(1)))
+}
+sim <- simulate_recovery(
+  bmm::mixture2p(resp_error = "y"),
+  pars = c(kappa = log(8), thetat = qlogis(0.75)),
+  n_subjects = 10, n_trials = 40,
+  trial_design = function(n_trials) {
+    data.frame(cond = sample(c("a", "b"), n_trials, replace = TRUE))
+  },
+  generator = shifted, seed = 1
 )
 }
 

@@ -11,6 +11,7 @@ recovery_component(
   sds = NULL,
   tasks = NULL,
   task_col = "task",
+  trial_design = NULL,
   generator = NULL,
   formula = NULL,
   name
@@ -19,7 +20,7 @@ recovery_component(
 \arguments{
 \item{model}{A \code{bmmodel}, built with the column names the fit will use.}
 
-\item{pars, n_trials, sds, tasks, task_col, generator}{As in
+\item{pars, n_trials, sds, tasks, task_col, trial_design, generator}{As in
 \code{\link[=simulate_recovery]{simulate_recovery()}}, for this component. \code{pars} and \code{sds} may be
 functions with no arguments, evaluated by \code{\link[=simulate_components]{simulate_components()}} under
 its seed.}
@@ -44,7 +45,8 @@ correlated across subjects, and \code{\link[=fit_components]{fit_components()}} 
 }
 \details{
 What can be checked without drawing is checked here: the model, the
-number of trials, the tasks, that a generator exists, the formula, and
+number of trials, the tasks, that a generator exists and takes the
+trial design, the trial design against \code{n_trials}, the formula, and
 numeric \code{pars} and \code{sds} against the model. Correlations and covariates
 belong to the set and are given to \code{\link[=simulate_components]{simulate_components()}}.
 }

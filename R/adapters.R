@@ -81,6 +81,24 @@ generator_for <- function(model) {
   )
 }
 
+#' The columns an adapter reads from a trial design
+#'
+#' The design-side half of the adapter table (D55): the per-trial columns
+#' an adapter takes from `trial_design` rather than drawing or writing
+#' itself, named from the model object. Empty for every adapter that
+#' reads none, which is all seven of the 0.2.0 table: those refuse a
+#' design, because a column nobody generated from would sit in the data
+#' as if it mattered. [sbc()]'s default generator takes exactly these
+#' columns from its `data`, so a column the adapter writes itself
+#' (`sdt_yn`'s `stimulus`) is never handed back to it.
+#'
+#' @param model A `bmmodel`.
+#' @return A character vector, empty when the adapter reads no design.
+#' @noRd
+trial_design_columns <- function(model) {
+  character()
+}
+
 #' Name generated columns after the model's own column names
 #' @noRd
 name_columns <- function(data, names) {

@@ -5,6 +5,17 @@
   README section, "Planning a study", shows how `recovery_grid()` and
   `summary()` already answer how many subjects and trials a design needs
   (#14).
+* `simulate_recovery()`, `recovery_grid()` and `recovery_component()`
+  gain `trial_design`, the per-trial variables a generator needs and the
+  model does not hold, such as set sizes and non-target locations: a data
+  frame shared by every subject, a data frame with an `id` column giving
+  each subject its own trials, or a function of `n_trials` called once
+  per subject under the seed. Each generator call receives its rows as a
+  fourth argument, `trial_design`, and the same rows are bound into the
+  data. Without it nothing changes: a generator written for 0.2.0 is
+  called as before, and a seeded simulation gives the same data and the
+  same cache key. `sbc()` takes the design from its `data` for a model
+  whose built-in generator reads one (#15).
 * Every estimate now carries a central 50 % interval, `ci_low_50` and
   `ci_high_50`, beside the `ci_level` interval: the 25th and 75th
   percentiles of the draws, a Wald interval at `qnorm(0.75)` standard

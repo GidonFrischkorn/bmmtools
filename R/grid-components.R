@@ -621,6 +621,20 @@ recovery_grid_components <- function(model, first, grid, dir, reps, cors,
   comps <- names(rows[[1L]])
   check_component_model_cors(extraction$correlations, rows, call = call)
   check_component_columns(grid, rows, covariates, call = call)
+  # a component's trial design was checked against its own n_trials; an
+  # n_trials_<comp> column may change that per row, and the subjects are
+  # the grid's, so every row is checked again before any cell runs
+  for (r in seq_len(nrow(grid))) {
+    row <- grid[r, , drop = FALSE]
+    for (spec in lapply(rows[[r]], component_row_spec, row = row)) {
+      check_trial_design(
+        spec$trial_design, grid$n_subjects[[r]], spec$n_trials, spec$model,
+        names(covariates), spec$task_col,
+        where = paste0("Grid row ", r, ", component ", spec$name, ": "),
+        call = call
+      )
+    }
+  }
   prior <- check_component_prior(prior, comps, call = call)
   links <- component_links(rows[[1L]])
   request <- extraction_request(

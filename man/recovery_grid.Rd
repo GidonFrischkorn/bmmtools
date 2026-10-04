@@ -19,6 +19,7 @@ recovery_grid(
   contrasts = NULL,
   formula = NULL,
   prior = NULL,
+  trial_design = NULL,
   generator = NULL,
   seed = NULL,
   subjects = c("redraw", "fixed"),
@@ -85,6 +86,12 @@ formula depends on the row.}
 
 \item{prior}{Passed to \code{\link[=fit_cached]{fit_cached()}}; with components, \code{NULL} or a list
 with a prior per component.}
+
+\item{trial_design}{As in \code{\link[=simulate_recovery]{simulate_recovery()}}, the same for every
+cell. A data frame without \code{id} needs every row of the grid to have
+its number of rows as \code{n_trials}; a function of \code{n_trials} serves a
+grid whose \code{n_trials} varies. Checked against every row before any
+cell runs, and recorded in \verb{<dir>/grid.rds}.}
 
 \item{generator}{As in \code{\link[=simulate_recovery]{simulate_recovery()}}.}
 
@@ -253,13 +260,13 @@ With \code{model} a list of \code{\link[=recovery_component]{recovery_component(
 returning one, the same components by name in every row), each cell
 simulates one set with \code{\link[=simulate_components]{simulate_components()}} under the cell's seed
 and fits every component on its own through \code{\link[=fit_cached]{fit_cached()}}. \code{pars},
-\code{sds}, \code{generator}, \code{tasks}, \code{task_col}, \code{re_cor} and \code{formula} belong to
-the components and are errors here; \code{cors}, \code{covariates}, \code{seed},
-\code{reps}, \code{scale}, \code{levels}, \code{correlations}, \code{cor_scale}, \code{smoke},
-\code{preflight} and \code{...} keep their meaning, and \code{prior} is \code{NULL} or a
-list by component, as in \code{\link[=fit_components]{fit_components()}}. \code{subjects = "fixed"} is not
-supported for components yet. A component cannot be named \code{sim}, \code{est},
-\code{cor} or \code{sd}.
+\code{sds}, \code{generator}, \code{trial_design}, \code{tasks}, \code{task_col}, \code{re_cor} and
+\code{formula} belong to the components and are errors here; \code{cors},
+\code{covariates}, \code{seed}, \code{reps}, \code{scale}, \code{levels}, \code{correlations},
+\code{cor_scale}, \code{smoke}, \code{preflight} and \code{...} keep their meaning, and
+\code{prior} is \code{NULL} or a list by component, as in \code{\link[=fit_components]{fit_components()}}.
+\code{subjects = "fixed"} is not supported for components yet. A component
+cannot be named \code{sim}, \code{est}, \code{cor} or \code{sd}.
 
 Grid columns: \code{n_subjects}; \verb{n_trials_<comp>} for a component's number
 of trials (a plain \code{n_trials} column is an error); \verb{<comp>_<par>} or
