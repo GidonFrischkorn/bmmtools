@@ -51,11 +51,19 @@ change before 1.0.
 
 ## Who it is for
 
-bmmtools is written for people who develop cognitive measurement models
-or study how well they can be estimated: the author of a new bmm model,
-a methodologist running a parameter recovery study, a thesis that asks
-how many trials a model needs. If you fit bmm models to your own data,
-you do not need it; bmm’s own documentation covers that.
+bmmtools serves two groups.
+
+- **Model developers and methodologists**, who check that a model is
+  implemented correctly and how well its parameters can be estimated:
+  the author of a new bmm model, or a methodologist running a parameter
+  recovery study.
+- **Researchers planning a study**, who want to know how many subjects
+  and trials their design needs to estimate a parameter or an effect
+  with a given precision, before they collect any data.
+
+Both questions are answered the same way: simulate data from known
+values, fit the model with `bmm::bmm()`, and score the fit against the
+values that generated it.
 
 ## A recovery check in brief
 
@@ -110,6 +118,33 @@ resumed, and `prior_check()` shows what the priors imply for the data
 before any model is fitted to them. The articles on the [package
 website](https://www.gfrischkorn.org/bmmtools/) walk through each step.
 
+## Planning a study
+
+There is no dedicated design function yet, but `recovery_grid()` already
+answers how precise the estimates of a planned design will be. Give it a
+grid over `n_subjects` and `n_trials`, the parameter values and effects
+you expect, on the link scale, and a number of replications; with
+`coding = "contrast"` it also scores a condition effect. `summary()`
+then returns, per design cell, the width of the credible intervals
+(`ci_width`), the share of replications whose interval excludes zero
+(`detected`, which at a true effect is the power to detect it), and the
+correlation between each simulated person’s true and estimated values
+(`r`). [Running a recovery
+study](https://www.gfrischkorn.org/bmmtools/articles/recovery-grid.html#the-result)
+shows the subject-level `r` of `mixture2p` over 20 and 50 subjects
+crossed with 30 and 100 trials, and [One grid, every
+estimand](https://www.gfrischkorn.org/bmmtools/articles/recovery-grid.html#one-grid-every-estimand)
+shows how the interval of an experimental effect narrows from 40 to 100
+subjects. `?summary.bmmtools_recovery` defines every column.
+
+Two planned additions make this easier: `design_check()`
+([\#5](https://github.com/GidonFrischkorn/bmmtools/issues/5)) is
+proposed to take a design in subjects, conditions and trials with
+plausible parameter values and run the grid for you, and
+[\#17](https://github.com/GidonFrischkorn/bmmtools/issues/17) adds
+precision targets, the reliability of subject estimates and the smallest
+design that meets a target.
+
 ## What bmmtools is not
 
 - Not a simulation-based calibration package. `sbc()` builds a generator
@@ -136,8 +171,7 @@ website](https://www.gfrischkorn.org/bmmtools/) walk through each step.
   columns follow the apabayes contract, so a recovery table drops into a
   manuscript through `apabayes` with no glue code. Neither package
   imports the other.
-- No model fitting of its own (that is `bmm()`), and no Bayesian power
-  or design analysis.
+- No model fitting of its own (that is `bmm()`).
 
 ## What bmmtools reads from bmm
 
