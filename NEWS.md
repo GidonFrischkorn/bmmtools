@@ -1,5 +1,10 @@
 # bmmtools (development version)
 
+* The README and DESCRIPTION name both groups bmmtools serves: model
+  developers and methodologists, and researchers planning a study. A new
+  README section, "Planning a study", shows how `recovery_grid()` and
+  `summary()` already answer how many subjects and trials a design needs
+  (#14).
 * Every estimate now carries a central 50 % interval, `ci_low_50` and
   `ci_high_50`, beside the `ci_level` interval: the 25th and 75th
   percentiles of the draws, a Wald interval at `qnorm(0.75)` standard
