@@ -48,7 +48,9 @@ Cell files written before bmmtools stored the central 50 \% interval
 are read with \code{ci_low_50}, \code{ci_high_50} and \code{covered_50} set to \code{NA},
 so their \code{coverage_50} is \code{NA}, and a message says how many there
 were. Rerunning the grid with the fits still in \code{dir} re-extracts them
-without refitting.
+without refitting. Cell files written before it stored the posterior
+mean and SD are read with \code{post_mean_link} and \code{post_sd_link} set to
+\code{NA}, and a second message counts them.
 }
 \examples{
 \dontrun{

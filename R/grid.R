@@ -683,16 +683,19 @@ read_sidecar <- function(path, key, request, key_field = "key") {
   stored <- tryCatch(readRDS(path), error = function(e) NULL)
   scale_ok <- is.null(request$correlations) ||
     identical(stored$cor_scale, request$cor_scale)
-  # decision 49: a table without the 50 % interval is out of date
-  inner_ok <- is.list(stored) && has_inner_interval(stored$estimates) &&
-    (is.null(request$correlations) || has_inner_interval(stored$cor_estimates))
+  # decision 49: a table without the 50 % interval or, since Milestone 22,
+  # the posterior moments is out of date
+  cor_current <- is.null(request$correlations) ||
+    (is.list(stored) && has_current_columns(stored$cor_estimates))
+  current <- is.list(stored) && has_current_columns(stored$estimates) &&
+    cor_current
   matches <- is.list(stored) &&
     identical(stored[[key_field]], key) &&
     identical(stored$bmmtools_version, bmmtools_version()) &&
     all(request$levels %in% stored$levels) &&
     all(request$correlations %in% stored$correlations) &&
     scale_ok &&
-    inner_ok
+    current
   if (!matches) {
     return(NULL)
   }
@@ -726,28 +729,30 @@ read_sidecar <- function(path, key, request, key_field = "key") {
   stored
 }
 
-#' Whether a stored table has the 50 % interval
+#' Whether a stored table has the columns this version extracts
 #'
-#' The version stays 0.2.0 across Milestone 12 (decision 49), so a
-#' sidecar written before the interval existed passes the version test.
-#' Its tables are what give it away: without `ci_low_50` the cell is
-#' re-extracted from its cached fit, which costs a read and no refit. A
-#' table that is absent (the set-level sidecar has no estimates) or empty
-#' has nothing to be missing.
+#' The version stays 0.2.0 across Milestones 12 and 22 (decision 49), so a
+#' sidecar written before the 50 % interval or the posterior moments
+#' existed passes the version test. Its tables are what give it away:
+#' without `ci_low_50` or `post_sd_link` the cell is re-extracted from its
+#' cached fit, which costs a read and no refit. A table that is absent
+#' (the set-level sidecar has no estimates) or empty has nothing to be
+#' missing.
 #'
+#' @param columns The columns to look for.
 #' @noRd
-has_inner_interval <- function(x) {
+has_current_columns <- function(x, columns = optional_estimate_columns()) {
   if (is.null(x) || !is.data.frame(x) || nrow(x) == 0L) {
     return(TRUE)
   }
-  all(inner_interval_columns() %in% names(x))
+  all(columns %in% names(x))
 }
 
 #' Whether a sidecar's ML rows answer the ML request
 #' @noRd
 ml_current <- function(stored, request) {
   identical(stored[["ml"]], request$ml) &&
-    has_inner_interval(stored[["ml_estimates"]])
+    has_current_columns(stored[["ml_estimates"]])
 }
 
 #' Write a sidecar: its key(s), what it was extracted with, the extraction
@@ -785,7 +790,7 @@ extract_cell <- function(fit, sim, request) {
   gate <- if (is.na(diagnostics$pass)) NULL else as.logical(diagnostics$pass)
   # an extract_estimates() method of another fit class may not give the
   # 50 % interval; stored as NA, the sidecar still has the columns
-  estimates <- fill_inner_interval(extract_estimates(
+  estimates <- fill_optional_estimates(extract_estimates(
     fit,
     level = request$levels, converged = gate
   ))

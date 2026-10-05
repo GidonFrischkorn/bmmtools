@@ -959,3 +959,60 @@ test_that("the inner bounds are optional on an estimates tibble", {
   expect_false("ci_low_50" %in% estimates_required_columns())
   expect_false("ci_high_50" %in% estimates_required_columns())
 })
+
+# the posterior moments (Milestone 22, D59-D61) ---------------------------
+
+test_that("the posterior moments are the mean and SD of the draws", {
+  withr::local_seed(2201)
+  x <- stats::rlnorm(80, 1, 0.6)
+  draws <- fake_draws(list(b_a_Intercept = x, b_b_Intercept = -x))
+  out <- estimates_from_draws(draws, groups = character(0))
+
+  expect_equal(out$post_mean_link, c(mean(x), -mean(x)))
+  expect_equal(out$post_sd_link, c(stats::sd(x), stats::sd(x)))
+  # a skewed posterior: the mean is not the estimate, which is the median
+  expect_false(isTRUE(all.equal(out$post_mean_link, out$estimate)))
+})
+
+test_that("the moments come last in the estimates contract", {
+  contract <- names(estimates_contract())
+  expect_identical(
+    utils::tail(contract, 4L),
+    c("ci_low_50", "ci_high_50", "post_mean_link", "post_sd_link")
+  )
+  expect_false(any(
+    c("post_mean_link", "post_sd_link") %in% estimates_required_columns()
+  ))
+})
+
+test_that("the fixture's moments are the draws' at every level", {
+  skip_if_not_installed("brms")
+  out <- extract_estimates(
+    mixture2p_fit(),
+    level = c("population", "subject", "sd")
+  )
+  expect_false(anyNA(out$post_mean_link))
+  expect_false(anyNA(out$post_sd_link))
+  expect_true(all(out$post_sd_link > 0))
+
+  draws <- posterior::as_draws_matrix(mixture2p_fit())
+  kappa <- out[out$level == "population" & out$term == "kappa", ]
+  expect_equal(kappa$post_mean_link, mean(draws[, "b_kappa_Intercept"]))
+  expect_equal(kappa$post_sd_link, stats::sd(draws[, "b_kappa_Intercept"]))
+  sd_row <- out[out$level == "sd" & out$term == "kappa", ]
+  expect_equal(
+    sd_row$post_sd_link, stats::sd(draws[, "sd_id__kappa_Intercept"])
+  )
+  # subject rows: the moments of the per-draw sum, as their median is
+  one <- out[out$level == "subject" & out$term == "kappa", ][1L, ]
+  summed <- draws[, "b_kappa_Intercept"] +
+    draws[, paste0("r_id__kappa[", one$id, ",Intercept]")]
+  expect_equal(one$post_sd_link, stats::sd(summed))
+})
+
+test_that("a parameter with no finite draws has NA moments, not NaN", {
+  draws <- fake_draws(list(b_a_Intercept = rep(NA_real_, 80)))
+  out <- estimates_from_draws(draws, groups = character(0))
+  expect_identical(out$post_mean_link, NA_real_)
+  expect_identical(out$post_sd_link, NA_real_)
+})

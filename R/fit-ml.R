@@ -218,14 +218,16 @@ ml_finalise <- function(out, free, levels, max_abs_link, ci_method,
   # Decision 40: the row stays, so `n` differs visibly between estimators
   # and check_estimator_balance() warns. Dropping it would score ML on the
   # easiest subjects and the Bayesian estimator on all of them.
-  # a Laplace fit's extractor gives the 50 % interval; one from another
-  # fit class may not, and its bounds are then unknown
-  out <- fill_inner_interval(out)
+  # a Laplace fit's extractor gives the 50 % interval and the moments; one
+  # from another fit class may not, and they are then unknown
+  out <- fill_optional_estimates(out)
   out$estimate[!ok] <- NA_real_
   out$ci_low[!ok] <- NA_real_
   out$ci_high[!ok] <- NA_real_
   out$ci_low_50[!ok] <- NA_real_
   out$ci_high_50[!ok] <- NA_real_
+  out$post_mean_link[!ok] <- NA_real_
+  out$post_sd_link[!ok] <- NA_real_
 
   # ordered by the parameter and then the level as the data has them, not
   # by the character sort that would put id 10 before id 2
@@ -398,6 +400,10 @@ fit_ml_optim_rows <- function(model, data, by, levels, free, objective,
       ci_level = rep(ci_level, n_par),
       ci_low_50 = as.numeric(o$par) - z_50 * se,
       ci_high_50 = as.numeric(o$par) + z_50 * se,
+      # the ML point and its standard error, in the columns a posterior
+      # fills with its mean and SD (decision 64)
+      post_mean_link = as.numeric(o$par),
+      post_sd_link = se,
       optim_ok = rep(isTRUE(o$convergence == 0L), n_par),
       stringsAsFactors = FALSE
     )
@@ -544,7 +550,10 @@ ml_cells_table <- function(rows) {
 #'   Wald interval from the optimiser's Hessian on the other
 #'   (`ci_method = "wald"`). Both routes also return the central 50 %
 #'   interval of the same kind in `ci_low_50` and `ci_high_50`, whatever
-#'   `ci_level` is.
+#'   `ci_level` is, and in `post_mean_link` and `post_sd_link` the point
+#'   estimate and its standard error (on the Stan route, the mean and SD
+#'   of the Laplace draws), so that a posterior z-score can be computed
+#'   for ML rows too.
 #' @param draws How many draws to take from the Laplace approximation.
 #'   `method = "stan"` only.
 #' @param max_abs_link The largest `abs(estimate)` on the link scale that

@@ -14,6 +14,17 @@
   implementations as a geometric mean of per-pair ratios with a t
   interval on the logs -- never a bare quotient. No benchmark fit is
   cached, so none can be served to a recovery grid (#4).
+* Estimates, recovery rows and correlation estimates gain
+  `post_mean_link` and `post_sd_link`, the posterior mean and SD of the
+  draws on the link scale. They stay on the link scale whatever `scale`
+  a recovery is scored on, because neither is invariant under a
+  nonlinear link; `estimate` stays the posterior median. Maximum-
+  likelihood rows carry the point estimate and its standard error, and
+  `point` correlations `NA`. They are the groundwork for posterior
+  z-scores and contraction in `summary()`. A grid cell file without them
+  is re-extracted from its cached fit on the next `recovery_grid()` run,
+  without refitting; `collect_grid()` reads it with `NA` and says so
+  (#16).
 * The README and DESCRIPTION name both groups bmmtools serves: model
   developers and methodologists, and researchers planning a study. A new
   README section, "Planning a study", shows how `recovery_grid()` and

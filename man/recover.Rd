@@ -76,7 +76,15 @@ A \code{bmmtools_recovery} object: a tibble subclass with the
 columns \code{term}, \code{estimate}, \code{ci_low}, \code{ci_high}, \code{ci_method},
 \code{ci_level}, \code{rhat}, \code{ess_bulk}, \code{ess_tail}, \code{true_value}, \code{bias},
 \code{covered}, \code{scale}, \code{level}, \code{id}, \code{converged}, \code{condition},
-\code{estimator} and \code{replication}.
+\code{estimator}, \code{ci_low_50}, \code{ci_high_50}, \code{covered_50},
+\code{post_mean_link}, \code{post_sd_link} and \code{replication}.
+
+\code{post_mean_link} and \code{post_sd_link} are the mean and SD of the
+posterior draws \strong{on the link scale, whatever \code{scale} is}: neither
+is invariant under a nonlinear link, so neither is transformed with
+the estimate and its interval. \code{estimate} stays the posterior
+median. For a maximum-likelihood row they are the point estimate and
+its standard error; for a hand-built tibble without them, \code{NA}.
 \code{converged} is the verdict of \code{\link[=check_convergence]{check_convergence()}} with its
 default thresholds when \code{fits} are fit objects; to gate with other
 thresholds, call \code{\link[=extract_estimates]{extract_estimates()}} with \verb{converged =} first and

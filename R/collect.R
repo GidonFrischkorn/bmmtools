@@ -28,18 +28,24 @@ collect_cell <- function(paths) {
   if (!is.null(stored$estimates) && nrow(stored$estimates) > 0L) {
     converged <- stored$estimates$converged[[1L]]
   }
-  # a cell file written before the 50 % interval existed (decision 49):
-  # its bounds are unknown, filled with NA, and collect_grid() says so
+  # a cell file written before the 50 % interval (decision 49) or the
+  # posterior moments (Milestone 22) existed: what it lacks is unknown,
+  # filled with NA, and collect_grid() says so
   tables <- c("estimates", "cor_estimates", "ml_estimates")
-  no_inner <- !all(vapply(
-    tables, function(name) has_inner_interval(stored[[name]]), logical(1)
-  ))
+  lacks <- function(columns) {
+    !all(vapply(
+      tables, function(name) has_current_columns(stored[[name]], columns),
+      logical(1)
+    ))
+  }
+  no_inner <- lacks(inner_interval_columns())
+  no_moments <- lacks(posterior_moment_columns())
   for (name in tables) {
     if (!is.null(stored[[name]])) {
-      stored[[name]] <- fill_inner_interval(stored[[name]])
+      stored[[name]] <- fill_optional_estimates(stored[[name]])
     }
   }
-  list(sim = sim, no_inner = no_inner, run = list(
+  list(sim = sim, no_inner = no_inner, no_moments = no_moments, run = list(
     status = "ok", message = NA_character_,
     estimates = stored$estimates,
     cor_estimates = stored$cor_estimates,
@@ -109,7 +115,9 @@ check_collected <- function(stored, levels, correlations,
 #' are read with `ci_low_50`, `ci_high_50` and `covered_50` set to `NA`,
 #' so their `coverage_50` is `NA`, and a message says how many there
 #' were. Rerunning the grid with the fits still in `dir` re-extracts them
-#' without refitting.
+#' without refitting. Cell files written before it stored the posterior
+#' mean and SD are read with `post_mean_link` and `post_sd_link` set to
+#' `NA`, and a second message counts them.
 #'
 #' @param dir The directory a [recovery_grid()] run wrote, holding
 #'   `grid.rds` and the cell files. Written by bmmtools 0.2.0 or later;
@@ -192,6 +200,18 @@ collect_grid <- function(dir, scale = NULL, levels = NULL,
        before bmmtools stored one.",
       i = "Their {.field coverage_50} is {.code NA}. Rerunning the grid \\
            with the fits in place re-extracts them without refitting."
+    ))
+  }
+  n_no_moments <- sum(vapply(
+    collected, function(x) isTRUE(x$no_moments), logical(1)
+  ))
+  if (n_no_moments > 0L) {
+    cli::cli_inform(c(
+      "{n_no_moments} cell file{?s} {?has/have} no posterior mean and SD: \\
+       written before bmmtools stored them.",
+      i = "Their {.field post_mean_link} and {.field post_sd_link} are \\
+           {.code NA}. Rerunning the grid with the fits in place \\
+           re-extracts them without refitting."
     ))
   }
 

@@ -11,7 +11,8 @@
 #' Column names and their `typeof()`. `replication` is listed separately
 #' because its type is the caller's choice --- an index, a name or a
 #' grid identifier --- and only its presence is required. The 50 %
-#' interval and `covered_50` come last (Milestone 12, decision 46).
+#' interval and `covered_50` follow (Milestone 12, decision 46), then the
+#' link-scale posterior mean and SD (Milestone 22, decisions 59 to 61).
 #'
 #' @noRd
 recovery_contract <- function() {
@@ -36,7 +37,9 @@ recovery_contract <- function() {
     estimator = "character",
     ci_low_50 = "double",
     ci_high_50 = "double",
-    covered_50 = "logical"
+    covered_50 = "logical",
+    post_mean_link = "double",
+    post_sd_link = "double"
   )
 }
 
@@ -51,13 +54,13 @@ recovery_contract_columns <- function() {
 #' `condition` exists only for a grid; both are filled with `NA` rather
 #' than demanded. So are the 50 % interval and whether it covered, which
 #' a table from before that interval existed does not have: its 50 %
-#' coverage is then unknown, never 0.
+#' coverage is then unknown, never 0. So are the posterior moments.
 #'
 #' @noRd
 fill_optional_columns <- function(x) {
   if (!"converged" %in% names(x)) x$converged <- rep(NA, nrow(x))
   if (!"condition" %in% names(x)) x$condition <- rep(NA_character_, nrow(x))
-  x <- fill_inner_interval(x)
+  x <- fill_optional_estimates(x)
   if (!"covered_50" %in% names(x)) x$covered_50 <- rep(NA, nrow(x))
   x
 }
@@ -803,7 +806,9 @@ cor_recovery_contract <- function() {
     condition = "character",
     ci_low_50 = "double",
     ci_high_50 = "double",
-    covered_50 = "logical"
+    covered_50 = "logical",
+    post_mean_link = "double",
+    post_sd_link = "double"
   )
 }
 

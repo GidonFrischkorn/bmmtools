@@ -147,3 +147,24 @@ test_that("current cell files collect without the message", {
   expect_no_message(out <- collect_grid(dir))
   expect_false(anyNA(out$ci_low_50))
 })
+
+# cell files written before the posterior moments (Milestone 22) ----------
+
+test_that("cell files without the moments collect with NA, and say so", {
+  skip_if_not_installed("bmm")
+  dir <- withr::local_tempdir()
+  original <- collect_run(dir)
+  delete_fits(dir)
+  for (path in list.files(dir, pattern = "-est\\.rds$", full.names = TRUE)) {
+    sidecar <- readRDS(path)
+    sidecar$estimates$post_mean_link <- NULL
+    sidecar$estimates$post_sd_link <- NULL
+    saveRDS(sidecar, path)
+  }
+
+  expect_message(out <- collect_grid(dir), "posterior mean and SD")
+  expect_s3_class(out, "bmmtools_recovery")
+  expect_true(all(is.na(out$post_sd_link)))
+  expect_false(anyNA(out$ci_low_50))
+  expect_equal(out$covered, original$covered)
+})

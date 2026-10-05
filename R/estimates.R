@@ -14,6 +14,9 @@
 #' interval whose mass is fixed and carried in the name, so it reads the
 #' same whatever `ci_level` is (Milestone 12, decision 46). They come
 #' last, so that the apabayes columns keep their positions.
+#' `post_mean_link` and `post_sd_link` follow them: the posterior mean and
+#' SD of the draws on the link scale, which no scoring transforms
+#' (Milestone 22, decisions 59 to 61).
 #'
 #' @return A named character vector: column name to storage type.
 #' @noRd
@@ -33,7 +36,9 @@ estimates_contract <- function() {
     converged = "logical",
     estimator = "character",
     ci_low_50 = "double",
-    ci_high_50 = "double"
+    ci_high_50 = "double",
+    post_mean_link = "double",
+    post_sd_link = "double"
   )
 }
 
@@ -43,16 +48,33 @@ inner_interval_columns <- function() {
   c("ci_low_50", "ci_high_50")
 }
 
-#' Give a table the 50 % interval it may not have
+#' The link-scale posterior mean and SD
+#' @noRd
+posterior_moment_columns <- function() {
+  c("post_mean_link", "post_sd_link")
+}
+
+#' The estimates columns a table from an older bmmtools may lack
 #'
-#' An estimates tibble built by hand, by an `extract_estimates()` method of
-#' another fit class, or before the interval existed has no inner bounds.
-#' They become `NA`, so that its 50 % coverage is `NA` --- unknown --- and
-#' never 0, and the table still satisfies the contract.
+#' Each of them is checked for by a sidecar reader (decision 49), so that
+#' a cell file written before a column existed is re-extracted.
 #'
 #' @noRd
-fill_inner_interval <- function(x) {
-  for (column in inner_interval_columns()) {
+optional_estimate_columns <- function() {
+  c(inner_interval_columns(), posterior_moment_columns())
+}
+
+#' Give a table the optional columns it may not have
+#'
+#' An estimates tibble built by hand, by an `extract_estimates()` method of
+#' another fit class, or before a column existed has no inner bounds or
+#' posterior moments. They become `NA`, so that its 50 % coverage is `NA`
+#' --- unknown --- and never 0, and the table still satisfies the
+#' contract.
+#'
+#' @noRd
+fill_optional_estimates <- function(x) {
+  for (column in optional_estimate_columns()) {
     if (!column %in% names(x)) x[[column]] <- rep(NA_real_, nrow(x))
   }
   x
@@ -64,14 +86,15 @@ fill_inner_interval <- function(x) {
 #' so a hand-built tibble with the other eleven columns still scores.
 #' `estimator` is optional for the same reason: a tibble that does not say
 #' which estimator produced it is a posterior, which is what `"bayes"`
-#' means (milestone 8, decision 35). The 50 % bounds are optional too, and
-#' filled with `NA` by [fill_inner_interval()].
+#' means (milestone 8, decision 35). The 50 % bounds and the posterior
+#' moments are optional too, and filled with `NA` by
+#' [fill_optional_estimates()].
 #'
 #' @noRd
 estimates_required_columns <- function() {
   setdiff(
     names(estimates_contract()),
-    c("converged", "estimator", inner_interval_columns())
+    c("converged", "estimator", optional_estimate_columns())
   )
 }
 
@@ -242,7 +265,10 @@ resolve_group <- function(group, groups, call = rlang::caller_env()) {
 #' The point estimate is the posterior median: it
 #' is invariant under the link transform, so scoring on the link scale
 #' and scoring on the natural scale use the same number. Besides the
-#' `ci_level` interval, the central 50 % interval is always returned.
+#' `ci_level` interval, the central 50 % interval is always returned, and
+#' the mean and SD of the draws: posterior z-scores are centred on the
+#' mean (decision 59), and neither is invariant under a link, so both are
+#' kept on the link scale the draws are on (decision 60).
 #'
 #' `post_var` is carried alongside because a parameter bmm fixed to a
 #' constant is identified by zero posterior variance, never by a missing
@@ -281,6 +307,10 @@ summarise_selected <- function(draws, ci_level) {
     rhat = as.double(conv$rhat),
     ess_bulk = as.double(conv$ess_bulk),
     ess_tail = as.double(conv$ess_tail),
+    # mean() of nothing is NaN where median() and var() give NA
+    post_mean = apply(dm, 2L, function(x) {
+      if (all(is.na(x))) NA_real_ else mean(x, na.rm = TRUE)
+    }),
     post_var = apply(dm, 2L, stats::var, na.rm = TRUE)
   )
 }
@@ -304,7 +334,9 @@ as_estimates <- function(x, level, ci_level, ci_method,
     converged = NA,
     estimator = as.character(estimator),
     ci_low_50 = as.double(x$ci_low_50),
-    ci_high_50 = as.double(x$ci_high_50)
+    ci_high_50 = as.double(x$ci_high_50),
+    post_mean_link = as.double(x$post_mean),
+    post_sd_link = sqrt(as.double(x$post_var))
   )
 }
 
@@ -938,12 +970,16 @@ fit_converged <- function(fit, draws) {
 #'
 #' @return A tibble with the columns `term`, `estimate`, `ci_low`,
 #'   `ci_high`, `ci_method`, `ci_level`, `rhat`, `ess_bulk`, `ess_tail`,
-#'   `level`, `id`, `converged`, `estimator`, `ci_low_50` and
-#'   `ci_high_50`, in that order. `id` is `NA` except on subject rows;
-#'   `converged` and `estimator` are the same value on every row of a fit.
+#'   `level`, `id`, `converged`, `estimator`, `ci_low_50`, `ci_high_50`,
+#'   `post_mean_link` and `post_sd_link`, in that order. `id` is `NA`
+#'   except on subject rows; `converged` and `estimator` are the same
+#'   value on every row of a fit.
 #'   `ci_low_50` and `ci_high_50` bound the central 50 % interval, the
 #'   25th and 75th percentiles of the draws, whatever `ci_level` is:
 #'   [recover()] scores the coverage of both intervals.
+#'   `post_mean_link` and `post_sd_link` are the mean and standard
+#'   deviation of the draws on the link scale, which [recover()] carries
+#'   untransformed whatever its `scale`.
 #'
 #' @details
 #' Subject-level estimates are the **per-draw sum** of the population

@@ -206,8 +206,15 @@ check_subject_draws <- function(x, call = rlang::caller_env()) {
 #'
 #' @return A tibble with the columns `term`, `var1`, `var2`, `estimator`,
 #'   `estimate`, `ci_low`, `ci_high`, `ci_method`, `ci_level`, `rhat`,
-#'   `ess_bulk`, `ess_tail`, `scale`, `n` (subjects) and `converged`.
+#'   `ess_bulk`, `ess_tail`, `scale`, `n` (subjects), `converged`,
+#'   `ci_low_50`, `ci_high_50`, `post_mean_link` and `post_sd_link`.
 #'   `term` is `var1__var2`, the two names sorted in the C locale.
+#'   `post_mean_link` and `post_sd_link` are the mean and SD of the
+#'   correlation's draws for `model` and `draws`, and `NA` for `point`,
+#'   which has none. Despite the suffix, which the column shares with
+#'   [extract_estimates()], they describe the correlation itself: for
+#'   `draws` under `scale = "natural"`, the correlation of the
+#'   natural-scale values.
 #'
 #' @details
 #' **The model estimator** is on the link scale only. Under
@@ -723,7 +730,7 @@ correlation_columns <- function() {
   c(
     "term", "var1", "var2", "estimator", "estimate", "ci_low", "ci_high",
     "ci_method", "ci_level", "rhat", "ess_bulk", "ess_tail", "scale", "n",
-    "converged", "ci_low_50", "ci_high_50"
+    "converged", "ci_low_50", "ci_high_50", "post_mean_link", "post_sd_link"
   )
 }
 
@@ -734,7 +741,8 @@ empty_correlation_rows <- function() {
     estimator = character(), estimate = double(), ci_low = double(),
     ci_high = double(), ci_method = character(), rhat = double(),
     ess_bulk = double(), ess_tail = double(), n = integer(),
-    ci_low_50 = double(), ci_high_50 = double()
+    ci_low_50 = double(), ci_high_50 = double(),
+    post_mean_link = double(), post_sd_link = double()
   )
 }
 
@@ -749,7 +757,8 @@ model_cor_rows <- function(cor_estimates, call = rlang::caller_env()) {
     term = character(), var1 = character(), var2 = character(),
     estimate = double(), ci_low = double(), ci_high = double(),
     rhat = double(), ess_bulk = double(), ess_tail = double(),
-    ci_low_50 = double(), ci_high_50 = double()
+    ci_low_50 = double(), ci_high_50 = double(),
+    post_mean_link = double(), post_sd_link = double()
   )
   if (is.null(cor_estimates) || nrow(cor_estimates) == 0L) {
     return(empty)
@@ -765,9 +774,9 @@ model_cor_rows <- function(cor_estimates, call = rlang::caller_env()) {
       call = call
     )
   }
-  # cor rows from before the 50 % interval, or from an extractor of
-  # another fit class, have no inner bounds: they are unknown, not absent
-  rows <- fill_inner_interval(tibble::as_tibble(cor_estimates))
+  # cor rows from before the 50 % interval or the moments, or from an
+  # extractor of another fit class, lack them: unknown, not absent
+  rows <- fill_optional_estimates(tibble::as_tibble(cor_estimates))
   if ("level" %in% names(rows)) rows <- rows[rows$level %in% "cor", ]
   parts <- strsplit(rows$term, "__", fixed = TRUE)
   rows <- rows[lengths(parts) == 2L, ]
@@ -784,7 +793,9 @@ model_cor_rows <- function(cor_estimates, call = rlang::caller_env()) {
     ess_bulk = as.double(rows$ess_bulk),
     ess_tail = as.double(rows$ess_tail),
     ci_low_50 = as.double(rows$ci_low_50),
-    ci_high_50 = as.double(rows$ci_high_50)
+    ci_high_50 = as.double(rows$ci_high_50),
+    post_mean_link = as.double(rows$post_mean_link),
+    post_sd_link = as.double(rows$post_sd_link)
   )
 }
 
@@ -1040,7 +1051,9 @@ draws_estimator_rows <- function(subject_draws, cov, pair_table, scale,
     ess_tail = unname(summary$ess_tail),
     n = d[[3L]],
     ci_low_50 = unname(summary$ci_low_50),
-    ci_high_50 = unname(summary$ci_high_50)
+    ci_high_50 = unname(summary$ci_high_50),
+    post_mean_link = unname(summary$post_mean),
+    post_sd_link = sqrt(unname(summary$post_var))
   )
 }
 
@@ -1083,7 +1096,10 @@ point_estimator_rows <- function(subject_draws, cov, pair_table, scale,
     ess_tail = NA_real_,
     n = stats$n,
     ci_low_50 = stats$ci_low_50,
-    ci_high_50 = stats$ci_high_50
+    ci_high_50 = stats$ci_high_50,
+    # a correlation of posterior means has no draws (decision 63)
+    post_mean_link = NA_real_,
+    post_sd_link = NA_real_
   )
 }
 
@@ -1135,7 +1151,8 @@ point_estimator_rows <- function(subject_draws, cov, pair_table, scale,
 #'   `ci_high`, `ci_method`, `ci_level`, `rhat`, `ess_bulk`, `ess_tail`,
 #'   `true_value`, `sample_value`, `bias`, `bias_sample`, `covered`,
 #'   `covered_sample`, `excludes_zero`, `scale`, `n`, `converged`,
-#'   `condition` and `replication`. Call
+#'   `condition`, `ci_low_50`, `ci_high_50`, `covered_50`,
+#'   `post_mean_link`, `post_sd_link` and `replication`. Call
 #'   [summary()][summary.bmmtools_cor_recovery()] on it for the
 #'   per-pair metrics and [plot_recovery()] to draw it.
 #'
@@ -1438,7 +1455,7 @@ is_one_fit <- function(x) {
 #' @noRd
 check_extracted_correlations <- function(fits, call = rlang::caller_env()) {
   required <- setdiff(
-    correlation_columns(), c("converged", inner_interval_columns())
+    correlation_columns(), c("converged", optional_estimate_columns())
   )
   missing <- setdiff(required, names(fits))
   if (length(missing) > 0L) {
@@ -1453,7 +1470,7 @@ check_extracted_correlations <- function(fits, call = rlang::caller_env()) {
   out <- tibble::as_tibble(fits)
   if (!"replication" %in% names(out)) out$replication <- rep(1L, nrow(out))
   if (!"converged" %in% names(out)) out$converged <- rep(NA, nrow(out))
-  fill_inner_interval(out)
+  fill_optional_estimates(out)
 }
 
 #' @noRd

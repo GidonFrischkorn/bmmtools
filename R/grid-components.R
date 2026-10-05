@@ -375,7 +375,11 @@ component_cell_simulation <- function(path, values, n_subjects, covariates,
 #' model estimator requested, its within-fit model correlations
 #' @noRd
 extract_component <- function(fit, request) {
-  estimates <- extract_estimates(fit, level = request$levels)
+  # as in extract_cell(): a method without the optional columns stores
+  # them as NA, or read_sidecar() would find the sidecar stale every run
+  estimates <- fill_optional_estimates(
+    extract_estimates(fit, level = request$levels)
+  )
   converged <- NULL
   if (nrow(estimates) > 0L) converged <- as.logical(estimates$converged[[1L]])
   cor_estimates <- NULL

@@ -538,3 +538,18 @@ test_that("rows must keep one link table and sd_ columns add missing SDs", {
   ))
   expect_equal(cg_sim(dir, 1L)$sds[["a_kappa"]], 0.4)
 })
+
+test_that("a component sidecar has the moments when its extractor does not", {
+  # an extract_estimates() method written before the moments existed: its
+  # sidecar must still carry them, as NA, or it would be stale forever
+  rows <- tibble::tibble(
+    term = "a", estimate = 0, ci_low = -1, ci_high = 1, rhat = 1,
+    ess_bulk = 100, ess_tail = 100, level = "population", converged = TRUE
+  )
+  out <- extract_component(
+    array_fit(NULL, cor = rows),
+    list(levels = "population", correlations = NULL)
+  )
+  expect_true(has_current_columns(out$estimates))
+  expect_identical(out$estimates$post_sd_link, NA_real_)
+})

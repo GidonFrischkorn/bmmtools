@@ -59,7 +59,8 @@ columns \code{term}, \code{var1}, \code{var2}, \code{estimator}, \code{estimate}
 \code{ci_high}, \code{ci_method}, \code{ci_level}, \code{rhat}, \code{ess_bulk}, \code{ess_tail},
 \code{true_value}, \code{sample_value}, \code{bias}, \code{bias_sample}, \code{covered},
 \code{covered_sample}, \code{excludes_zero}, \code{scale}, \code{n}, \code{converged},
-\code{condition} and \code{replication}. Call
+\code{condition}, \code{ci_low_50}, \code{ci_high_50}, \code{covered_50},
+\code{post_mean_link}, \code{post_sd_link} and \code{replication}. Call
 \link[=summary.bmmtools_cor_recovery]{summary()} on it for the
 per-pair metrics and \code{\link[=plot_recovery]{plot_recovery()}} to draw it.
 }

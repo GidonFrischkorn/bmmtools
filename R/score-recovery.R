@@ -405,7 +405,7 @@ check_truth_frame <- function(truth, call = rlang::caller_env()) {
 #' @noRd
 score_recovery <- function(fits, truth, level, group, scale, links,
                            ci_level, drop_constants, call, error_call) {
-  estimates <- fill_inner_interval(as_estimates_input(
+  estimates <- fill_optional_estimates(as_estimates_input(
     fits, level, group, ci_level, drop_constants,
     call = error_call
   ))
@@ -573,7 +573,15 @@ check_estimator_balance <- function(x) {
 #'   columns `term`, `estimate`, `ci_low`, `ci_high`, `ci_method`,
 #'   `ci_level`, `rhat`, `ess_bulk`, `ess_tail`, `true_value`, `bias`,
 #'   `covered`, `scale`, `level`, `id`, `converged`, `condition`,
-#'   `estimator` and `replication`.
+#'   `estimator`, `ci_low_50`, `ci_high_50`, `covered_50`,
+#'   `post_mean_link`, `post_sd_link` and `replication`.
+#'
+#'   `post_mean_link` and `post_sd_link` are the mean and SD of the
+#'   posterior draws **on the link scale, whatever `scale` is**: neither
+#'   is invariant under a nonlinear link, so neither is transformed with
+#'   the estimate and its interval. `estimate` stays the posterior
+#'   median. For a maximum-likelihood row they are the point estimate and
+#'   its standard error; for a hand-built tibble without them, `NA`.
 #'   `converged` is the verdict of [check_convergence()] with its
 #'   default thresholds when `fits` are fit objects; to gate with other
 #'   thresholds, call [extract_estimates()] with `converged =` first and

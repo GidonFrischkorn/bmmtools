@@ -52,7 +52,10 @@ approximation's on the Stan route (\code{ci_method = "laplace"}) and a
 Wald interval from the optimiser's Hessian on the other
 (\code{ci_method = "wald"}). Both routes also return the central 50 \%
 interval of the same kind in \code{ci_low_50} and \code{ci_high_50}, whatever
-\code{ci_level} is.}
+\code{ci_level} is, and in \code{post_mean_link} and \code{post_sd_link} the point
+estimate and its standard error (on the Stan route, the mean and SD
+of the Laplace draws), so that a posterior z-score can be computed
+for ML rows too.}
 
 \item{draws}{How many draws to take from the Laplace approximation.
 \code{method = "stan"} only.}
