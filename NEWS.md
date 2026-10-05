@@ -26,7 +26,19 @@
   and `recover()`, `recover_subjects()`, `cross_check()`,
   `subject_table()` and the correlation scorers keep them there under
   `scale = "natural"` with a message, where they used to stop with an
-  error (#15).
+  error; `print()` and `plot_recovery()` name those terms (#15).
+* `simulate_recovery()` has a built-in generator for `m3` in all three
+  versions (`ss`, `cs`, `custom`). With numbers of options on the model,
+  a subject has one row of category counts over `n_trials` trials; with
+  `num_options` naming columns, those columns come from `trial_design`
+  and each row is one trial. The custom version's activation formulas
+  exist only in the formula it is fitted with, so `simulate_recovery()`
+  gains `formula`, read by that generator alone; `recovery_grid()`,
+  `recovery_component()` and `sbc()` pass on the formula they fit with.
+  A generator you write never receives it and is called as before.
+  Categories land in the columns `resp_cats` names however the
+  activations or the numbers of options are ordered. `prior_check()`
+  takes each row's total as the ceiling of every category's count (#15).
 * Every estimate now carries a central 50 % interval, `ci_low_50` and
   `ci_high_50`, beside the `ci_level` interval: the 25th and 75th
   percentiles of the draws, a Wald interval at `qnorm(0.75)` standard

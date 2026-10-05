@@ -264,12 +264,13 @@ row_values <- function(row, pars, sds, cors = NULL, tasks = NULL,
 #'
 #' A file from before 5.1 has no SD, correlation or covariate tables; its
 #' draws were uncorrelated and it had no covariates, so they are rebuilt
-#' from `sds`. A file from before 5.4 has no tasks, and one from before
-#' 21.1 no trial design.
+#' from `sds`. A file from before 5.4 has no tasks, one from before
+#' 21.1 no trial design, and one from before 21.3 no formula.
 #'
 #' @noRd
 upgrade_simulation <- function(sim) {
-  for (field in setdiff(c("tasks", "task_col", "trial_design"), names(sim))) {
+  fields <- c("tasks", "task_col", "trial_design", "formula")
+  for (field in setdiff(fields, names(sim))) {
     sim[field] <- list(NULL)
   }
   if (is.null(sim$trial_design_columns)) {
@@ -308,7 +309,8 @@ upgrade_simulation <- function(sim) {
 cell_simulation <- function(paths, model, values, row, seed, subjects,
                             first_rep, generator, covariates, tasks = NULL,
                             task_col = "task", coding = "cell",
-                            contrasts = NULL, trial_design = NULL) {
+                            contrasts = NULL, trial_design = NULL,
+                            formula = NULL) {
   if (file.exists(paths$sim)) {
     return(upgrade_simulation(readRDS(paths$sim)))
   }
@@ -332,6 +334,7 @@ cell_simulation <- function(paths, model, values, row, seed, subjects,
     tasks = tasks, task_col = task_col,
     coding = coding, contrasts = contrasts,
     subject_pars = subject_pars,
+    formula = formula,
     trial_design = trial_design,
     generator = generator,
     seed = if (is.na(seed)) NULL else seed
@@ -1010,7 +1013,9 @@ write_grid_record <- function(dir, record) {
     # written, and comparing the union of all of them would flag every
     # record from a version that wrote a field since removed
     compare <- setdiff(
-      union(names(record), intersect(names(stored), "trial_design")),
+      union(
+        names(record), intersect(names(stored), c("trial_design", "formula"))
+      ),
       "created"
     )
     changed <- compare[!vapply(compare, function(name) {
@@ -1309,7 +1314,10 @@ grid_formula <- function(formula, row, i, model, re_cor, task_col,
 #' @param formula A `bmmformula`; `NULL` means [recovery_formula()] of the
 #'   cell's model; or a `function(row)` of the one-row grid data frame
 #'   returning a `bmmformula`, called once per row, for designs whose
-#'   formula depends on the row.
+#'   formula depends on the row. For a custom `m3` with its built-in
+#'   generator the formula also holds the activations, so it reaches the
+#'   generator too (see [simulate_recovery()]) and is written to the grid
+#'   record.
 #' @param prior Passed to [fit_cached()]; with components, `NULL` or a list
 #'   with a prior per component.
 #' @param trial_design As in [simulate_recovery()], the same for every
@@ -1651,6 +1659,16 @@ recovery_grid <- function(model,
       adapter = is.null(generator)
     )
   }
+  # the fit formula is also the custom m3's activations (D58): handed to
+  # an adapter that reads it, checked for every row before any cell
+  reads_formula <- function(i) {
+    is.null(generator) && adapter_reads_formula(model_for(i))
+  }
+  for (i in seq_len(nrow(grid))) {
+    if (reads_formula(i)) {
+      check_generator_formula(formula_for(i), model_for(i), adapter = TRUE)
+    }
+  }
 
   cells <- grid_cell_table(nrow(grid), reps, seed)
   sims <- vector("list", nrow(cells))
@@ -1664,7 +1682,10 @@ recovery_grid <- function(model,
       cell_paths(dir, cells$row[[i]], cells$rep[[i]]),
       model_for(cells$row[[i]]), values, row, cells$seed[[i]], subjects,
       first_rep[[cells$row[[i]]]], generator, covariates,
-      tasks, task_col, coding, contrasts, trial_design
+      tasks, task_col, coding, contrasts, trial_design,
+      formula = if (reads_formula(cells$row[[i]])) {
+        formula_for(cells$row[[i]])
+      }
     )
     if (cells$rep[[i]] == 1L) first_rep[[cells$row[[i]]]] <<- sim
     sim
@@ -1700,6 +1721,17 @@ recovery_grid <- function(model,
   # function as its text, so the same function built again matches too
   if (!is.null(trial_design)) {
     record$trial_design <- function_key(trial_design)
+  }
+  # likewise only when it reaches the generator: the cell files keep data
+  # drawn under the activations of the run that wrote them
+  # the activations only: they are what the data were drawn from, so a
+  # new random-effects structure is not reported as a change
+  reading <- Filter(reads_formula, seq_len(nrow(grid)))
+  if (length(reading) > 0L) {
+    first <- reading[[1L]]
+    record$formula <- formula_key(
+      formula_for(first)[model_for(first)$resp_vars$resp_cats]
+    )
   }
   write_grid_record(dir, record)
 

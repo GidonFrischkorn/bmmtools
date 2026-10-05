@@ -48,7 +48,7 @@ bmm_fun <- function(name) {
 adapter_classes <- function() {
   c(
     "sdt_yn", "sdt_mafc", "ezdm", "ddm", "cswald", "mixture2p", "sdm",
-    "mixture3p", "imm"
+    "mixture3p", "imm", "m3"
   )
 }
 
@@ -82,8 +82,20 @@ generator_for <- function(model) {
     sdm = generate_sdm,
     mixture3p = generate_mixture3p,
     imm = generate_imm,
+    m3 = generate_m3,
     NULL
   )
+}
+
+#' Whether a model's built-in generator reads the fit formula (D58)
+#'
+#' Only the custom `m3`, whose activation formulas exist nowhere but in the
+#' user's formula. The engine hands `formula` to the adapter when this is
+#' `TRUE`, and to nothing else: a user generator closes over its own.
+#'
+#' @noRd
+adapter_reads_formula <- function(model) {
+  inherits(model, "m3_custom")
 }
 
 #' The columns an adapter reads from a trial design
@@ -100,13 +112,18 @@ generator_for <- function(model) {
 #' `mixture3p` and `imm` read the set size when the model names it as a
 #' column (a number is every trial's set size and no column), the
 #' non-target locations, and for `imm` `full` and `bsc` the non-target
-#' distances (`NULL` on `abc`).
+#' distances (`NULL` on `abc`). `m3` reads its numbers of options when the
+#' model names them as columns, in the order of `resp_cats`.
 #'
 #' @param model A `bmmodel`.
 #' @return A character vector, empty when the adapter reads no design.
 #' @noRd
 trial_design_columns <- function(model) {
   key <- adapter_name(model)
+  if (identical(key, "m3")) {
+    options <- model$other_vars$num_options
+    return(if (is.character(options)) unname(options) else character())
+  }
   if (!key %in% c("mixture3p", "imm")) {
     return(character())
   }
@@ -410,4 +427,180 @@ generate_imm <- function(pars, n_trials, model, trial_design = NULL) {
     do.call(bmm::rimm, c(list(n = 1L), args))
   }, double(1))
   name_columns(data.frame(y), list(model$resp_vars$resp_error))
+}
+
+# m3 -------------------------------------------------------------------------
+
+#' The custom `m3`'s activation formulas, one per category, in `resp_cats`
+#' order
+#'
+#' Read off the fit formula (D57, D58), which holds the activations next to
+#' the parameter formulas. Put in `resp_cats` order here, because released
+#' bmm 1.3.2's `rm3()` applies each number of options to whichever
+#' activation stands at its position (fixed in bmm's development version,
+#' which reorders them itself).
+#'
+#' Every free parameter must appear in an activation: one that does not
+#' would get a truth the data never depended on.
+#'
+#' @param formula The `bmmformula` the custom model is fitted with.
+#' @return The activation formulas, a `bmmformula`, with the names they
+#'   use as the attribute `"used"`.
+#' @noRd
+m3_activations <- function(formula, model, call = rlang::caller_env()) {
+  cats <- model$resp_vars$resp_cats
+  if (is.null(formula)) {
+    cli::cli_abort(
+      c(
+        "The built-in generator for a custom {.cls m3} needs {.arg formula}.",
+        i = "Its activation formulas, one per category ({.val {cats}}), \
+             exist only in the formula the model is fitted with: pass it \
+             as {.arg formula}."
+      ),
+      call = call
+    )
+  }
+  missing <- setdiff(cats, names(formula))
+  if (length(missing) > 0L) {
+    cli::cli_abort(
+      c(
+        "{.arg formula} has no activation formula for {.val {missing}}.",
+        i = "A custom {.cls m3} needs one per category of \
+             {.arg resp_cats}: {.val {cats}}."
+      ),
+      call = call
+    )
+  }
+  activations <- formula[cats]
+  used <- unique(unlist(lapply(activations, function(f) {
+    all.vars(f[[length(f)]])
+  })))
+  info <- model_parameters(model)
+  unused <- setdiff(info$free, used)
+  if (length(unused) > 0L) {
+    cli::cli_abort(
+      c(
+        "No activation formula uses {.val {unused}}, which the model \
+         estimates.",
+        i = "Its value would be a truth the data never depended on: use \
+             it in an activation, or drop its link."
+      ),
+      call = call
+    )
+  }
+  unknown <- setdiff(used, c(info$free, info$fixed))
+  if (length(unknown) > 0L) {
+    cli::cli_abort(
+      c(
+        "The activation formulas use {.val {unknown}}, which {?is no/are \
+         no} parameter{?s} of the model.",
+        i = "Its parameters are {.val {c(info$free, info$fixed)}}; give \
+             each one a link with {.code m3(..., links = list(...))}."
+      ),
+      call = call
+    )
+  }
+  attr(activations, "used") <- used
+  activations
+}
+
+#' The numbers of options, as a numeric vector in `resp_cats` order
+#'
+#' Named `n_opt_<category>`, as `m3()` names them, and positional, which
+#' every bmm reads the same way: numbers named after the categories in
+#' another order are put in order here, because released bmm 1.3.2 ignored
+#' those names (bmm #449). With column names, `row` is one trial of the
+#' design and its numbers are read from it (a factor as the numbers it
+#' shows, not its codes).
+#'
+#' @noRd
+m3_options <- function(model, row = NULL, trial = NULL) {
+  cats <- model$resp_vars$resp_cats
+  options <- model$other_vars$num_options
+  if (is.character(options)) {
+    values <- suppressWarnings(as.double(vapply(
+      row[unname(options)], function(v) as.character(v[[1L]]), character(1)
+    )))
+    bad <- !is.finite(values) | values < 0
+    if (any(bad)) {
+      cli::cli_abort(c(
+        "Trial {trial} of {.arg trial_design} has {.val \
+         {unname(options)[bad]}} = {values[bad]}.",
+        i = "A number of options is a finite count of at least 0."
+      ))
+    }
+    if (sum(values) == 0) {
+      cli::cli_abort(c(
+        "Trial {trial} of {.arg trial_design} has no option in any category.",
+        i = "At least one of {.val {unname(options)}} must be above 0."
+      ))
+    }
+  } else if (setequal(names(options), cats)) {
+    values <- unname(options[cats])
+  } else {
+    values <- unname(options)
+  }
+  stats::setNames(as.double(values), paste0("n_opt_", cats))
+}
+
+#' One `rm3()` call: `n` rows of counts in the columns `resp_cats` names
+#' @noRd
+m3_counts <- function(size, pars, model, options, activations, n = 1L) {
+  model$other_vars$num_options <- options
+  counts <- bmm::rm3(n, size, pars, model, act_funs = activations)
+  cats <- model$resp_vars$resp_cats
+  if (setequal(colnames(counts), cats)) counts[, cats, drop = FALSE] else counts
+}
+
+#' Multinomial measurement model: category counts
+#'
+#' With numbers of options on the model, one row per subject (and task) of
+#' `n_trials` trials, as `sdt_mafc`. With them named as columns of a trial
+#' design, one row per trial, a single response counted in its category,
+#' drawn with one `rm3(n, 1, ...)` call per distinct row of option counts
+#' (one call per trial cost 0.55 ms, measured in the 21.3 review). The
+#' parameters passed are those the activations use, which for the custom
+#' version is every free one (`m3_activations()`) and the fixed `b` when
+#' an activation reads it.
+#' `ss` and `cs` take bmm's own activation formulas; the custom version
+#' reads them off `formula` (D58).
+#'
+#' @noRd
+generate_m3 <- function(pars, n_trials, model, trial_design = NULL,
+                        formula = NULL) {
+  activations <- if (adapter_reads_formula(model)) {
+    m3_activations(formula, model)
+  }
+  values <- unlist(pars)
+  if (!is.null(activations)) {
+    values <- values[intersect(names(values), attr(activations, "used"))]
+  }
+  if (is.null(trial_design)) {
+    counts <- m3_counts(
+      n_trials, values, model, m3_options(model), activations
+    )
+  } else {
+    options <- lapply(seq_len(n_trials), function(t) {
+      m3_options(model, trial_design[t, , drop = FALSE], t)
+    })
+    key <- vapply(options, paste, character(1), collapse = "\r")
+    counts <- NULL
+    for (k in unique(key)) {
+      rows <- which(key == k)
+      drawn <- m3_counts(
+        1L, values, model, options[[rows[[1L]]]], activations,
+        n = length(rows)
+      )
+      if (is.null(counts)) {
+        counts <- matrix(0, n_trials, ncol(drawn),
+          dimnames = list(NULL, colnames(drawn))
+        )
+      }
+      counts[rows, ] <- drawn
+    }
+  }
+  name_columns(
+    as.data.frame(counts, row.names = NULL),
+    as.list(model$resp_vars$resp_cats)
+  )
 }

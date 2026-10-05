@@ -82,7 +82,10 @@ generating values.}
 \item{formula}{A \code{bmmformula}; \code{NULL} means \code{\link[=recovery_formula]{recovery_formula()}} of the
 cell's model; or a \verb{function(row)} of the one-row grid data frame
 returning a \code{bmmformula}, called once per row, for designs whose
-formula depends on the row.}
+formula depends on the row. For a custom \code{m3} with its built-in
+generator the formula also holds the activations, so it reaches the
+generator too (see \code{\link[=simulate_recovery]{simulate_recovery()}}) and is written to the grid
+record.}
 
 \item{prior}{Passed to \code{\link[=fit_cached]{fit_cached()}}; with components, \code{NULL} or a list
 with a prior per component.}

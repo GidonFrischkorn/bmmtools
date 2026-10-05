@@ -92,7 +92,9 @@ check_component_values <- function(pars, sds, model, tasks, task_col,
 #'   its seed.
 #' @param formula `NULL`, or the `bmmformula` [fit_components()] fits this
 #'   component with. `NULL` uses [recovery_formula()] with the task column
-#'   when there are tasks.
+#'   when there are tasks. A custom `m3` needs it, and its built-in
+#'   generator reads the activation formulas from it (see
+#'   [simulate_recovery()]).
 #' @param name The component's name, which prefixes its terms: `name = "m3"`
 #'   turns `c_task1` into `m3_c_task1`. A single syntactic name without `_`
 #'   or `.`, unique within a set.
@@ -167,6 +169,10 @@ recovery_component <- function(model,
       "{.arg formula} must be {.code NULL} or a {.cls bmmformula}, \\
        not {.obj_type_friendly {formula}}."
     )
+  }
+  # the custom m3's activations are in the fit formula (D58)
+  if (is.null(generator) && adapter_reads_formula(model)) {
+    check_generator_formula(formula, model, adapter = TRUE)
   }
   check_component_values(pars, sds, model, design$tasks, design$task_col)
 
@@ -554,6 +560,10 @@ simulate_component <- function(spec, realised, values, full, n_subjects,
     own_cors <- full[prefixed, prefixed, drop = FALSE]
     dimnames(own_cors) <- list(varying, varying)
   }
+  # the fit formula reaches only an adapter that reads it (D58)
+  formula <- if (is.null(spec$generator) && adapter_reads_formula(spec$model)) {
+    spec$formula
+  }
   in_component(spec$name,
     {
       simulate_recovery(
@@ -562,6 +572,7 @@ simulate_component <- function(spec, realised, values, full, n_subjects,
         sds = realised$sds, cors = own_cors,
         tasks = spec$tasks, task_col = spec$task_col %||% "task",
         subject_pars = subject_pars,
+        formula = formula,
         trial_design = spec$trial_design,
         generator = spec$generator,
         seed = NULL

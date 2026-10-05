@@ -1276,6 +1276,30 @@ test_that("a softmax term is scored on the link scale, with a message", {
   expect_identical(kappa$scale, "natural")
 })
 
+test_that("print and plot name the terms kept on the link scale", {
+  estimates <- fake_estimates(
+    c("kappa", "thetat", "thetant"),
+    estimate = c(2, 1, -0.5), ci_low = c(1, 0, -1), ci_high = c(3, 2, 0)
+  )
+  truth <- fake_truth(c("kappa", "thetat", "thetant"), c(2, 1.5, -0.5))
+  links <- c(kappa = "log", thetat = "softmax", thetant = "softmax")
+  out <- suppressMessages(
+    recover(estimates, truth, scale = "natural", links = links)
+  )
+  expect_match(
+    format(out), "thetat, thetant are on the link scale",
+    fixed = TRUE, all = FALSE
+  )
+  skip_if_not_installed("ggplot2")
+  expect_identical(
+    plot_recovery(out)$labels$caption, "thetat, thetant: link scale"
+  )
+  # nothing kept on the link scale, nothing said
+  plain <- recover(estimates[1, ], truth[1, ], scale = "natural", links = links)
+  expect_no_match(format(plain), "on the link scale")
+  expect_null(plot_recovery(plain)$labels$caption)
+})
+
 test_that("softmax terms at the subject level and on the link scale", {
   estimates <- fake_estimates(
     c("thetat", "thetat"),

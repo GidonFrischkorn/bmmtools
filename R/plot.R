@@ -266,9 +266,30 @@ plot_recovery.bmmtools_recovery <- function(x,
     ggplot2::labs(
       x = scale_label(scale, "Generating value"),
       y = scale_label(scale, "Posterior median"),
-      colour = color_by
+      colour = color_by,
+      caption = link_terms_note(x, scale, "{terms}: link scale")
     ) +
     ggplot2::theme_bw()
+}
+
+#' A note naming the terms kept on the link scale of a natural-scale object
+#'
+#' A `softmax` term (D56) is scored on the link scale whatever `scale`
+#' says, and its rows' `scale` column says so; SD and effect rows are too,
+#' and are named elsewhere. `NULL` when there is nothing to say.
+#'
+#' @param template Text with `{terms}` where the term names go.
+#' @noRd
+link_terms_note <- function(x, scale, template) {
+  if (!identical(scale, "natural")) {
+    return(NULL)
+  }
+  kept <- x$scale == "link" & !x$level %in% c("sd", "effect")
+  terms <- unique(x$term[kept])
+  if (length(terms) == 0L) {
+    return(NULL)
+  }
+  sub("{terms}", paste(terms, collapse = ", "), template, fixed = TRUE)
 }
 
 #' @rdname plot_recovery

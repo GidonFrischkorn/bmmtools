@@ -188,7 +188,7 @@ design that meets a target.
 
 bmmtools reads more of a fitted model than bmm's exported API promises.
 The scorers take `$links`, `$fixed_parameters`, `$resp_vars` and
-`$other_vars` directly off the `bmmodel` object, and nine generator
+`$other_vars` directly off the `bmmodel` object, and ten generator
 adapters translate a model's own parameters into the arguments of its
 `r*()` function — `thetat` on the logit scale becomes `p_mem` for
 `rmixture2p()`, for example. None of that is part of bmm's documented

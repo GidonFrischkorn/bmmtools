@@ -73,10 +73,18 @@ check_pars <- function(pars, model, tasks = NULL, task_col = NULL,
   known <- c(info$free, info$fixed)
   unknown <- setdiff(names(pars), known)
   if (length(unknown) > 0L) {
+    # a custom m3 learns its parameters from the formula at fit time, so
+    # without links it has none to give values to
+    hint <- if (inherits(model, "m3_custom") && length(info$free) == 0L) {
+      c(i = "A custom {.cls m3} knows its parameters only from their links: \
+             build it with {.code m3(..., links = list(...))}, one link per \
+             parameter of its activation formulas.")
+    }
     cli::cli_abort(
       c(
         "{.arg pars} names {.val {unknown}}, which the model does not have.",
-        i = "Its parameters are {.val {known}}."
+        i = "Its parameters are {.val {known}}.",
+        hint
       ),
       call = call
     )
@@ -658,6 +666,53 @@ check_trial_design_needs <- function(columns, needed,
   invisible(columns)
 }
 
+#' Check the formula a generator is handed (D58)
+#'
+#' Only a built-in adapter that reads one gets it, and that adapter needs
+#' it: its activations are checked here, before anything is drawn.
+#'
+#' @return The formula, or `NULL`.
+#' @noRd
+check_generator_formula <- function(formula, model, adapter,
+                                    call = rlang::caller_env()) {
+  reads <- adapter && adapter_reads_formula(model)
+  if (is.null(formula)) {
+    if (reads) m3_activations(NULL, model, call = call)
+    return(NULL)
+  }
+  if (!inherits(formula, "bmmformula")) {
+    cli::cli_abort(
+      "{.arg formula} must be {.code NULL} or a {.cls bmmformula}, \
+       not {.obj_type_friendly {formula}}.",
+      call = call
+    )
+  }
+  if (!adapter) {
+    cli::cli_abort(
+      c(
+        "{.arg formula} reaches only a built-in generator, never \
+         {.arg generator}.",
+        i = "A generator you write closes over its own formula; leave \
+             {.arg formula} out."
+      ),
+      call = call
+    )
+  }
+  if (!reads) {
+    cli::cli_abort(
+      c(
+        "The built-in generator for {.cls {adapter_name(model)}} does not \
+         read a formula.",
+        i = "Only the custom {.cls m3} takes its activations from \
+             {.arg formula}; leave it out."
+      ),
+      call = call
+    )
+  }
+  m3_activations(formula, model, call = call)
+  formula
+}
+
 #' One generator call's rows of the design
 #'
 #' The data frame itself; subject `i`'s rows of an `id`-keyed one, without
@@ -721,7 +776,7 @@ trial_design_rows <- function(trial_design, i, n_trials, model, cov_names,
 generate_data <- function(values, pars, model, generator, n_subjects,
                           n_trials, tasks, task_col, cov_names,
                           trial_design = NULL, needed = character(),
-                          call = rlang::caller_env()) {
+                          formula = NULL, call = rlang::caller_env()) {
   layout <- task_layout(pars, model, tasks, task_col)
   design_columns <- NULL
   pieces <- lapply(seq_len(n_subjects), function(i) {
@@ -733,7 +788,14 @@ generate_data <- function(values, pars, model, generator, n_subjects,
         call = call
       )
       pars_k <- natural_pars(link_values, model)
-      rows <- if (is.null(design)) {
+      # the 0.2.0 call without a design or a formula; a formula reaches
+      # only an adapter that reads one (D58)
+      rows <- if (!is.null(formula)) {
+        generator(pars_k, n_trials, model,
+          trial_design = design,
+          formula = formula
+        )
+      } else if (is.null(design)) {
         generator(pars_k, n_trials, model)
       } else {
         generator(pars_k, n_trials, model, trial_design = design)
@@ -884,6 +946,13 @@ truth_tables <- function(pars, sds, values, cors = NULL, covariates = NULL) {
 #'   scale) of subject values to use instead of drawing them, so that
 #'   replications can share the same simulated people. With `covariates`
 #'   it must give their values too.
+#' @param formula `NULL`, or the `bmmformula` the model is fitted with,
+#'   for a built-in generator that reads it: only the custom version of
+#'   `m3`, whose activation formulas exist nowhere else (see the section
+#'   "The m3 model"). A formula for any other model, or with a
+#'   `generator`, is an error: a generator you write closes over its own.
+#'   [recovery_grid()], [recovery_component()] and [sbc()] pass on the
+#'   formula they fit with.
 #' @param trial_design `NULL`, or the per-trial variables of the design
 #'   (set sizes, non-target locations, option counts): what a generator
 #'   needs per trial and the model reads from the data but does not hold.
@@ -921,15 +990,18 @@ truth_tables <- function(pars, sds, values, cors = NULL, covariates = NULL) {
 #'   covariates, `NULL` with fewer than two) and `covariates`,
 #'   `n_subjects`, `n_trials`, `seed` (`NA` when none), `model`,
 #'   `generator`, `tasks` and `task_col` (both `NULL` without tasks),
-#'   `trial_design` (`NULL`, the data frame, or a function's text) and
-#'   `trial_design_columns` (the columns it contributed to `data`).
+#'   `trial_design` (`NULL`, the data frame, or a function's text),
+#'   `trial_design_columns` (the columns it contributed to `data`) and
+#'   `formula` (`NULL`, or the formula that reached the generator, each
+#'   element deparsed to text).
 #'
 #' @details
 #' Adapters exist for `sdt_yn`, `sdt_mafc`, `ezdm` (three parameters),
-#' `ddm`, `cswald` (both versions), `mixture2p`, `sdm`, `mixture3p` and
-#' `imm` (`full`, `bsc` and `abc`). Every other model takes a `generator`.
-#' The `mixture3p` and `imm` adapters need a `trial_design`; see the
-#' section "Trial design".
+#' `ddm`, `cswald` (both versions), `mixture2p`, `sdm`, `mixture3p`,
+#' `imm` (`full`, `bsc` and `abc`) and `m3` (`ss`, `cs` and `custom`).
+#' Every other model takes a `generator`. The `mixture3p` and `imm`
+#' adapters need a `trial_design`; see the section "Trial design". The
+#' custom `m3` needs `formula`; see the section "The m3 model".
 #' The truth for the subjects and for the SDs lists only the parameters
 #' that vary, because a parameter that does not vary has nothing
 #' person-level to recover.
@@ -985,6 +1057,10 @@ truth_tables <- function(pars, sds, values, cors = NULL, covariates = NULL) {
 #' parameter whose link is `softmax` reaches the generator on the link
 #' scale, and [recover()] scores it there (its `scale` column says so).
 #'
+#' **`m3` with its numbers of options as columns.** When `num_options`
+#' names columns, those columns are a trial design and each of its rows
+#' is one trial: see the section "The m3 model".
+#'
 #' Without `trial_design` nothing changes: the generator is called with
 #' three arguments, as in bmmtools 0.2.0, and a seeded simulation gives
 #' the same data, and so the same [fit_cached()] key. A data frame draws
@@ -994,6 +1070,31 @@ truth_tables <- function(pars, sds, values, cors = NULL, covariates = NULL) {
 #' count, a missing column) stops the simulation after some random numbers
 #' have been drawn; under `seed` that changes nothing, and without one the
 #' random number stream has moved.
+#'
+#' @section The m3 model:
+#' `m3`'s response is a count per category, in the columns `resp_cats`
+#' names. With numbers of options on the model (`num_options = c(1, 4,
+#' 5)`), a subject has **one row of `n_trials` trials** per task, drawn
+#' with one [bmm::rm3()] call, as `sdt_mafc` has one row of counts. With
+#' `num_options` naming columns, the options differ between trials, so
+#' those columns come from `trial_design` and **each row is one trial**:
+#' `n_trials` rows per subject, each counting one response in its
+#' category. The probabilities are bmm's: each category's activation,
+#' exponentiated under `choice_rule = "softmax"`, times its number of
+#' options, normalised. The parameters' links are elementwise, and which
+#' links the model has depends on the choice rule, so take `pars` on the
+#' link scale of the model as built: `bmm::parameters()` lists them for
+#' `ss` and `cs`, and the model's `links` for `custom`.
+#'
+#' The versions `ss` and `cs` take their activation formulas from bmm. The
+#' `custom` version knows its activations only from the formula it is
+#' fitted with, so it needs `formula`, holding one activation per category
+#' (`corr ~ b + a + c`), and a model built with a link for each parameter
+#' they use (`m3(..., links = list(c = "log", a = "log"))`); without links
+#' bmm knows no parameter to give a value to until it fits. Every
+#' parameter with a link must appear in an activation. Extra parameter
+#' formulas in `formula` (`c ~ 1 + (1 | id)`) are ignored here, and a
+#' grid records only the activations.
 #'
 #' @examples
 #' \dontrun{
@@ -1054,6 +1155,23 @@ truth_tables <- function(pars, sds, values, cors = NULL, covariates = NULL) {
 #'   pars = c(kappa = log(8), thetat = 1.5, thetant = 0),
 #'   n_subjects = 10, n_trials = 60, trial_design = lures, seed = 1
 #' )
+#'
+#' # a custom m3: the activation formulas reach the adapter through formula
+#' model <- bmm::m3(
+#'   resp_cats = c("corr", "other", "npl"), num_options = c(1, 4, 5),
+#'   choice_rule = "simple", version = "custom",
+#'   links = list(c = "log", a = "log")
+#' )
+#' formula <- bmm::bmf(
+#'   corr ~ b + a + c, other ~ b + a, npl ~ b,
+#'   c ~ 1 + (1 | id), a ~ 1 + (1 | id)
+#' )
+#' sim <- simulate_recovery(
+#'   model,
+#'   pars = c(c = log(3), a = log(0.5)),
+#'   n_subjects = 30, n_trials = 100, sds = c(c = 0.3),
+#'   formula = formula, seed = 1
+#' )
 #' }
 #'
 #' @export
@@ -1069,6 +1187,7 @@ simulate_recovery <- function(model,
                               coding = c("cell", "contrast"),
                               contrasts = NULL,
                               subject_pars = NULL,
+                              formula = NULL,
                               trial_design = NULL,
                               generator = NULL,
                               seed = NULL) {
@@ -1122,6 +1241,7 @@ simulate_recovery <- function(model,
     trial_design, n_subjects, n_trials, model, cov_names, task_col
   )
   check_trial_design_generator(trial_design, generator, model, adapter)
+  formula <- check_generator_formula(formula, model, adapter)
 
   # functions first, under the seed and in a fixed order, so that random
   # hyperparameters continue the stream the subject draws then take
@@ -1145,7 +1265,8 @@ simulate_recovery <- function(model,
     generated <- generate_data(
       values, pars, model, generator, n_subjects, n_trials,
       tasks, task_col, cov_names, trial_design,
-      needed = if (adapter) trial_design_columns(model) else character()
+      needed = if (adapter) trial_design_columns(model) else character(),
+      formula = formula
     )
     data <- generated$data
     # covariates are drawn after the generator, so their random numbers
@@ -1220,7 +1341,9 @@ simulate_recovery <- function(model,
       # a function is kept as its text, as cache_key() keeps `init`: its
       # environment would otherwise be saved into every cell file
       trial_design = function_key(trial_design),
-      trial_design_columns = out$design_columns
+      trial_design_columns = out$design_columns,
+      # as in the cache key: the text, not the environment it was built in
+      formula = if (!is.null(formula)) formula_key(formula)
     ),
     class = "bmmtools_simulation"
   )
@@ -1241,6 +1364,14 @@ print.bmmtools_simulation <- function(x, ...) {
   if (length(x$trial_design_columns) > 0L) {
     extra <- c(extra, paste0(
       "; trial design: ", paste(x$trial_design_columns, collapse = ", ")
+    ))
+  }
+  activations <- intersect(
+    names(x$formula), unlist(x$model$resp_vars, use.names = FALSE)
+  )
+  if (length(activations) > 0L) {
+    extra <- c(extra, paste0(
+      "; activation formulas: ", paste(activations, collapse = ", ")
     ))
   }
   nonzero <- x$truth$cor[x$truth$cor$true_value != 0, , drop = FALSE]

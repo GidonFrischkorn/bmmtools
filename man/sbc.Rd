@@ -35,7 +35,10 @@ term: the default generator maps a prior draw onto
 \code{\link[=simulate_recovery]{simulate_recovery()}}'s arguments, and that map is exact for those
 shapes and guesswork for a covariate or a task factor. With a
 \code{generator} any formula works, as long as every parameter that has
-a group term has the same one, written as a bare column name.}
+a group term has the same one, written as a bare column name. A
+custom \code{m3}'s activation formulas are not parameter formulas: the
+check skips them, and the default generator reads them (see
+\code{formula} in \code{\link[=simulate_recovery]{simulate_recovery()}}).}
 
 \item{data}{The design to simulate over, and only that: the subjects
 are the unique values of the grouping column and the trials are the

@@ -379,6 +379,20 @@ check_sbc_formula <- function(formula, call = rlang::caller_env()) {
   out
 }
 
+#' The parameter formulas, without a custom `m3`'s activation formulas
+#'
+#' The activations (`corr ~ b + a + c`) are not parameter formulas: they
+#' define the model and reach its generator whole (D58), so the default
+#' generator's intercept-only check is over the rest.
+#'
+#' @noRd
+sbc_parameter_formulas <- function(formula, model) {
+  if (!adapter_reads_formula(model) || !inherits(formula, "bmmformula")) {
+    return(formula)
+  }
+  formula[!names(formula) %in% model$resp_vars$resp_cats]
+}
+
 #' The design `data` describes: how many subjects, how many trials each
 #'
 #' Only the layout is read; the response values are ignored, because the
@@ -874,6 +888,7 @@ simulate_from_draw <- function(row, row_number, model, layout, population,
         stats::setNames(unname(row[sds]), varying)
       },
       cors = sbc_cor_matrix(row, pairs, varying),
+      formula = layout$formula,
       trial_design = layout$trial_design,
       seed = NULL
     ),
@@ -1459,7 +1474,10 @@ check_sbc_args <- function(prior, seed, fitter, cache_mode, cache_location,
 #'   [simulate_recovery()]'s arguments, and that map is exact for those
 #'   shapes and guesswork for a covariate or a task factor. With a
 #'   `generator` any formula works, as long as every parameter that has
-#'   a group term has the same one, written as a bare column name.
+#'   a group term has the same one, written as a bare column name. A
+#'   custom `m3`'s activation formulas are not parameter formulas: the
+#'   check skips them, and the default generator reads them (see
+#'   `formula` in [simulate_recovery()]).
 #' @param data The design to simulate over, and only that: the subjects
 #'   are the unique values of the grouping column and the trials are the
 #'   rows each of them has. The response values are ignored, because the
@@ -1691,12 +1709,16 @@ sbc <- function(model,
   groups <- if (user) {
     sbc_formula_groups(formula)
   } else {
-    check_sbc_formula(formula)
+    check_sbc_formula(sbc_parameter_formulas(formula, model))
   }
   group <- groups$group %||% "id"
   check_group_ids(data, group)
   layout <- sbc_layout(data, group, balanced = !user)
   if (!user) layout$trial_design <- sbc_trial_design(data, model, layout)
+  # the custom m3's activations are in the formula under check (D58)
+  if (!user && adapter_reads_formula(model)) {
+    layout$formula <- check_generator_formula(formula, model, adapter = TRUE)
+  }
   sets <- if (!user) sbc_pattern_sets(model, groups, group, level)
 
   check_improper_priors(formula, data, model, list(sbc = prior))

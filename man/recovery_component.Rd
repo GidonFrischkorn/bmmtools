@@ -27,7 +27,9 @@ its seed.}
 
 \item{formula}{\code{NULL}, or the \code{bmmformula} \code{\link[=fit_components]{fit_components()}} fits this
 component with. \code{NULL} uses \code{\link[=recovery_formula]{recovery_formula()}} with the task column
-when there are tasks.}
+when there are tasks. A custom \code{m3} needs it, and its built-in
+generator reads the activation formulas from it (see
+\code{\link[=simulate_recovery]{simulate_recovery()}}).}
 
 \item{name}{The component's name, which prefixes its terms: \code{name = "m3"}
 turns \code{c_task1} into \code{m3_c_task1}. A single syntactic name without \verb{_}

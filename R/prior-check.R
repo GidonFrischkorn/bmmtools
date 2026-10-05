@@ -84,7 +84,11 @@ yrep_list <- function(yrep, model, call = rlang::caller_env()) {
   }
   if (is.array(yrep) && length(dim(yrep)) == 3L) {
     k <- dim(yrep)[[3L]]
-    names_k <- dimnames(yrep)[[3L]] %||% paste0("response_", seq_len(k))
+    # a multinomial model (m3) has one slice per category
+    cats <- model$resp_vars$resp_cats
+    names_k <- dimnames(yrep)[[3L]] %||%
+      (if (length(cats) == k) cats) %||%
+      paste0("response_", seq_len(k))
     out <- lapply(seq_len(k), function(i) yrep[, , i, drop = TRUE])
     return(stats::setNames(out, names_k))
   }
@@ -127,6 +131,20 @@ response_range <- function(model, data, call = rlang::caller_env()) {
   }
   if (key %in% c("mixture2p", "sdm", "mixture3p", "imm")) {
     return(list(floor = -pi, ceiling = pi))
+  }
+  # m3: a count per category out of the row's trials, which bmm takes to
+  # be the row's total, reading NA as 0 (check_data.m3())
+  if (identical(key, "m3")) {
+    cats <- model$resp_vars$resp_cats
+    missing <- setdiff(cats, names(data))
+    if (length(missing) > 0L) {
+      return(none(
+        "The column{?s} {.val {missing}} {?is/are} not in {.arg data}, so \
+         the ceiling of the response counts is unknown."
+      ))
+    }
+    counts <- as.matrix(as.data.frame(data)[cats])
+    return(list(floor = 0, ceiling = unname(rowSums(counts, na.rm = TRUE))))
   }
   # sdt_yn and sdt_mafc: a count out of the trials in that row
   column <- model$other_vars$n_trials
