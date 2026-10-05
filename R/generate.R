@@ -596,7 +596,9 @@ check_trial_design_rows <- function(n_rows, n_trials, where = "",
 #'
 #' A built-in adapter can when [trial_design_columns()] names columns for
 #' the model, and then the design must have them (a function's result is
-#' checked per call). A user generator can when it has a `trial_design`
+#' checked per call). A count adapter may take one and need not
+#' ([count_design_columns()]); its counts are checked here when the design
+#' is a data frame. A user generator can when it has a `trial_design`
 #' formal or `...`.
 #'
 #' @noRd
@@ -604,6 +606,14 @@ check_trial_design_generator <- function(trial_design, generator, model,
                                          adapter = FALSE,
                                          call = rlang::caller_env()) {
   needed <- if (adapter) trial_design_columns(model) else character()
+  optional <- if (adapter) count_design_columns(model) else character()
+  if (length(optional) > 0L) {
+    if (is.data.frame(trial_design)) {
+      check_trial_design_needs(names(trial_design), optional, call = call)
+      check_count_design(trial_design, model, call = call)
+    }
+    return(invisible(NULL))
+  }
   if (adapter && length(needed) == 0L) {
     if (!is.null(trial_design)) {
       cli::cli_abort(
@@ -650,6 +660,12 @@ check_trial_design_generator <- function(trial_design, generator, model,
     )
   }
   invisible(NULL)
+}
+
+#' Every column a built-in adapter reads from a design it is given
+#' @noRd
+design_columns_read <- function(model) {
+  c(trial_design_columns(model), count_design_columns(model))
 }
 
 #' @noRd
@@ -754,6 +770,7 @@ trial_design_rows <- function(trial_design, i, n_trials, model, cov_names,
       verb = "returned", call = call
     )
     check_trial_design_needs(names(rows), needed, call = call)
+    if (length(needed) > 0L) check_count_design(rows, model, call = call)
     return(rows)
   }
   if (!"id" %in% names(trial_design)) {
@@ -900,6 +917,9 @@ truth_tables <- function(pars, sds, values, cors = NULL, covariates = NULL) {
 #'   a vector, evaluated under `seed`, for random hyperparameters.
 #' @param n_subjects,n_trials Subjects, and trials per subject and per
 #'   row of the generator's layout (for `sdt_yn`, per stimulus class).
+#'   With a `trial_design`, `n_trials` is the number of design rows per
+#'   subject, which for a count model are rows of data, not trials (see
+#'   the section "Trial design").
 #' @param sds Named numeric: between-subject standard deviations on the
 #'   link scale. A parameter not named does not vary. `NULL` means no
 #'   parameter varies. May be a function, as `pars`.
@@ -956,6 +976,8 @@ truth_tables <- function(pars, sds, values, cors = NULL, covariates = NULL) {
 #' @param trial_design `NULL`, or the per-trial variables of the design
 #'   (set sizes, non-target locations, option counts): what a generator
 #'   needs per trial and the model reads from the data but does not hold.
+#'   For a count model, the number of trials (and stimulus) of each row
+#'   instead; see the section "Trial design".
 #'   One of
 #'   * a data frame of `n_trials` rows, one trial list used for every
 #'     subject (and every task);
@@ -1060,6 +1082,19 @@ truth_tables <- function(pars, sds, values, cors = NULL, covariates = NULL) {
 #' **`m3` with its numbers of options as columns.** When `num_options`
 #' names columns, those columns are a trial design and each of its rows
 #' is one trial: see the section "The m3 model".
+#'
+#' **Count models.** One row of `sdt_yn`, `sdt_mafc`, `ezdm` or `m3` with
+#' numbers of options holds many trials. Without a design, every row holds
+#' `n_trials` of them. A design is optional for these models; with one,
+#' each design row is one row of `data` and carries its own number of
+#' trials, so `n_trials` counts the design rows. The trial count is read
+#' from the model's `n_trials` column, and for `m3`, which has none, from
+#' a design column `n_trials`. `sdt_yn` also reads its stimulus column
+#' (0 or 1), so that 100 signal and 50 noise trials are
+#' `data.frame(stimulus = c(1, 0), n_trials = c(100, 50))` under the
+#' model's column names. A count must be a whole number of at least 1, and
+#' of at least 3 for `ezdm`, whose generator refuses fewer; a design that
+#' breaks this is refused before anything is drawn.
 #'
 #' Without `trial_design` nothing changes: the generator is called with
 #' three arguments, as in bmmtools 0.2.0, and a seeded simulation gives
@@ -1265,7 +1300,7 @@ simulate_recovery <- function(model,
     generated <- generate_data(
       values, pars, model, generator, n_subjects, n_trials,
       tasks, task_col, cov_names, trial_design,
-      needed = if (adapter) trial_design_columns(model) else character(),
+      needed = if (adapter) design_columns_read(model) else character(),
       formula = formula
     )
     data <- generated$data

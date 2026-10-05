@@ -50,7 +50,13 @@ meet its own \code{r_} draw. Without a \code{generator}, a model whose built-in
 generator reads a trial design (see \code{trial_design} in
 \code{\link[=simulate_recovery]{simulate_recovery()}}) takes it from \code{data}: the columns that
 generator reads, per subject and in \code{data}'s order, so every
-simulated data set has the trials of \code{data}. With a \code{generator},
+simulated data set has the trials of \code{data}. So does a count model
+(\code{sdt_yn}, \code{sdt_mafc}, \code{ezdm}, \code{m3} with numbers of options): each
+simulated row holds the trials its row of \code{data} holds, read from the
+model's \code{n_trials} column, or for \code{m3} from the row's total over
+\code{resp_cats}, and rows may hold different numbers. A count that
+cannot be simulated (not a whole number, or below 3 for \code{ezdm}) is an
+error before the prior is fitted. With a \code{generator},
 \code{data} is handed to it as it is, columns and all.}
 
 \item{prior}{A \code{brmsprior}, or \code{NULL} for bmm's defaults. This is the
@@ -114,7 +120,14 @@ the population value itself.}
 \item{...}{Passed to the fitter, for the prior fit and for every data
 set fit: \code{chains}, \code{iter}, \code{backend}, \code{init}, \code{control}. \code{cores},
 \code{sample_prior}, \code{file}, \code{file_refit} and \code{file_compress} are
-refused, each with a message saying where it belongs.}
+refused, each with a message saying where it belongs. Use cmdstanr
+as the \code{backend} (or none, with cmdstanr installed and no
+\code{brms.backend} option): it compiles the
+model once for every data set, while rstan compiles again for each
+fit, 19 to 23 s per fit in a measurement on \code{mixture2p}; see
+"Backend" in \code{\link[=recovery_grid]{recovery_grid()}}, which also names
+\code{options(cmdstanr_write_stan_file_dir = )} for runs resumed in a new
+session.}
 
 \item{seed}{Applied around the prior-draw subsample and around
 \code{SBC::generate_datasets()}, so the same seed gives the same data

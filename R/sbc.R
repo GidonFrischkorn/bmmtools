@@ -914,30 +914,48 @@ simulate_from_draw <- function(row, row_number, model, layout, population,
 #' The trial design `data` describes, for the default generator (D55)
 #'
 #' Exactly the columns the model's adapter reads from a design
-#' ([trial_design_columns()]), keyed by subject: `ids[i]` of the layout
+#' ([trial_design_columns()], or for a count model
+#' [count_design_columns()]), keyed by subject: `ids[i]` of the layout
 #' becomes `id = i`, the numbering `simulate_recovery()` uses, and
 #' `relabel_subjects()` turns it back. Within a subject the rows keep
 #' `data`'s order. Every other column of `data` is ignored, as the response
 #' values are, so a column an adapter writes itself is never handed back
 #' to it.
 #'
+#' A count model always gets a design, so that every simulated row holds
+#' the trials its row of `data` holds. Before 0.3.0 it got none, and was
+#' simulated with as many trials per row as `data` has rows per subject
+#' (#26). `m3` with numbers of options has no trial-count column: its
+#' design's `n_trials` is each row's total over `resp_cats`. The counts are
+#' checked here, before the prior fit, so that a design error is never
+#' reported as a property of a prior draw.
+#'
 #' @return `NULL` when the adapter reads no design, otherwise an
 #'   `id`-keyed data frame.
 #' @noRd
 sbc_trial_design <- function(data, model, layout,
                              call = rlang::caller_env()) {
-  columns <- trial_design_columns(model)
+  columns <- design_columns_read(model)
   if (length(columns) == 0L) {
     return(NULL)
   }
+  count <- length(count_design_columns(model)) > 0L
+  m3_counts <- identical(adapter_name(model), "m3") &&
+    !is.character(model$other_vars$num_options)
+  if (m3_counts) {
+    data <- as.data.frame(data)
+    data$n_trials <- sbc_m3_totals(data, model, call = call)
+  }
   missing <- setdiff(columns, names(data))
   if (length(missing) > 0L) {
+    # nolint next: object_usage_linter. Used by cli's glue interpolation.
+    reads <- if (count) "per row" else "per trial"
     cli::cli_abort(
       c(
         "{cli::qty(missing)}{.arg data} lacks the column{?s} \\
          {.val {missing}}, which the generator for \\
-         {.cls {adapter_name(model)}} reads per trial.",
-        i = "The default generator takes the trial design from {.arg data}."
+         {.cls {adapter_name(model)}} reads {reads}.",
+        i = "The default generator takes the design from {.arg data}."
       ),
       call = call
     )
@@ -949,7 +967,63 @@ sbc_trial_design <- function(data, model, layout,
     check.names = FALSE
   )
   rownames(out) <- NULL
+  out <- sbc_stimulus_numbers(out, model)
+  check_count_design(out, model, in_data = TRUE, call = call)
   out
+}
+
+#' An `sdt_yn` stimulus read as bmm reads it
+#'
+#' bmm's data check takes a factor or character stimulus holding "0" and
+#' "1" and reads it as numbers (its internal `.validate_sdt_stimulus()`,
+#' read 2026-10-05 on the installed 1.3.2.9000), so `data` that bmm fits
+#' is `data` `sbc()` can simulate from. Anything else is left for
+#' [check_count_design()] to refuse.
+#'
+#' @noRd
+sbc_stimulus_numbers <- function(design, model) {
+  columns <- count_design_columns(model)
+  if (length(columns) != 2L) {
+    return(design)
+  }
+  stimulus <- design[[columns[[1L]]]]
+  if (is.factor(stimulus) || is.character(stimulus)) {
+    text <- as.character(stimulus)
+    if (all(text %in% c("0", "1"))) {
+      design[[columns[[1L]]]] <- as.numeric(text)
+    }
+  }
+  design
+}
+
+#' The trials in each row of an `m3` `data`: its total over `resp_cats`
+#' @noRd
+sbc_m3_totals <- function(data, model, call = rlang::caller_env()) {
+  cats <- model$resp_vars$resp_cats
+  missing <- setdiff(cats, names(data))
+  if (length(missing) > 0L) {
+    cli::cli_abort(
+      c(
+        "{cli::qty(missing)}{.arg data} lacks the column{?s} \\
+         {.val {missing}}.",
+        i = "The default generator for {.cls m3} reads each row's number \\
+             of trials as its total over {.val {cats}}."
+      ),
+      call = call
+    )
+  }
+  numeric <- vapply(data[cats], is.numeric, logical(1))
+  if (!all(numeric)) {
+    cli::cli_abort(
+      c(
+        "{.arg data}'s column{?s} {.val {cats[!numeric]}} must be numeric.",
+        i = "They are counts, and each row's total over them is its number \\
+             of trials."
+      ),
+      call = call
+    )
+  }
+  unname(rowSums(data[cats]))
 }
 
 #' The SBC generator: one prior draw, one simulated data set
@@ -1488,7 +1562,13 @@ check_sbc_args <- function(prior, seed, fitter, cache_mode, cache_location,
 #'   generator reads a trial design (see `trial_design` in
 #'   [simulate_recovery()]) takes it from `data`: the columns that
 #'   generator reads, per subject and in `data`'s order, so every
-#'   simulated data set has the trials of `data`. With a `generator`,
+#'   simulated data set has the trials of `data`. So does a count model
+#'   (`sdt_yn`, `sdt_mafc`, `ezdm`, `m3` with numbers of options): each
+#'   simulated row holds the trials its row of `data` holds, read from the
+#'   model's `n_trials` column, or for `m3` from the row's total over
+#'   `resp_cats`, and rows may hold different numbers. A count that
+#'   cannot be simulated (not a whole number, or below 3 for `ezdm`) is an
+#'   error before the prior is fitted. With a `generator`,
 #'   `data` is handed to it as it is, columns and all.
 #' @param prior A `brmsprior`, or `NULL` for bmm's defaults. This is the
 #'   prior that is calibrated, so `NULL` calibrates bmm's own. A list is
@@ -1547,7 +1627,14 @@ check_sbc_args <- function(prior, seed, fitter, cache_mode, cache_location,
 #' @param ... Passed to the fitter, for the prior fit and for every data
 #'   set fit: `chains`, `iter`, `backend`, `init`, `control`. `cores`,
 #'   `sample_prior`, `file`, `file_refit` and `file_compress` are
-#'   refused, each with a message saying where it belongs.
+#'   refused, each with a message saying where it belongs. Use cmdstanr
+#'   as the `backend` (or none, with cmdstanr installed and no
+#'   `brms.backend` option): it compiles the
+#'   model once for every data set, while rstan compiles again for each
+#'   fit, 19 to 23 s per fit in a measurement on `mixture2p`; see
+#'   "Backend" in [recovery_grid()], which also names
+#'   `options(cmdstanr_write_stan_file_dir = )` for runs resumed in a new
+#'   session.
 #' @param seed Applied around the prior-draw subsample and around
 #'   `SBC::generate_datasets()`, so the same seed gives the same data
 #'   sets, and passed to the fitter of the prior fit, where it enters

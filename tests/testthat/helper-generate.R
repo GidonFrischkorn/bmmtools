@@ -45,7 +45,7 @@ grid_mock_fitter <- function(fail_on = NULL) {
 #'
 #' @noRd
 mock_terms <- function(formula, data, model) {
-  p <- bmm::parameters(model)
+  p <- bmm_parameter_info(model)
   free <- p$parameter[!p$fixed]
   rhs <- if (length(formula) > 0L) all.vars(formula[[1L]][[3L]]) else NULL
   task_col <- setdiff(rhs, c("id", "p"))

@@ -105,7 +105,8 @@ adapter_reads_formula <- function(model) {
 #' itself, named from the model object. Empty for every adapter that
 #' reads none, which is all seven of the 0.2.0 table: those refuse a
 #' design, because a column nobody generated from would sit in the data
-#' as if it mattered. [sbc()]'s default generator takes exactly these
+#' as if it mattered, except a count model, which may take one
+#' ([count_design_columns()]). [sbc()]'s default generator takes exactly these
 #' columns from its `data`, so a column the adapter writes itself
 #' (`sdt_yn`'s `stimulus`) is never handed back to it.
 #'
@@ -143,6 +144,116 @@ trial_design_columns <- function(model) {
   c(set_size, vars$nt_features, vars$nt_distances)
 }
 
+#' The columns a count adapter reads from a trial design, if given one
+#'
+#' One row of a count model holds many trials. Without a design, every
+#' row holds `n_trials` of them, as in 0.2.0. With one, each design row is
+#' one row of the data and carries its own number of trials, so a design
+#' whose rows differ, such as 100 signal and 50 noise trials, can be
+#' simulated (#26). The design is optional, unlike the required columns of
+#' [trial_design_columns()].
+#'
+#' `sdt_yn` reads the stimulus class with the count, so that a row keeps
+#' its class. `m3` with numbers of options has no trial-count column of its
+#' own, so its design names one `n_trials`; `m3` with option columns is a
+#' per-trial model and reads none.
+#'
+#' @param model A `bmmodel`.
+#' @return A character vector, the count column last; empty for every
+#'   adapter that is not a count model.
+#' @noRd
+count_design_columns <- function(model) {
+  key <- adapter_name(model)
+  if (is.na(key)) {
+    return(character())
+  }
+  vars <- model$other_vars
+  switch(key,
+    sdt_yn = unname(c(vars$stimulus, vars$n_trials)),
+    sdt_mafc = ,
+    ezdm = unname(vars$n_trials),
+    m3 = if (is.character(vars$num_options)) character() else "n_trials",
+    character()
+  )
+}
+
+#' Check a count design's values, naming the rows that are wrong
+#'
+#' Run before anything is drawn, so that a design error is never reported
+#' as a property of the parameters or the prior. A count is a whole number
+#' of at least 1; `bmm::rezdm()` refuses 2 or fewer ("n_trials must be
+#' larger than 2"), and `bmm::rsdt_mafc()` returns `NA` for 2.5 without an
+#' error (both measured 2026-10-05 on the installed 1.3.2.9000).
+#'
+#' @param in_data `TRUE` when the design was read from [sbc()]'s `data`,
+#'   whose rows it keeps: the messages then name `data` and, for `m3`, the
+#'   row total over `resp_cats`, which is what the design's `n_trials` is.
+#' @noRd
+check_count_design <- function(design, model, in_data = FALSE,
+                               call = rlang::caller_env()) {
+  columns <- count_design_columns(model)
+  if (length(columns) == 0L) {
+    return(invisible(design))
+  }
+  # nolint start: object_usage_linter. Used by cli's glue interpolation.
+  where <- function(column) {
+    if (!in_data) {
+      return(cli::format_inline("{.arg trial_design}'s column {.val {column}}"))
+    }
+    if (identical(adapter_name(model), "m3")) {
+      # one line: format_inline() keeps a backslash-newline as it is
+      cats <- model$resp_vars$resp_cats
+      return(cli::format_inline(
+        "The total of each row of {.arg data} over {.val {cats}}"
+      ))
+    }
+    cli::format_inline("Column {.val {column}} of {.arg data}")
+  }
+  # nolint end
+  count <- columns[[length(columns)]]
+  n <- design[[count]]
+  minimum <- if (identical(adapter_name(model), "ezdm")) 3 else 1
+  ok <- if (is.numeric(n)) {
+    is.finite(n) & n == round(n) & n >= minimum
+  } else {
+    rep(FALSE, length(n))
+  }
+  if (!all(ok)) {
+    bad <- which(!ok)
+    cli::cli_abort(
+      c(
+        "{where(count)} must hold whole numbers of trials of at least \\
+         {minimum}.",
+        x = "Not so in row{?s} {as.character(bad)}.",
+        i = "{cli::qty(length(bad))}{?It holds/They hold} {.val {n[bad]}}."
+      ),
+      call = call
+    )
+  }
+  if (length(columns) == 2L) {
+    stimulus <- design[[columns[[1L]]]]
+    # a factor of "0" and "1" would pass `%in%`, which compares as text,
+    # and fail in the generator
+    bad <- if (is.numeric(stimulus) || is.logical(stimulus)) {
+      which(!stimulus %in% c(0, 1))
+    } else {
+      seq_along(stimulus)
+    }
+    if (length(bad) > 0L) {
+      cli::cli_abort(
+        c(
+          "{where(columns[[1L]])} must be 0 or 1, as numbers.",
+          x = "Not so in row{?s} {as.character(bad)}.",
+          i = "{cli::qty(length(bad))}{?It holds/They hold} \\
+               {.val {stimulus[bad]}}."
+        ),
+        call = call
+      )
+    }
+  }
+  invisible(design)
+}
+
 #' Name generated columns after the model's own column names
 #' @noRd
 name_columns <- function(data, names) {
@@ -151,8 +262,21 @@ name_columns <- function(data, names) {
 }
 
 #' Yes/no signal detection: one row per stimulus class
+#'
+#' With a trial design, one row per design row, each of its own stimulus
+#' class and number of trials; the generator then returns the counts only.
 #' @noRd
-generate_sdt_yn <- function(pars, n_trials, model) {
+generate_sdt_yn <- function(pars, n_trials, model, trial_design = NULL) {
+  if (!is.null(trial_design)) {
+    columns <- count_design_columns(model)
+    counts <- bmm_fun("rsdt_yn")(
+      nrow(trial_design), trial_design[[columns[[2L]]]],
+      trial_design[[columns[[1L]]]],
+      d = pars$d, criterion = pars$criterion, sdratio = pars$sdratio,
+      dist = model$other_vars$dist
+    )
+    return(name_columns(data.frame(counts), list(model$resp_vars$response)))
+  }
   stimulus <- c(1, 0)
   counts <- bmm_fun("rsdt_yn")(
     2L, n_trials, stimulus,
@@ -169,8 +293,17 @@ generate_sdt_yn <- function(pars, n_trials, model) {
 }
 
 #' m-alternative forced choice: one row of correct counts
+#'
+#' With a trial design, one row per design row of its own number of trials.
 #' @noRd
-generate_sdt_mafc <- function(pars, n_trials, model) {
+generate_sdt_mafc <- function(pars, n_trials, model, trial_design = NULL) {
+  if (!is.null(trial_design)) {
+    counts <- bmm_fun("rsdt_mafc")(
+      nrow(trial_design), trial_design[[count_design_columns(model)]],
+      m = model$other_vars$m, d = pars$d, dist = model$other_vars$dist
+    )
+    return(name_columns(data.frame(counts), list(model$resp_vars$response)))
+  }
   counts <- bmm_fun("rsdt_mafc")(
     1L, n_trials,
     m = model$other_vars$m, d = pars$d, dist = model$other_vars$dist
@@ -182,8 +315,28 @@ generate_sdt_mafc <- function(pars, n_trials, model) {
 }
 
 #' EZ diffusion: one row of summary statistics
+#'
+#' With a trial design, one row per design row of its own number of trials.
+#' `bmm::rezdm()` takes a single `n_trials` (a vector fails with "the
+#' condition has length > 1", measured 2026-10-05 on 1.3.2.9000 and CRAN
+#' 1.3.2), so it is called once per row.
 #' @noRd
-generate_ezdm <- function(pars, n_trials, model) {
+generate_ezdm <- function(pars, n_trials, model, trial_design = NULL) {
+  if (!is.null(trial_design)) {
+    rows <- lapply(trial_design[[count_design_columns(model)]], function(n) {
+      bmm::rezdm(
+        1L, n,
+        drift = pars$drift, bound = pars$bound, ndt = pars$ndt, s = pars$s
+      )[c("mean_rt", "var_rt", "n_upper")]
+    })
+    return(name_columns(
+      do.call(rbind, rows),
+      list(
+        model$resp_vars$mean_rt, model$resp_vars$var_rt,
+        model$resp_vars$n_upper
+      )
+    ))
+  }
   out <- bmm::rezdm(
     1L, n_trials,
     drift = pars$drift, bound = pars$bound, ndt = pars$ndt, s = pars$s
@@ -555,7 +708,8 @@ m3_counts <- function(size, pars, model, options, activations, n = 1L) {
 #' Multinomial measurement model: category counts
 #'
 #' With numbers of options on the model, one row per subject (and task) of
-#' `n_trials` trials, as `sdt_mafc`. With them named as columns of a trial
+#' `n_trials` trials, as `sdt_mafc`, or with a count design one row per
+#' design row of its `n_trials` trials. With them named as columns of a trial
 #' design, one row per trial, a single response counted in its category,
 #' drawn with one `rm3(n, 1, ...)` call per distinct row of option counts
 #' (one call per trial cost 0.55 ms, measured in the 21.3 review). The
@@ -579,6 +733,26 @@ generate_m3 <- function(pars, n_trials, model, trial_design = NULL,
     counts <- m3_counts(
       n_trials, values, model, m3_options(model), activations
     )
+  } else if (!is.character(model$other_vars$num_options)) {
+    # numbers of options: a count design, each row its own total (#26).
+    # rm3() reads only the first `size` of a vector (two rows of 100 and
+    # 50 both summed to 100, measured 2026-10-05 on 1.3.2.9000 and CRAN
+    # 1.3.2), so one call per distinct total
+    sizes <- trial_design$n_trials
+    counts <- NULL
+    for (size in unique(sizes)) {
+      rows <- which(sizes == size)
+      drawn <- m3_counts(
+        size, values, model, m3_options(model), activations,
+        n = length(rows)
+      )
+      if (is.null(counts)) {
+        counts <- matrix(0, length(sizes), ncol(drawn),
+          dimnames = list(NULL, colnames(drawn))
+        )
+      }
+      counts[rows, ] <- drawn
+    }
   } else {
     options <- lapply(seq_len(n_trials), function(t) {
       m3_options(model, trial_design[t, , drop = FALSE], t)

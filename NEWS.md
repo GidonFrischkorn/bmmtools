@@ -39,6 +39,34 @@
   Categories land in the columns `resp_cats` names however the
   activations or the numbers of options are ordered. `prior_check()`
   takes each row's total as the ceiling of every category's count (#15).
+* `sbc()` simulates a count model (`sdt_yn`, `sdt_mafc`, `ezdm`, and
+  `m3` with numbers of options) with the trials each row of `data`
+  holds. Before, its default generator gave every row as many trials as
+  `data` had rows per subject: 2 for `sdt_yn` and 1 for `sdt_mafc` and
+  `m3`, so **SBC results for these three models from 0.2.0 were computed
+  on a smaller design than `data` described**, and `ezdm` could not run,
+  with an error that blamed the prior. Rows may now hold different
+  numbers of trials, such as 100 signal and 50 noise trials, and a count
+  that cannot be simulated is an error before the prior is fitted. The
+  per-trial models are unaffected: their simulated data sets are the
+  same as in 0.2.0. For this, `simulate_recovery()`, `recovery_grid()`
+  and `recovery_component()` take an optional `trial_design` for these
+  four models, one design row per row of data with its own number of
+  trials (and, for `sdt_yn`, its stimulus); without one, nothing changes
+  (#26).
+* `fit_cached()` keys a fit run without a `backend` on the Stan toolchain
+  bmm actually uses: the `brms.backend` option if set, otherwise cmdstanr
+  if it is installed, otherwise rstan. Before, it assumed rstan, so a fit
+  bmm ran with CmdStan was keyed on the rstan version: a CmdStan upgrade
+  did not invalidate it, and an rstan upgrade refitted it. **Every cache
+  written without a `backend`, without the `brms.backend` option, and
+  with cmdstanr installed is refitted once**, with a message naming the
+  `toolchain` component; this includes `recovery_grid()` cells and the
+  prior fit of `sbc()` and `prior_check()`. A grid cell's stored
+  estimates carry its key too, so a grid whose fit files were deleted
+  after it ran is refitted, not re-read. Calls that pass `backend`, or
+  set the option, as every article and `data-raw/` script does, keep
+  their keys (#24).
 * Every estimate now carries a central 50 % interval, `ci_low_50` and
   `ci_high_50`, beside the `ci_level` interval: the 25th and 75th
   percentiles of the draws, a Wald interval at `qnorm(0.75)` standard

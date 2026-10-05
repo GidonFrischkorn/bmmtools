@@ -67,9 +67,9 @@ expect_shares <- function(data, expected, width = 0.025) {
   expect_lt(max(abs(got - expected)), width)
 }
 
-#' A grid fitter for a custom m3: bmm::parameters() lists no free parameter
-#' for one, so the shared mock_terms() would give a fit with no terms;
-#' this one carries the terms a real fit of custom_formula() has
+#' A grid fitter for a custom m3: bmm's parameter table lists no free
+#' parameter for one, so the shared mock_terms() would give a fit with no
+#' terms; this one carries the terms a real fit of custom_formula() has
 custom_m3_fitter <- function() {
   calls <- new.env(parent = emptyenv())
   calls$n <- 0L
@@ -126,10 +126,10 @@ test_that("each m3 version simulates one count row per subject", {
     expect_named(sim$data, c("id", cats))
     expect_identical(nrow(sim$data), 4L)
     expect_true(all(rowSums(as.data.frame(sim$data)[cats]) == 50))
-    # the truth names exactly the free parameters: bmm::parameters() for
+    # the truth names exactly the free parameters: bmm's parameter table for
     # ss and cs; for custom, bmm learns them from the formula at fit time,
     # so its table lists none and the links are what names them
-    p <- bmm::parameters(case$model)
+    p <- bmm_parameter_info(case$model)
     free <- if (inherits(case$model, "m3_custom")) {
       names(case$model$links)
     } else {
@@ -492,12 +492,11 @@ test_that("sbc()'s default generator simulates a custom m3 from its formula", {
   calls <- sbc_dataset_calls(mock$calls)
   expect_length(calls, 2L)
   for (call in calls) {
-    # the activations reached the adapter: one count row per subject. The
-    # trials per row are sbc_layout()'s rows per subject, not data's 30,
-    # as for every count model (STATE-milestone-21, 21.3, open question)
-    expect_named(call$data, c("id", cats3))
+    # the activations reached the adapter: one count row per subject, of
+    # the 30 trials each row of data holds (#26)
+    expect_named(call$data, c("id", "n_trials", cats3))
     totals <- rowSums(as.data.frame(call$data)[cats3])
-    expect_length(unique(totals), 1L)
+    expect_equal(unname(totals), rep(30, 3))
   }
 })
 

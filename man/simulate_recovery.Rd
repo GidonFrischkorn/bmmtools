@@ -34,7 +34,10 @@ that value. May also be a function with no arguments returning such
 a vector, evaluated under \code{seed}, for random hyperparameters.}
 
 \item{n_subjects, n_trials}{Subjects, and trials per subject and per
-row of the generator's layout (for \code{sdt_yn}, per stimulus class).}
+row of the generator's layout (for \code{sdt_yn}, per stimulus class).
+With a \code{trial_design}, \code{n_trials} is the number of design rows per
+subject, which for a count model are rows of data, not trials (see
+the section "Trial design").}
 
 \item{sds}{Named numeric: between-subject standard deviations on the
 link scale. A parameter not named does not vary. \code{NULL} means no
@@ -101,6 +104,8 @@ formula they fit with.}
 \item{trial_design}{\code{NULL}, or the per-trial variables of the design
 (set sizes, non-target locations, option counts): what a generator
 needs per trial and the model reads from the data but does not hold.
+For a count model, the number of trials (and stimulus) of each row
+instead; see the section "Trial design".
 One of
 \itemize{
 \item a data frame of \code{n_trials} rows, one trial list used for every
@@ -221,6 +226,19 @@ scale, and \code{\link[=recover]{recover()}} scores it there (its \code{scale} c
 \strong{\code{m3} with its numbers of options as columns.} When \code{num_options}
 names columns, those columns are a trial design and each of its rows
 is one trial: see the section "The m3 model".
+
+\strong{Count models.} One row of \code{sdt_yn}, \code{sdt_mafc}, \code{ezdm} or \code{m3} with
+numbers of options holds many trials. Without a design, every row holds
+\code{n_trials} of them. A design is optional for these models; with one,
+each design row is one row of \code{data} and carries its own number of
+trials, so \code{n_trials} counts the design rows. The trial count is read
+from the model's \code{n_trials} column, and for \code{m3}, which has none, from
+a design column \code{n_trials}. \code{sdt_yn} also reads its stimulus column
+(0 or 1), so that 100 signal and 50 noise trials are
+\code{data.frame(stimulus = c(1, 0), n_trials = c(100, 50))} under the
+model's column names. A count must be a whole number of at least 1, and
+of at least 3 for \code{ezdm}, whose generator refuses fewer; a design that
+breaks this is refused before anything is drawn.
 
 Without \code{trial_design} nothing changes: the generator is called with
 three arguments, as in bmmtools 0.2.0, and a seeded simulation gives

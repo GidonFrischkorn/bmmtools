@@ -285,7 +285,7 @@ test_that("adapter data with random designs pass bmm's checks (mock backend)", {
     )
     expect_setequal(sim$trial_design_columns, trial_design_columns(case$model))
     # the truth names exactly bmm's free parameters
-    p <- bmm::parameters(case$model)
+    p <- bmm_parameter_info(case$model)
     expect_setequal(sim$truth$population$term, p$parameter[!p$fixed])
     expect_true(all(abs(sim$data$y) <= pi), label = label)
     fit <- mock_bmm(recovery_formula(case$model), sim$data, case$model)
