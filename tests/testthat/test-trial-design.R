@@ -35,28 +35,49 @@ td_sim <- function(..., n_subjects = 3, n_trials = 4, seed = 21) {
 
 # B1: no design is the 0.2.0 engine -------------------------------------
 
+td_old_generator <- function(pars, n_trials, model) {
+  data.frame(y = pars$a + pars$b * stats::runif(n_trials))
+}
+
+td_old_run <- function(...) {
+  simulate_recovery(
+    td_model(), c(a = 0.5, b = 2),
+    n_subjects = 4, n_trials = 6,
+    sds = c(a = 0.25), generator = td_old_generator, seed = 21, ...
+  )
+}
+
+test_that("without a design the data are those of 0.2.0", {
+  # Saved on macOS arm64 from these calls, after checking that they give
+  # the hashes recorded on b3cfb06, before trial_design existed (next
+  # test). Compared with a tolerance, not bit for bit: the subject values
+  # come from rnorm(), whose qnorm() arithmetic differs in the last ulp on
+  # the x86_64 Linux runner (CI on PR #25: same R 4.6.1, other hashes).
+  # A changed random number stream still fails this loudly.
+  old <- readRDS(test_path("fixtures", "simulation-b3cfb06.rds"))
+  expect_equal(td_old_run()$data, old$plain)
+  expect_equal(
+    td_old_run(
+      tasks = c("1", "2"), covariates = list(g = c(mean = 0, sd = 1))
+    )$data,
+    old$tasks_covariates
+  )
+})
+
 test_that("without a design the data are byte-identical to 0.2.0", {
-  # Hashes recorded 2026-10-04 on b3cfb06, before trial_design existed
-  # (local/dev/STATE-milestone-21.md). The generator and the identity
-  # links use runif() and rnorm() only, which R computes itself, so the
-  # values cannot move by an ulp between platforms the way a libm or
-  # LAPACK result can. cache_key() hashes `data` as one component, so
-  # equal data is an equal key.
-  old_generator <- function(pars, n_trials, model) {
-    data.frame(y = pars$a + pars$b * stats::runif(n_trials))
-  }
-  run <- function(...) {
-    simulate_recovery(
-      td_model(), c(a = 0.5, b = 2),
-      n_subjects = 4, n_trials = 6,
-      sds = c(a = 0.25), generator = old_generator, seed = 21, ...
-    )
-  }
-  expect_identical(
-    rlang::hash(run()$data), "f9c487efbb40577b2095c232743d4dc2"
+  # Hashes recorded 2026-10-04 on b3cfb06 (local/dev/STATE-milestone-21.md).
+  # cache_key() hashes `data` as one component, so equal data is an equal
+  # key, but only on the platform the key was written on: the hashes hold
+  # on macOS arm64 and not on the Linux runner (previous test).
+  skip_if_not(
+    Sys.info()[["sysname"]] == "Darwin" && R.version$arch == "aarch64",
+    "hashes recorded on macOS arm64; rnorm() differs by an ulp elsewhere"
   )
   expect_identical(
-    rlang::hash(run(
+    rlang::hash(td_old_run()$data), "f9c487efbb40577b2095c232743d4dc2"
+  )
+  expect_identical(
+    rlang::hash(td_old_run(
       tasks = c("1", "2"), covariates = list(g = c(mean = 0, sd = 1))
     )$data),
     "9838bcdfe9f7c233a55f704b9219a686"
