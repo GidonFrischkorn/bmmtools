@@ -38,13 +38,13 @@ check_model <- function(model, call = rlang::caller_env()) {
 }
 
 #' @noRd
-check_count <- function(x, name, call = rlang::caller_env()) {
-  bad <- !is.numeric(x) || length(x) != 1L || is.na(x) || x < 1 ||
+check_count <- function(x, name, minimum = 1, call = rlang::caller_env()) {
+  bad <- !is.numeric(x) || length(x) != 1L || is.na(x) || x < minimum ||
     x != round(x)
   if (bad) {
     cli::cli_abort(
-      "{.arg {name}} must be a single whole number of at least 1, \\
-       not {.obj_type_friendly {x}}.",
+      "{.arg {name}} must be a single whole number of at least \\
+       {minimum}, not {.obj_type_friendly {x}}.",
       call = call
     )
   }

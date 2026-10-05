@@ -222,6 +222,31 @@ check_convergence.brmsfit <- function(fit,
   )
 }
 
+#' Restrict draws to named variables, or return them unchanged
+#'
+#' Shared by [check_convergence()] and [benchmark_metrics()], which both
+#' let a caller name the variables whose rhat and ESS are summarised.
+#'
+#' @noRd
+select_draw_variables <- function(draws, variables = NULL) {
+  if (is.null(variables)) {
+    return(draws)
+  }
+  if (!is.character(variables)) {
+    cli::cli_abort(
+      "{.arg variables} must be a character vector, \\
+       not {.obj_type_friendly {variables}}."
+    )
+  }
+  missing <- setdiff(variables, posterior::variables(draws))
+  if (length(missing) > 0L) {
+    cli::cli_abort(
+      "Variable{?s} {.val {missing}} {?is/are} not in the fit."
+    )
+  }
+  posterior::subset_draws(draws, variable = variables)
+}
+
 #' The gate on draws already extracted from a fit
 #'
 #' Split out so that [extract_estimates()] extracts the draws once and
@@ -230,21 +255,7 @@ check_convergence.brmsfit <- function(fit,
 #' @noRd
 convergence_from_fit <- function(fit, draws, thresholds, treedepth_max,
                                  variables = NULL) {
-  if (!is.null(variables)) {
-    if (!is.character(variables)) {
-      cli::cli_abort(
-        "{.arg variables} must be a character vector, \\
-         not {.obj_type_friendly {variables}}."
-      )
-    }
-    missing <- setdiff(variables, posterior::variables(draws))
-    if (length(missing) > 0L) {
-      cli::cli_abort(
-        "Variable{?s} {.val {missing}} {?is/are} not in the fit."
-      )
-    }
-    draws <- posterior::subset_draws(draws, variable = variables)
-  }
+  draws <- select_draw_variables(draws, variables)
 
   diagnostics <- posterior::summarise_draws(
     draws, posterior::default_convergence_measures()
