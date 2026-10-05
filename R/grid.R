@@ -1429,6 +1429,23 @@ grid_formula <- function(formula, row, i, model, re_cor, task_col,
 #' counts as out of date for the same reason: it is re-extracted from the
 #' cached fit, not refitted.
 #'
+#' @section Backend:
+#' Use cmdstanr (`backend = "cmdstanr"`, or no `backend` and no
+#' `brms.backend` option with cmdstanr installed, which is what bmm then
+#' picks). It compiles a model once and
+#' every cell with the same Stan code reuses the executable; rstan
+#' compiles again for every fit. Measured 2026-10-04 on a `mixture2p`
+#' grid (bmm 1.3.2.9000, brms 2.23.0, rstan 2.32.7, cmdstanr 0.9.0,
+#' CmdStan 2.40.0, Apple M3 Max): under rstan each fit spent 19 to 23 s
+#' compiling, 77 to 85 % of a small cell (10 to 20 subjects, 50 trials, 2
+#' chains of 500 iterations) and 22 to 23 % of a cell of 40 subjects, 100
+#' trials and 4 chains of 2000 iterations; under cmdstanr the one compile
+#' took about 6 s and each later cell 0.03 to 0.05 s to find the
+#' executable. cmdstanr keeps executables in [tempdir()] unless told
+#' otherwise, so a grid resumed in a new R session compiles once more;
+#' `options(cmdstanr_write_stan_file_dir = "<a directory that persists>")`
+#' avoids that. The same holds for [sbc()].
+#'
 #' @section Subject-wise ML:
 #' With `ml`, every cell is fitted twice on the same simulated data: the
 #' hierarchical fit, and one [fit_ml()] call with no pooling, cached as

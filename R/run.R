@@ -125,18 +125,48 @@ package_version_string <- function(pkg) {
   }
 }
 
+#' Whether cmdstanr can be loaded, as bmm asks it
+#'
+#' A function of its own so that a test can answer it both ways without
+#' uninstalling anything.
+#'
+#' @noRd
+cmdstanr_available <- function() {
+  requireNamespace("cmdstanr", quietly = TRUE)
+}
+
+#' The backend a fit runs on, resolved as bmm resolves it
+#'
+#' The fitter is bmm, not brms. `bmm()`'s `backend` formal defaults to
+#' `getOption("brms.backend", NULL)`, and bmm's internal
+#' `configure_options()` sets `"cmdstanr"` when that is `NULL` and
+#' `requireNamespace("cmdstanr", quietly = TRUE)` succeeds. Otherwise
+#' brms receives `NULL` and uses its own default, rstan. Read on
+#' 2026-10-05 from three builds, and the same in each: CRAN bmm 1.3.2 and
+#' the installed 1.3.2.9000 (built 2026-09-30), by printing the functions,
+#' and popov-lab `develop` at `1625e860`, from its source. Before 0.3.0
+#' `NULL` was taken to mean rstan, so a fit bmm ran with CmdStan was keyed
+#' on the rstan version (#24).
+#'
+#' @noRd
+resolve_backend <- function(backend) {
+  backend <- backend %||% getOption("brms.backend")
+  if (!is.null(backend)) {
+    return(as.character(backend)[[1L]])
+  }
+  if (cmdstanr_available()) "cmdstanr" else "rstan"
+}
+
 #' The version of the Stan toolchain the backend in use runs on
 #'
 #' bmm and brms generate the code; the backend compiles and samples, and
 #' a new CmdStan can change the draws. Only the backend in use enters
 #' the key, so that upgrading the other one does not invalidate a grid.
-#' `backend = NULL` means brms's default, which is rstan unless the
-#' `brms.backend` option says otherwise.
+#' `backend = NULL` is resolved as bmm resolves it ([resolve_backend()]).
 #'
 #' @noRd
 backend_version_string <- function(backend) {
-  if (is.null(backend)) backend <- getOption("brms.backend", "rstan")
-  backend <- as.character(backend)[[1L]]
+  backend <- resolve_backend(backend)
   if (identical(backend, "cmdstanr")) {
     cmdstan <- "cmdstan not found"
     if (rlang::is_installed("cmdstanr")) {
@@ -370,7 +400,9 @@ cache_announce <- function(paths, lookup, refit) {
 #' of them, and on the formula, data, model, prior, the installed
 #' versions of bmm and brms and the Stan toolchain of the backend in use,
 #' and records each component's hash next to the fit so that a mismatch
-#' is reported by name.
+#' is reported by name. Without a `backend`, the backend in use is the
+#' one bmm picks: the `brms.backend` option if set, otherwise cmdstanr if
+#' it is installed, otherwise rstan.
 #'
 #' @param formula,data,model,prior Passed to the fitter as they are; the
 #'   formula enters the key deparsed, so the environment it was built in

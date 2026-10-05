@@ -32,7 +32,7 @@ test_that("the population level has one row per estimated parameter", {
   skip_if_not_installed("brms")
   skip_if_not_installed("bmm")
   fit <- mixture2p_fit()
-  pars <- bmm::parameters(fit)
+  pars <- bmm_parameter_info(fit)
   estimated <- pars$parameter[!pars$fixed]
 
   out <- extract_estimates(fit, level = "population")

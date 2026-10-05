@@ -59,7 +59,9 @@ share a design differ in exactly those, so \code{fit_cached()} keys on all
 of them, and on the formula, data, model, prior, the installed
 versions of bmm and brms and the Stan toolchain of the backend in use,
 and records each component's hash next to the fit so that a mismatch
-is reported by name.
+is reported by name. Without a \code{backend}, the backend in use is the
+one bmm picks: the \code{brms.backend} option if set, otherwise cmdstanr if
+it is installed, otherwise rstan.
 }
 \details{
 The fit and the key are each written to a temporary name and renamed

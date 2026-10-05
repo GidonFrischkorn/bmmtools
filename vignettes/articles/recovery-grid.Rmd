@@ -52,6 +52,17 @@ included.
 Everything after `seed` is passed to `fit_cached()` and from there to
 `bmm::bmm()`.
 
+The call names `backend = "cmdstanr"`, and a grid should run on it.
+cmdstanr compiles the model once and every cell with the same Stan code
+reuses the executable, while rstan compiles again for every fit: in a
+measurement on a small `mixture2p` grid, compiling took 21 to 23 seconds
+per fit under rstan, 77 to 85 % of a cell's time, and once about 6
+seconds under cmdstanr. Without a `backend` or the `brms.backend`
+option, bmm picks cmdstanr when it is installed. A grid resumed in a new R session compiles once more,
+because cmdstanr keeps executables in a temporary directory; setting
+`options(cmdstanr_write_stan_file_dir = )` to a directory that persists
+avoids that (see "Backend" in `?recovery_grid`).
+
 ## The design grid
 
 `grid` is a data frame with one row per condition. It needs the columns

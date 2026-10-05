@@ -392,6 +392,45 @@ test_that("the toolchain of the backend in use is part of the key", {
   expect_type(backend_version_string(NULL), "character")
 })
 
+test_that("no backend resolves as bmm resolves it (#24)", {
+  withr::local_options(brms.backend = NULL)
+  # bmm fits with cmdstanr when none is given and cmdstanr is installed
+  local_mocked_bindings(cmdstanr_available = function() TRUE)
+  expect_identical(resolve_backend(NULL), "cmdstanr")
+  expect_match(backend_version_string(NULL), "^cmdstanr ")
+  # and brms's default, rstan, when cmdstanr is absent
+  local_mocked_bindings(cmdstanr_available = function() FALSE)
+  expect_identical(resolve_backend(NULL), "rstan")
+  expect_match(backend_version_string(NULL), "^rstan ")
+  # the option is the default of bmm()'s own `backend` and comes first
+  withr::local_options(brms.backend = "cmdstanr")
+  expect_identical(resolve_backend(NULL), "cmdstanr")
+  # a backend given is used as it is
+  expect_identical(resolve_backend("rstan"), "rstan")
+})
+
+test_that("a fit without a backend is keyed on the toolchain that fits it", {
+  withr::local_options(brms.backend = NULL)
+  dir <- withr::local_tempdir()
+  mock <- mock_fitter()
+  file <- file.path(dir, "cell")
+  toolchain <- function() {
+    read_cache_key(paste0(file, ".key"))$components[[
+      "toolchain"
+    ]]
+  }
+  local_mocked_bindings(cmdstanr_available = function() TRUE)
+  suppressMessages(cache_call(mock, file))
+  expect_identical(
+    toolchain(), rlang::hash(backend_version_string("cmdstanr"))
+  )
+  # cmdstanr gone: the toolchain changed, so the fit is refitted
+  local_mocked_bindings(cmdstanr_available = function() FALSE)
+  expect_message(cache_call(mock, file), "toolchain")
+  expect_identical(mock$calls$n, 2L)
+  expect_identical(toolchain(), rlang::hash(backend_version_string("rstan")))
+})
+
 test_that("the directory exists before the fitter runs", {
   dir <- withr::local_tempdir()
   file <- file.path(dir, "new", "cell")
