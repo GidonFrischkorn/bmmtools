@@ -11,6 +11,7 @@ recovery_component(
   sds = NULL,
   tasks = NULL,
   task_col = "task",
+  trial_design = NULL,
   generator = NULL,
   formula = NULL,
   name
@@ -19,14 +20,16 @@ recovery_component(
 \arguments{
 \item{model}{A \code{bmmodel}, built with the column names the fit will use.}
 
-\item{pars, n_trials, sds, tasks, task_col, generator}{As in
+\item{pars, n_trials, sds, tasks, task_col, trial_design, generator}{As in
 \code{\link[=simulate_recovery]{simulate_recovery()}}, for this component. \code{pars} and \code{sds} may be
 functions with no arguments, evaluated by \code{\link[=simulate_components]{simulate_components()}} under
 its seed.}
 
 \item{formula}{\code{NULL}, or the \code{bmmformula} \code{\link[=fit_components]{fit_components()}} fits this
 component with. \code{NULL} uses \code{\link[=recovery_formula]{recovery_formula()}} with the task column
-when there are tasks.}
+when there are tasks. A custom \code{m3} needs it, and its built-in
+generator reads the activation formulas from it (see
+\code{\link[=simulate_recovery]{simulate_recovery()}}).}
 
 \item{name}{The component's name, which prefixes its terms: \code{name = "m3"}
 turns \code{c_task1} into \code{m3_c_task1}. A single syntactic name without \verb{_}
@@ -44,7 +47,8 @@ correlated across subjects, and \code{\link[=fit_components]{fit_components()}} 
 }
 \details{
 What can be checked without drawing is checked here: the model, the
-number of trials, the tasks, that a generator exists, the formula, and
+number of trials, the tasks, that a generator exists and takes the
+trial design, the trial design against \code{n_trials}, the formula, and
 numeric \code{pars} and \code{sds} against the model. Correlations and covariates
 belong to the set and are given to \code{\link[=simulate_components]{simulate_components()}}.
 }

@@ -1923,3 +1923,76 @@ test_that("the user generator refuses to be asked for more rows than it has", {
   )
   expect_error(SBC::generate_datasets(generator, 4L), "3")
 })
+
+# trial design (D55) -------------------------------------------------------
+
+test_that("the default generator passes the design data describes", {
+  # no built-in adapter reads a design until 21.2, so a test adapter
+  # stands in for one, through the two tables simulate_recovery() and
+  # sbc() look adapters up in
+  skip_if_not_installed("SBC")
+  skip_if_not_installed("bmm")
+  skip_on_cran() # a whole sbc() run, as in every sbc() test here
+  seen <- list()
+  design_adapter <- function(pars, n_trials, model, trial_design) {
+    seen[[length(seen) + 1L]] <<- trial_design
+    data.frame(y = stats::runif(n_trials, -1, 1))
+  }
+  local_mocked_bindings(
+    generator_for = function(model) design_adapter,
+    trial_design_columns = function(model) "ss"
+  )
+  # subjects labelled out of order, rows interleaved across subjects and
+  # the design not monotone within one, so a sort or a flip would show
+  data <- data.frame(
+    id = rep(c("b", "a", "c"), times = 4),
+    ss = c(23, 12, 31, 21, 14, 34, 24, 11, 32, 22, 13, 33),
+    noise = 0,
+    y = 0
+  )
+  mock <- sbc_mock_fitter(n_draws = 60L)
+  sbc_run(mock, level = "population", n_sims = 2L, data = data)
+
+  for (call in sbc_dataset_calls(mock$calls)) {
+    generated <- call$data
+    expect_false("noise" %in% names(generated))
+    for (label in c("a", "b", "c")) {
+      expect_identical(
+        generated$ss[as.character(generated$id) == label],
+        data$ss[data$id == label]
+      )
+    }
+  }
+  # simulated subject i is the i-th label in data's order: b, a, c
+  for (i in seq_along(c("b", "a", "c"))) {
+    expect_identical(
+      seen[[i]], data.frame(ss = data$ss[data$id == c("b", "a", "c")[[i]]])
+    )
+  }
+})
+
+test_that("a design column missing from data is an error before any fit", {
+  skip_if_not_installed("SBC")
+  skip_if_not_installed("bmm")
+  skip_on_cran() # a whole sbc() run, as in every sbc() test here
+  local_mocked_bindings(trial_design_columns = function(model) "ss")
+  mock <- sbc_mock_fitter()
+  expect_error(
+    sbc_run(mock, level = "population", n_sims = 2L),
+    "\"ss\""
+  )
+  expect_identical(mock$calls$n, 0L)
+})
+
+test_that("an adapter that reads no design gets none from data", {
+  skip_if_not_installed("SBC")
+  skip_if_not_installed("bmm")
+  skip_on_cran() # a whole sbc() run, as in every sbc() test here
+  data <- sbc_data()
+  data$extra <- 1
+  mock <- sbc_mock_fitter()
+  sbc_run(mock, level = "population", n_sims = 2L, data = data)
+  for (call in sbc_dataset_calls(mock$calls)) {
+    expect_named(call$data, c("id", "y"))
+  }
+})

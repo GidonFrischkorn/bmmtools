@@ -17,6 +17,8 @@ simulate_recovery(
   coding = c("cell", "contrast"),
   contrasts = NULL,
   subject_pars = NULL,
+  formula = NULL,
+  trial_design = NULL,
   generator = NULL,
   seed = NULL
 )
@@ -88,10 +90,39 @@ scale) of subject values to use instead of drawing them, so that
 replications can share the same simulated people. With \code{covariates}
 it must give their values too.}
 
+\item{formula}{\code{NULL}, or the \code{bmmformula} the model is fitted with,
+for a built-in generator that reads it: only the custom version of
+\code{m3}, whose activation formulas exist nowhere else (see the section
+"The m3 model"). A formula for any other model, or with a
+\code{generator}, is an error: a generator you write closes over its own.
+\code{\link[=recovery_grid]{recovery_grid()}}, \code{\link[=recovery_component]{recovery_component()}} and \code{\link[=sbc]{sbc()}} pass on the
+formula they fit with.}
+
+\item{trial_design}{\code{NULL}, or the per-trial variables of the design
+(set sizes, non-target locations, option counts): what a generator
+needs per trial and the model reads from the data but does not hold.
+One of
+\itemize{
+\item a data frame of \code{n_trials} rows, one trial list used for every
+subject (and every task);
+\item a data frame with an \code{id} column holding the subjects \code{1} to
+\code{n_subjects}, \code{n_trials} rows each, one trial list per subject;
+\item a function \code{(n_trials)} returning a data frame of \code{n_trials} rows,
+called once per subject and task under \code{seed}, for designs drawn at
+random, such as non-target locations.
+}
+
+Each generator call receives its rows as \code{trial_design}, and the same
+rows are bound into \code{data} after \code{id}, the covariates and the task
+column. See the section "Trial design".}
+
 \item{generator}{A function \verb{(pars, n_trials, model)} returning one
 subject's rows as a data frame with the model's column names;
 \code{pars} is a named list on the natural scale, fixed parameters
-included. \code{NULL} uses the adapter bmmtools ships for the model.}
+included, except a parameter whose link is \code{softmax}, which arrives
+on the link scale (see the details). With a \code{trial_design} it is
+called as \verb{(pars, n_trials, model, trial_design)} and must have that fourth argument or \code{...}.
+\code{NULL} uses the adapter bmmtools ships for the model.}
 
 \item{seed}{A seed applied with \code{withr::with_seed()} around the draws
 and the generator; \code{NULL} leaves the random number generator alone.}
@@ -107,7 +138,11 @@ list of tibbles on the link scale: \code{population} with \code{term} and
 \code{pars}, \code{sds}, \code{cors} (the full matrix over varying parameters then
 covariates, \code{NULL} with fewer than two) and \code{covariates},
 \code{n_subjects}, \code{n_trials}, \code{seed} (\code{NA} when none), \code{model},
-\code{generator}, \code{tasks} and \code{task_col} (both \code{NULL} without tasks).
+\code{generator}, \code{tasks} and \code{task_col} (both \code{NULL} without tasks),
+\code{trial_design} (\code{NULL}, the data frame, or a function's text),
+\code{trial_design_columns} (the columns it contributed to \code{data}) and
+\code{formula} (\code{NULL}, or the formula that reached the generator, each
+element deparsed to text).
 }
 \description{
 The generate half of the engine: a model plus population values on
@@ -115,14 +150,18 @@ the link scale become a data set and the truth that produced it, so
 that \code{\link[=recover]{recover()}} and \code{\link[=recover_subjects]{recover_subjects()}} can score a fit of that
 data. Subject values are drawn on the link scale around the
 population values, converted to the natural scale through
-\code{\link[=inverse_link]{inverse_link()}}, and handed to the model's own \verb{r<model>()} generator,
+\code{\link[=inverse_link]{inverse_link()}} (a \code{softmax} term excepted, see the details), and
+handed to the model's own \verb{r<model>()} generator,
 or to the function you pass as \code{generator}, which always takes
 precedence over the built-in one.
 }
 \details{
 Adapters exist for \code{sdt_yn}, \code{sdt_mafc}, \code{ezdm} (three parameters),
-\code{ddm}, \code{cswald} (both versions), \code{mixture2p} and \code{sdm}. Every other
-model takes a \code{generator}.
+\code{ddm}, \code{cswald} (both versions), \code{mixture2p}, \code{sdm}, \code{mixture3p},
+\code{imm} (\code{full}, \code{bsc} and \code{abc}) and \code{m3} (\code{ss}, \code{cs} and \code{custom}).
+Every other model takes a \code{generator}. The \code{mixture3p} and \code{imm}
+adapters need a \code{trial_design}; see the section "Trial design". The
+custom \code{m3} needs \code{formula}; see the section "The m3 model".
 The truth for the subjects and for the SDs lists only the parameters
 that vary, because a parameter that does not vary has nothing
 person-level to recover.
@@ -149,6 +188,77 @@ same in every task. Adding tasks changes the random numbers drawn
 compared with a simulation without them; \code{tasks = NULL} gives exactly
 the simulation of earlier versions.
 }
+\section{Trial design}{
+
+A generator learns one subject's parameters and a number of trials. A
+model whose responses depend on what was shown on each trial ---
+\code{mixture3p} and \code{imm} need a set size and non-target locations --- gets
+those through \code{trial_design}. The engine hands each generator call its
+rows and binds the same rows into \code{data}, so the fit sees exactly the
+trials the responses were drawn from; a generator returns the response
+columns only, and returning a design column is an error. A design
+column must differ from the model's response columns, the covariates
+and the task column.
+
+\strong{\code{mixture3p} and \code{imm}.} Their adapters read, from the columns the
+model names: the set size, when \code{set_size} is a column name (a number
+is every trial's set size); the non-target locations \code{nt_features},
+relative to the target, in radians; and for \code{imm} \code{full} and \code{bsc} the
+distances \code{nt_distances}. A trial of set size \code{k} has its lures in the
+first \code{k - 1} non-target columns, which must not be \code{NA}; columns
+beyond are ignored and are \code{NA} by bmm's convention. Each trial is one
+call of \code{\link[bmm:rmixture3p]{bmm::rmixture3p()}} or \code{\link[bmm:rimm]{bmm::rimm()}}, with the weights bmm's
+likelihood gives that trial.
+
+\strong{The \code{softmax} link.} \code{mixture3p}'s \code{thetat} and \code{thetant} are log
+weights against a guessing weight of 0: on a trial with lures,
+\verb{(p_mem, p_nt, p_guess)} is the softmax of \verb{(thetat, thetant, 0)}, the
+lures sharing \code{p_nt} equally, and on a set-size-1 trial there is no
+lure weight. Since no inverse of one term gives its natural value, a
+parameter whose link is \code{softmax} reaches the generator on the link
+scale, and \code{\link[=recover]{recover()}} scores it there (its \code{scale} column says so).
+
+\strong{\code{m3} with its numbers of options as columns.} When \code{num_options}
+names columns, those columns are a trial design and each of its rows
+is one trial: see the section "The m3 model".
+
+Without \code{trial_design} nothing changes: the generator is called with
+three arguments, as in bmmtools 0.2.0, and a seeded simulation gives
+the same data, and so the same \code{\link[=fit_cached]{fit_cached()}} key. A data frame draws
+no random numbers; a function draws its own, interleaved with the
+generator's, once per subject and task. What a function returns can
+only be checked once it has been called, so an error in it (wrong row
+count, a missing column) stops the simulation after some random numbers
+have been drawn; under \code{seed} that changes nothing, and without one the
+random number stream has moved.
+}
+
+\section{The m3 model}{
+
+\code{m3}'s response is a count per category, in the columns \code{resp_cats}
+names. With numbers of options on the model (\code{num_options = c(1, 4, 5)}), a subject has \strong{one row of \code{n_trials} trials} per task, drawn
+with one \code{\link[bmm:rm3]{bmm::rm3()}} call, as \code{sdt_mafc} has one row of counts. With
+\code{num_options} naming columns, the options differ between trials, so
+those columns come from \code{trial_design} and \strong{each row is one trial}:
+\code{n_trials} rows per subject, each counting one response in its
+category. The probabilities are bmm's: each category's activation,
+exponentiated under \code{choice_rule = "softmax"}, times its number of
+options, normalised. The parameters' links are elementwise, and which
+links the model has depends on the choice rule, so take \code{pars} on the
+link scale of the model as built: \code{bmm::parameters()} lists them for
+\code{ss} and \code{cs}, and the model's \code{links} for \code{custom}.
+
+The versions \code{ss} and \code{cs} take their activation formulas from bmm. The
+\code{custom} version knows its activations only from the formula it is
+fitted with, so it needs \code{formula}, holding one activation per category
+(\code{corr ~ b + a + c}), and a model built with a link for each parameter
+they use (\code{m3(..., links = list(c = "log", a = "log"))}); without links
+bmm knows no parameter to give a value to until it fits. Every
+parameter with a link must appear in an activation. Extra parameter
+formulas in \code{formula} (\code{c ~ 1 + (1 | id)}) are ignored here, and a
+grid records only the activations.
+}
+
 \examples{
 \dontrun{
 sim <- simulate_recovery(
@@ -175,6 +285,55 @@ two_tasks <- simulate_recovery(
 formula <- recovery_formula(
   two_tasks$model,
   re_cor = "within", task_col = "task"
+)
+
+# a per-trial design: a condition the generator reads on every trial
+shifted <- function(pars, n_trials, model, trial_design) {
+  mu <- ifelse(trial_design$cond == "a", 0, 0.5)
+  data.frame(y = vapply(mu, function(m) {
+    bmm::rmixture2p(1, mu = m, kappa = pars$kappa, p_mem = pars$thetat)
+  }, numeric(1)))
+}
+sim <- simulate_recovery(
+  bmm::mixture2p(resp_error = "y"),
+  pars = c(kappa = log(8), thetat = qlogis(0.75)),
+  n_subjects = 10, n_trials = 40,
+  trial_design = function(n_trials) {
+    data.frame(cond = sample(c("a", "b"), n_trials, replace = TRUE))
+  },
+  generator = shifted, seed = 1
+)
+
+# mixture3p: set size 2 to 4, non-target locations drawn per trial
+lures <- function(n_trials) {
+  ss <- sample(2:4, n_trials, replace = TRUE)
+  nt <- matrix(runif(3 * n_trials, -pi, pi), n_trials)
+  nt[col(nt) >= ss] <- NA
+  data.frame(ss = ss, nt1 = nt[, 1], nt2 = nt[, 2], nt3 = nt[, 3])
+}
+sim <- simulate_recovery(
+  bmm::mixture3p(
+    resp_error = "y", nt_features = paste0("nt", 1:3), set_size = "ss"
+  ),
+  pars = c(kappa = log(8), thetat = 1.5, thetant = 0),
+  n_subjects = 10, n_trials = 60, trial_design = lures, seed = 1
+)
+
+# a custom m3: the activation formulas reach the adapter through formula
+model <- bmm::m3(
+  resp_cats = c("corr", "other", "npl"), num_options = c(1, 4, 5),
+  choice_rule = "simple", version = "custom",
+  links = list(c = "log", a = "log")
+)
+formula <- bmm::bmf(
+  corr ~ b + a + c, other ~ b + a, npl ~ b,
+  c ~ 1 + (1 | id), a ~ 1 + (1 | id)
+)
+sim <- simulate_recovery(
+  model,
+  pars = c(c = log(3), a = log(0.5)),
+  n_subjects = 30, n_trials = 100, sds = c(c = 0.3),
+  formula = formula, seed = 1
 )
 }
 

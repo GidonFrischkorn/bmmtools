@@ -111,6 +111,12 @@ the model estimates them on. Under \code{scale = "natural"} a message says
 so, their \code{scale} column reads \code{"link"}, and the other rows and the
 object's \code{scale} attribute stay on the natural scale.
 
+So is a term whose link is \code{softmax}, such as \code{mixture3p}'s \code{thetat}
+and \code{thetant}: they are log weights against a guessing weight of 0,
+and a trial's probabilities are the softmax of the group, so no
+inverse of one term gives its natural value. Under \code{scale = "natural"}
+a message names them and their \code{scale} column reads \code{"link"}.
+
 A term in \code{truth} that no fit estimated produces a warning listing
 what was available, and is dropped. A term a fit estimated that
 \code{truth} does not mention is dropped silently, because fits routinely

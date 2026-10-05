@@ -86,13 +86,15 @@ check_component_values <- function(pars, sds, model, tasks, task_col,
 #' correlated across subjects, and [fit_components()] fits each on its own.
 #'
 #' @param model A `bmmodel`, built with the column names the fit will use.
-#' @param pars,n_trials,sds,tasks,task_col,generator As in
+#' @param pars,n_trials,sds,tasks,task_col,trial_design,generator As in
 #'   [simulate_recovery()], for this component. `pars` and `sds` may be
 #'   functions with no arguments, evaluated by [simulate_components()] under
 #'   its seed.
 #' @param formula `NULL`, or the `bmmformula` [fit_components()] fits this
 #'   component with. `NULL` uses [recovery_formula()] with the task column
-#'   when there are tasks.
+#'   when there are tasks. A custom `m3` needs it, and its built-in
+#'   generator reads the activation formulas from it (see
+#'   [simulate_recovery()]).
 #' @param name The component's name, which prefixes its terms: `name = "m3"`
 #'   turns `c_task1` into `m3_c_task1`. A single syntactic name without `_`
 #'   or `.`, unique within a set.
@@ -102,7 +104,8 @@ check_component_values <- function(pars, sds, model, tasks, task_col,
 #'
 #' @details
 #' What can be checked without drawing is checked here: the model, the
-#' number of trials, the tasks, that a generator exists, the formula, and
+#' number of trials, the tasks, that a generator exists and takes the
+#' trial design, the trial design against `n_trials`, the formula, and
 #' numeric `pars` and `sds` against the model. Correlations and covariates
 #' belong to the set and are given to [simulate_components()].
 #'
@@ -122,6 +125,7 @@ recovery_component <- function(model,
                                sds = NULL,
                                tasks = NULL,
                                task_col = "task",
+                               trial_design = NULL,
                                generator = NULL,
                                formula = NULL,
                                name) {
@@ -150,11 +154,25 @@ recovery_component <- function(model,
        not {.obj_type_friendly {generator}}."
     )
   }
+  # the subjects are the set's, so an id-keyed design is checked against
+  # them only when the set is simulated
+  trial_design <- check_trial_design(
+    trial_design, NULL, n_trials, model,
+    task_col = design$task_col
+  )
+  check_trial_design_generator(
+    trial_design, generator %||% generator_for(model), model,
+    adapter = is.null(generator)
+  )
   if (!is.null(formula) && !inherits(formula, "bmmformula")) {
     cli::cli_abort(
       "{.arg formula} must be {.code NULL} or a {.cls bmmformula}, \\
        not {.obj_type_friendly {formula}}."
     )
+  }
+  # the custom m3's activations are in the fit formula (D58)
+  if (is.null(generator) && adapter_reads_formula(model)) {
+    check_generator_formula(formula, model, adapter = TRUE)
   }
   check_component_values(pars, sds, model, design$tasks, design$task_col)
 
@@ -167,6 +185,7 @@ recovery_component <- function(model,
       n_trials = n_trials,
       tasks = design$tasks,
       task_col = design$task_col,
+      trial_design = trial_design,
       generator = generator,
       formula = formula
     ),
@@ -541,6 +560,10 @@ simulate_component <- function(spec, realised, values, full, n_subjects,
     own_cors <- full[prefixed, prefixed, drop = FALSE]
     dimnames(own_cors) <- list(varying, varying)
   }
+  # the fit formula reaches only an adapter that reads it (D58)
+  formula <- if (is.null(spec$generator) && adapter_reads_formula(spec$model)) {
+    spec$formula
+  }
   in_component(spec$name,
     {
       simulate_recovery(
@@ -549,6 +572,8 @@ simulate_component <- function(spec, realised, values, full, n_subjects,
         sds = realised$sds, cors = own_cors,
         tasks = spec$tasks, task_col = spec$task_col %||% "task",
         subject_pars = subject_pars,
+        formula = formula,
+        trial_design = spec$trial_design,
         generator = spec$generator,
         seed = NULL
       )

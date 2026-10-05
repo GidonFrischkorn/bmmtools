@@ -460,3 +460,20 @@ test_that("a non-numeric interval bound is an error, not a silent NA", {
   expect_match(conditionMessage(err), "ci_low")
   expect_match(conditionMessage(err), "numeric")
 })
+
+test_that("a softmax term is compared on the link scale, with a message", {
+  # D56: mixture3p's weights have no elementwise inverse, so the fit side
+  # stays on the link scale and the row says so
+  reference <- tibble::tibble(term = c("kappa", "thetat"), estimate = c(1, 0))
+  expect_message(
+    x <- cross_check(
+      mock_cross_fit(), reference,
+      links = c(kappa = "log", thetat = "softmax")
+    ),
+    "thetat"
+  )
+  expect_equal(x$estimate[x$term == "kappa"], 1)
+  expect_equal(x$estimate[x$term == "thetat"], 0)
+  expect_identical(x$scale[x$term == "kappa"], "natural")
+  expect_identical(x$scale[x$term == "thetat"], "link")
+})

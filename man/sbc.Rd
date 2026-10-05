@@ -35,7 +35,10 @@ term: the default generator maps a prior draw onto
 \code{\link[=simulate_recovery]{simulate_recovery()}}'s arguments, and that map is exact for those
 shapes and guesswork for a covariate or a task factor. With a
 \code{generator} any formula works, as long as every parameter that has
-a group term has the same one, written as a bare column name.}
+a group term has the same one, written as a bare column name. A
+custom \code{m3}'s activation formulas are not parameter formulas: the
+check skips them, and the default generator reads them (see
+\code{formula} in \code{\link[=simulate_recovery]{simulate_recovery()}}).}
 
 \item{data}{The design to simulate over, and only that: the subjects
 are the unique values of the grouping column and the trials are the
@@ -43,8 +46,12 @@ rows each of them has. The response values are ignored, because the
 generator replaces them. Without a \code{generator}, every subject must
 have the same number of rows. The simulated data sets carry the
 same subject labels as \code{data}, which is what lets a subject truth
-meet its own \code{r_} draw. With a \code{generator}, \code{data} is handed to it
-as it is, columns and all.}
+meet its own \code{r_} draw. Without a \code{generator}, a model whose built-in
+generator reads a trial design (see \code{trial_design} in
+\code{\link[=simulate_recovery]{simulate_recovery()}}) takes it from \code{data}: the columns that
+generator reads, per subject and in \code{data}'s order, so every
+simulated data set has the trials of \code{data}. With a \code{generator},
+\code{data} is handed to it as it is, columns and all.}
 
 \item{prior}{A \code{brmsprior}, or \code{NULL} for bmm's defaults. This is the
 prior that is calibrated, so \code{NULL} calibrates bmm's own. A list is

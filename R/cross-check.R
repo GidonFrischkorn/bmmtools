@@ -334,7 +334,7 @@ check_reference <- function(reference, level, group, ci_level, resolved,
 #'
 #' @noRd
 cross_check_rows <- function(estimates, reference, level, scale,
-                             call = rlang::caller_env()) {
+                             links = NULL, call = rlang::caller_env()) {
   keys <- level_keys(level)
   joined <- join_truth(
     estimates, reference, keys,
@@ -355,6 +355,10 @@ cross_check_rows <- function(estimates, reference, level, scale,
   joined$overlap <- overlap
 
   joined$scale <- rep(scale, nrow(joined))
+  if (identical(scale, "natural")) {
+    joint <- joint_link_terms(joined$term, links)
+    joined$scale[joined$term %in% joint] <- "link"
+  }
   joined
 }
 
@@ -480,8 +484,11 @@ cross_check <- function(fit,
 
   rows <- cross_check_rows(
     estimates, reference, level, resolved$scale,
-    call = error_call
+    links = resolved$links, call = error_call
   )
+  if (identical(resolved$scale, "natural")) {
+    inform_joint_link_terms(joint_link_terms(rows$term, resolved$links))
+  }
   new_bmmtools_cross_check(
     rows,
     scale = resolved$scale,

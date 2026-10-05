@@ -282,6 +282,8 @@ test_that("split_coefficient separates the parameter from the coefficient", {
 })
 
 test_that("a lone coefficient keeps the bare parameter name", {
+  # seeded: an unseeded draw now and then caps the ESS with a warning
+  withr::local_seed(1)
   # one non-Intercept coefficient reads back as the parameter, as before 5.4
   draws <- fake_draws(list(
     b_kappa_setsize2 = seq_len(80) / 10,
@@ -292,6 +294,8 @@ test_that("a lone coefficient keeps the bare parameter name", {
 })
 
 test_that("terms that do not reduce to unique names are an error", {
+  # seeded: an unseeded draw now and then caps the ESS with a warning
+  withr::local_seed(1)
   # Two coefficients collapse onto "kappa". A silent dplyr fan-out at the
   # join is the failure mode this prevents.
   draws <- fake_draws(list(
@@ -303,7 +307,9 @@ test_that("terms that do not reduce to unique names are an error", {
 
 test_that("an intercept with other coefficients is a contrast design", {
   # what `coding = "contrast"` fits: the intercept is the parameter's
-  # population value and every other coefficient is an effect
+  # population value and every other coefficient is an effect. Seeded:
+  # some unseeded draws made posterior cap the ESS with a warning.
+  withr::local_seed(1)
   draws <- fake_draws(list(
     b_kappa_Intercept = seq_len(80) / 10,
     b_kappa_setsize2 = stats::rnorm(80)

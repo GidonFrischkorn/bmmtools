@@ -467,7 +467,8 @@ test_that("density_for() knows seven models and nothing else", {
   skip_if_not_installed("bmm")
   skip_if_no_bmm_model("sdt_yn", density = TRUE)
   skip_if_no_bmm_model("sdt_mafc", density = TRUE)
-  expect_equal(adapter_classes(), c(
+  # the generator table grew past it in 21.2 (mixture3p, imm)
+  expect_equal(density_classes(), c(
     "sdt_yn", "sdt_mafc", "ezdm", "ddm", "cswald", "mixture2p", "sdm"
   ))
   known <- list(

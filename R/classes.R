@@ -701,6 +701,7 @@ format.bmmtools_recovery <- function(x, ...) {
       paste(levels, collapse = ", "), "."
     ),
     if ("sd" %in% levels) "SD rows are on the link scale.",
+    link_terms_note(x, scale, "{terms} are on the link scale."),
     # named only when there is a comparison to make; one estimator is the
     # ordinary case and saying "Estimators: bayes" is noise
     if (length(estimators) > 1L) {

@@ -254,6 +254,10 @@ to_natural_scale <- function(x, links, values = c("estimate", "true_value"),
   unbounded <- character()
   for (term in unique(x$term)) {
     link <- link_of(term, links)
+    if (link %in% joint_links()) {
+      # D56: no elementwise inverse, so the term stays on the link scale
+      next
+    }
     rows <- x$term == term
     for (pair in bounds) {
       low <- x[[pair[[1L]]]][rows]
@@ -316,6 +320,9 @@ natural_interval <- function(ci_low, ci_high, link) {
 #' counterpart that one inverse link would give: a difference of two
 #' values is not the difference of their inverse links.
 #'
+#' A term whose link is joint (`softmax`, D56) stays on the link scale
+#' too, and its rows' `scale` says so.
+#'
 #' @noRd
 score_level <- function(estimates, truth, level, resolved, error_call) {
   estimates <- estimates[estimates$level == level, , drop = FALSE]
@@ -336,6 +343,10 @@ score_level <- function(estimates, truth, level, resolved, error_call) {
   joined$covered_50 <- joined$true_value >= joined$ci_low_50 &
     joined$true_value <= joined$ci_high_50
   joined$scale <- rep(scale, nrow(joined))
+  if (identical(scale, "natural")) {
+    joint <- joint_link_terms(joined$term, resolved$links)
+    joined$scale[joined$term %in% joint] <- "link"
+  }
   joined
 }
 
@@ -426,6 +437,12 @@ score_recovery <- function(fits, truth, level, group, scale, links,
     ))
   }
   joined <- dplyr::bind_rows(pieces)
+  if (identical(resolved$scale, "natural")) {
+    natural <- !joined$level %in% c("sd", "effect")
+    inform_joint_link_terms(
+      joint_link_terms(joined$term[natural], resolved$links)
+    )
+  }
   check_estimator_balance(joined)
 
   new_bmmtools_recovery(
@@ -578,6 +595,12 @@ check_estimator_balance <- function(x) {
 #' the model estimates them on. Under `scale = "natural"` a message says
 #' so, their `scale` column reads `"link"`, and the other rows and the
 #' object's `scale` attribute stay on the natural scale.
+#'
+#' So is a term whose link is `softmax`, such as `mixture3p`'s `thetat`
+#' and `thetant`: they are log weights against a guessing weight of 0,
+#' and a trial's probabilities are the softmax of the group, so no
+#' inverse of one term gives its natural value. Under `scale = "natural"`
+#' a message names them and their `scale` column reads `"link"`.
 #'
 #' A term in `truth` that no fit estimated produces a warning listing
 #' what was available, and is dropped. A term a fit estimated that

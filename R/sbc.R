@@ -379,6 +379,20 @@ check_sbc_formula <- function(formula, call = rlang::caller_env()) {
   out
 }
 
+#' The parameter formulas, without a custom `m3`'s activation formulas
+#'
+#' The activations (`corr ~ b + a + c`) are not parameter formulas: they
+#' define the model and reach its generator whole (D58), so the default
+#' generator's intercept-only check is over the rest.
+#'
+#' @noRd
+sbc_parameter_formulas <- function(formula, model) {
+  if (!adapter_reads_formula(model) || !inherits(formula, "bmmformula")) {
+    return(formula)
+  }
+  formula[!names(formula) %in% model$resp_vars$resp_cats]
+}
+
 #' The design `data` describes: how many subjects, how many trials each
 #'
 #' Only the layout is read; the response values are ignored, because the
@@ -874,6 +888,8 @@ simulate_from_draw <- function(row, row_number, model, layout, population,
         stats::setNames(unname(row[sds]), varying)
       },
       cors = sbc_cor_matrix(row, pairs, varying),
+      formula = layout$formula,
+      trial_design = layout$trial_design,
       seed = NULL
     ),
     error = function(e) {
@@ -893,6 +909,47 @@ simulate_from_draw <- function(row, row_number, model, layout, population,
       )
     }
   )
+}
+
+#' The trial design `data` describes, for the default generator (D55)
+#'
+#' Exactly the columns the model's adapter reads from a design
+#' ([trial_design_columns()]), keyed by subject: `ids[i]` of the layout
+#' becomes `id = i`, the numbering `simulate_recovery()` uses, and
+#' `relabel_subjects()` turns it back. Within a subject the rows keep
+#' `data`'s order. Every other column of `data` is ignored, as the response
+#' values are, so a column an adapter writes itself is never handed back
+#' to it.
+#'
+#' @return `NULL` when the adapter reads no design, otherwise an
+#'   `id`-keyed data frame.
+#' @noRd
+sbc_trial_design <- function(data, model, layout,
+                             call = rlang::caller_env()) {
+  columns <- trial_design_columns(model)
+  if (length(columns) == 0L) {
+    return(NULL)
+  }
+  missing <- setdiff(columns, names(data))
+  if (length(missing) > 0L) {
+    cli::cli_abort(
+      c(
+        "{cli::qty(missing)}{.arg data} lacks the column{?s} \\
+         {.val {missing}}, which the generator for \\
+         {.cls {adapter_name(model)}} reads per trial.",
+        i = "The default generator takes the trial design from {.arg data}."
+      ),
+      call = call
+    )
+  }
+  ids <- layout$ids %||% as.character(seq_len(layout$n_subjects))
+  out <- data.frame(
+    id = match(as.character(data[[layout$group]]), ids),
+    as.data.frame(data)[columns],
+    check.names = FALSE
+  )
+  rownames(out) <- NULL
+  out
 }
 
 #' The SBC generator: one prior draw, one simulated data set
@@ -1417,15 +1474,22 @@ check_sbc_args <- function(prior, seed, fitter, cache_mode, cache_location,
 #'   [simulate_recovery()]'s arguments, and that map is exact for those
 #'   shapes and guesswork for a covariate or a task factor. With a
 #'   `generator` any formula works, as long as every parameter that has
-#'   a group term has the same one, written as a bare column name.
+#'   a group term has the same one, written as a bare column name. A
+#'   custom `m3`'s activation formulas are not parameter formulas: the
+#'   check skips them, and the default generator reads them (see
+#'   `formula` in [simulate_recovery()]).
 #' @param data The design to simulate over, and only that: the subjects
 #'   are the unique values of the grouping column and the trials are the
 #'   rows each of them has. The response values are ignored, because the
 #'   generator replaces them. Without a `generator`, every subject must
 #'   have the same number of rows. The simulated data sets carry the
 #'   same subject labels as `data`, which is what lets a subject truth
-#'   meet its own `r_` draw. With a `generator`, `data` is handed to it
-#'   as it is, columns and all.
+#'   meet its own `r_` draw. Without a `generator`, a model whose built-in
+#'   generator reads a trial design (see `trial_design` in
+#'   [simulate_recovery()]) takes it from `data`: the columns that
+#'   generator reads, per subject and in `data`'s order, so every
+#'   simulated data set has the trials of `data`. With a `generator`,
+#'   `data` is handed to it as it is, columns and all.
 #' @param prior A `brmsprior`, or `NULL` for bmm's defaults. This is the
 #'   prior that is calibrated, so `NULL` calibrates bmm's own. A list is
 #'   an error: [prior_check()] is what compares prior sets.
@@ -1645,11 +1709,16 @@ sbc <- function(model,
   groups <- if (user) {
     sbc_formula_groups(formula)
   } else {
-    check_sbc_formula(formula)
+    check_sbc_formula(sbc_parameter_formulas(formula, model))
   }
   group <- groups$group %||% "id"
   check_group_ids(data, group)
   layout <- sbc_layout(data, group, balanced = !user)
+  if (!user) layout$trial_design <- sbc_trial_design(data, model, layout)
+  # the custom m3's activations are in the formula under check (D58)
+  if (!user && adapter_reads_formula(model)) {
+    layout$formula <- check_generator_formula(formula, model, adapter = TRUE)
+  }
   sets <- if (!user) sbc_pattern_sets(model, groups, group, level)
 
   check_improper_priors(formula, data, model, list(sbc = prior))

@@ -332,8 +332,8 @@ Wald interval is analytic, so the two do not agree to the last digit and
 a borderline subject can fall either side. The route is a cost, not a moderator of the
 result: `?fit_ml` records the check that the Wald and Laplace standard
 errors agree to a mean ratio of 1.000 over the same 40 subjects. It is capped at the models bmmtools carries a density for, the
-same seven the simulation adapters cover, and `nll` supplies one for
-anything else.
+seven simulation adapters of bmmtools 0.2.0 (`mixture3p` and `imm` have
+adapters but no density), and `nll` supplies one for anything else.
 
 ## Over a design
 

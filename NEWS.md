@@ -5,6 +5,40 @@
   README section, "Planning a study", shows how `recovery_grid()` and
   `summary()` already answer how many subjects and trials a design needs
   (#14).
+* `simulate_recovery()`, `recovery_grid()` and `recovery_component()`
+  gain `trial_design`, the per-trial variables a generator needs and the
+  model does not hold, such as set sizes and non-target locations: a data
+  frame shared by every subject, a data frame with an `id` column giving
+  each subject its own trials, or a function of `n_trials` called once
+  per subject under the seed. Each generator call receives its rows as a
+  fourth argument, `trial_design`, and the same rows are bound into the
+  data. Without it nothing changes: a generator written for 0.2.0 is
+  called as before, and a seeded simulation gives the same data and the
+  same cache key. `sbc()` takes the design from its `data` for a model
+  whose built-in generator reads one (#15).
+* `simulate_recovery()` has built-in generators for `mixture3p` and for
+  `imm` in all three versions (`full`, `bsc`, `abc`). Both read the set
+  size, the non-target locations and, for `imm`, the distances per trial
+  from `trial_design`, and draw each trial with the weights bmm's
+  likelihood gives it. `prior_check()` knows their response range.
+  `mixture3p`'s `thetat` and `thetant` have bmm's `softmax` link, which
+  has no inverse for one term: they reach a generator on the link scale,
+  and `recover()`, `recover_subjects()`, `cross_check()`,
+  `subject_table()` and the correlation scorers keep them there under
+  `scale = "natural"` with a message, where they used to stop with an
+  error; `print()` and `plot_recovery()` name those terms (#15).
+* `simulate_recovery()` has a built-in generator for `m3` in all three
+  versions (`ss`, `cs`, `custom`). With numbers of options on the model,
+  a subject has one row of category counts over `n_trials` trials; with
+  `num_options` naming columns, those columns come from `trial_design`
+  and each row is one trial. The custom version's activation formulas
+  exist only in the formula it is fitted with, so `simulate_recovery()`
+  gains `formula`, read by that generator alone; `recovery_grid()`,
+  `recovery_component()` and `sbc()` pass on the formula they fit with.
+  A generator you write never receives it and is called as before.
+  Categories land in the columns `resp_cats` names however the
+  activations or the numbers of options are ordered. `prior_check()`
+  takes each row's total as the ceiling of every category's count (#15).
 * Every estimate now carries a central 50 % interval, `ci_low_50` and
   `ci_high_50`, beside the `ci_level` interval: the 25th and 75th
   percentiles of the draws, a Wald interval at `qnorm(0.75)` standard

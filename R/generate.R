@@ -73,10 +73,18 @@ check_pars <- function(pars, model, tasks = NULL, task_col = NULL,
   known <- c(info$free, info$fixed)
   unknown <- setdiff(names(pars), known)
   if (length(unknown) > 0L) {
+    # a custom m3 learns its parameters from the formula at fit time, so
+    # without links it has none to give values to
+    hint <- if (inherits(model, "m3_custom") && length(info$free) == 0L) {
+      c(i = "A custom {.cls m3} knows its parameters only from their links: \
+             build it with {.code m3(..., links = list(...))}, one link per \
+             parameter of its activation formulas.")
+    }
     cli::cli_abort(
       c(
         "{.arg pars} names {.val {unknown}}, which the model does not have.",
-        i = "Its parameters are {.val {known}}."
+        i = "Its parameters are {.val {known}}.",
+        hint
       ),
       call = call
     )
@@ -218,7 +226,7 @@ natural_pars <- function(link_values, model) {
     all_values[[p]] <- info$fixed_values[[p]]
   }
   lapply(stats::setNames(names(all_values), names(all_values)), function(p) {
-    inverse_link(all_values[[p]], info$links[[p]] %||% "identity")
+    natural_value(all_values[[p]], info$links[[p]] %||% "identity")
   })
 }
 
@@ -231,13 +239,35 @@ natural_pars <- function(link_values, model) {
 #'
 #' @noRd
 check_generated <- function(data, model, covariate_names = NULL,
-                            task_col = NULL, call = rlang::caller_env()) {
+                            task_col = NULL, design = NULL,
+                            call = rlang::caller_env()) {
   if (!is.data.frame(data)) {
     cli::cli_abort(
       "The generator must return a data frame, \\
        not {.obj_type_friendly {data}}.",
       call = call
     )
+  }
+  if (!is.null(design)) {
+    owned <- intersect(names(design), names(data))
+    if (length(owned) > 0L) {
+      cli::cli_abort(
+        c(
+          "The generator returned column{?s} {.val {owned}}, which \\
+           {?is a column/are columns} of the trial design.",
+          i = "The design columns are bound into the data as given; a \\
+               generator returns the response columns only."
+        ),
+        call = call
+      )
+    }
+    if (nrow(data) != nrow(design)) {
+      cli::cli_abort(
+        "The generator returned {nrow(data)} row{?s} for a trial design \\
+         of {nrow(design)}.",
+        call = call
+      )
+    }
   }
   clash <- intersect(covariate_names, names(data))
   if (length(clash) > 0L) {
@@ -455,18 +485,336 @@ task_layout <- function(pars, model, tasks, task_col) {
   })
 }
 
+# trial design ----------------------------------------------------------------
+
+#' Validate `trial_design` (D52-D54) and bring a data frame to one shape
+#'
+#' A data frame without `id` is one trial list for every subject, and
+#' needs `n_trials` rows. With `id`, it holds `n_trials` rows for each of
+#' the subjects `1..n_subjects`. A function is checked per call, by
+#' [trial_design_rows()]. `n_subjects = NULL` skips the check of the ids,
+#' for a component, whose number of subjects is set later.
+#'
+#' @param where A prefix for every message, such as `"Grid row 2: "`.
+#' @return `NULL`, the function, or a plain data frame without row names.
+#' @noRd
+check_trial_design <- function(trial_design, n_subjects, n_trials, model,
+                               cov_names = NULL, task_col = NULL, where = "",
+                               call = rlang::caller_env()) {
+  if (is.null(trial_design) || is.function(trial_design)) {
+    return(trial_design)
+  }
+  if (!is.data.frame(trial_design)) {
+    cli::cli_abort(
+      "{where}{.arg trial_design} must be {.code NULL}, a data frame or a \\
+       function of {.arg n_trials}, not {.obj_type_friendly {trial_design}}.",
+      call = call
+    )
+  }
+  design <- as.data.frame(trial_design)
+  rownames(design) <- NULL
+  check_trial_design_columns(
+    setdiff(names(design), "id"), model, cov_names, task_col, where,
+    call = call
+  )
+  if (!"id" %in% names(design)) {
+    check_trial_design_rows(nrow(design), n_trials, where, call = call)
+    return(design)
+  }
+  ids <- as.character(design$id)
+  if (!is.null(n_subjects)) {
+    expected <- as.character(seq_len(n_subjects))
+    if (!setequal(unique(ids), expected)) {
+      cli::cli_abort(
+        c(
+          "{where}The {.val id} column of {.arg trial_design} must hold \\
+           the subjects 1 to {n_subjects}, each once or more.",
+          i = "It holds {.val {unique(ids)}}."
+        ),
+        call = call
+      )
+    }
+  }
+  for (id in unique(ids)) {
+    check_trial_design_rows(
+      sum(ids == id), n_trials, paste0(where, "For subject ", id, ", "),
+      call = call
+    )
+  }
+  design
+}
+
+#' A design's columns: at least one, and none the data already has
+#'
+#' `id`, the covariates, the task column and the model's response columns
+#' are written by the engine or the generator; a design column of the same
+#' name would be overwritten or would overwrite them.
+#'
+#' @noRd
+check_trial_design_columns <- function(columns, model, cov_names = NULL,
+                                       task_col = NULL, where = "",
+                                       call = rlang::caller_env()) {
+  if (length(columns) == 0L) {
+    cli::cli_abort(
+      "{where}{.arg trial_design} must have at least one column besides \\
+       {.val id}.",
+      call = call
+    )
+  }
+  taken <- c(
+    unlist(model$resp_vars, use.names = FALSE), cov_names, task_col
+  )
+  clash <- intersect(columns, taken)
+  if (length(clash) > 0L) {
+    cli::cli_abort(
+      c(
+        "{where}{cli::qty(clash)}{.arg trial_design} has the column{?s} \\
+         {.val {clash}}, which the data already {?has/have}.",
+        i = "A design column must differ from the model's response \\
+             columns, the covariates and the task column."
+      ),
+      call = call
+    )
+  }
+  invisible(columns)
+}
+
+#' @noRd
+check_trial_design_rows <- function(n_rows, n_trials, where = "",
+                                    verb = "has", call = rlang::caller_env()) {
+  if (n_rows != n_trials) {
+    cli::cli_abort(
+      "{where}{.arg trial_design} {verb} {n_rows} row{?s}, but \\
+       {.arg n_trials} is {n_trials}.",
+      call = call
+    )
+  }
+  invisible(n_rows)
+}
+
+#' Check that the generator can take a design, before anything is drawn
+#'
+#' A built-in adapter can when [trial_design_columns()] names columns for
+#' the model, and then the design must have them (a function's result is
+#' checked per call). A user generator can when it has a `trial_design`
+#' formal or `...`.
+#'
+#' @noRd
+check_trial_design_generator <- function(trial_design, generator, model,
+                                         adapter = FALSE,
+                                         call = rlang::caller_env()) {
+  needed <- if (adapter) trial_design_columns(model) else character()
+  if (adapter && length(needed) == 0L) {
+    if (!is.null(trial_design)) {
+      cli::cli_abort(
+        c(
+          "The built-in generator for {.cls {adapter_name(model)}} does not \\
+           use a trial design.",
+          i = "Leave {.arg trial_design} out, or supply a {.arg generator} \\
+               that reads it."
+        ),
+        call = call
+      )
+    }
+    return(invisible(NULL))
+  }
+  if (adapter) {
+    if (is.null(trial_design)) {
+      cli::cli_abort(
+        c(
+          "The built-in generator for {.cls {adapter_name(model)}} needs \\
+           {.arg trial_design}.",
+          i = "It reads the column{?s} {.val {needed}} per trial."
+        ),
+        call = call
+      )
+    }
+    if (is.data.frame(trial_design)) {
+      check_trial_design_needs(names(trial_design), needed, call = call)
+    }
+    return(invisible(NULL))
+  }
+  if (is.null(trial_design)) {
+    return(invisible(NULL))
+  }
+  arguments <- names(formals(generator))
+  if (!any(c("trial_design", "...") %in% arguments)) {
+    cli::cli_abort(
+      c(
+        "{.arg generator} takes no {.arg trial_design} argument, so the \\
+         trial design would not reach it.",
+        i = "Add {.arg trial_design} as its fourth argument: \\
+             {.code function(pars, n_trials, model, trial_design)}."
+      ),
+      call = call
+    )
+  }
+  invisible(NULL)
+}
+
+#' @noRd
+check_trial_design_needs <- function(columns, needed,
+                                     call = rlang::caller_env()) {
+  missing <- setdiff(needed, columns)
+  if (length(missing) > 0L) {
+    cli::cli_abort(
+      "{.arg trial_design} lacks the column{?s} {.val {missing}}, which the \\
+       built-in generator reads.",
+      call = call
+    )
+  }
+  invisible(columns)
+}
+
+#' Check the formula a generator is handed (D58)
+#'
+#' Only a built-in adapter that reads one gets it, and that adapter needs
+#' it: its activations are checked here, before anything is drawn.
+#'
+#' @return The formula, or `NULL`.
+#' @noRd
+check_generator_formula <- function(formula, model, adapter,
+                                    call = rlang::caller_env()) {
+  reads <- adapter && adapter_reads_formula(model)
+  if (is.null(formula)) {
+    if (reads) m3_activations(NULL, model, call = call)
+    return(NULL)
+  }
+  if (!inherits(formula, "bmmformula")) {
+    cli::cli_abort(
+      "{.arg formula} must be {.code NULL} or a {.cls bmmformula}, \
+       not {.obj_type_friendly {formula}}.",
+      call = call
+    )
+  }
+  if (!adapter) {
+    cli::cli_abort(
+      c(
+        "{.arg formula} reaches only a built-in generator, never \
+         {.arg generator}.",
+        i = "A generator you write closes over its own formula; leave \
+             {.arg formula} out."
+      ),
+      call = call
+    )
+  }
+  if (!reads) {
+    cli::cli_abort(
+      c(
+        "The built-in generator for {.cls {adapter_name(model)}} does not \
+         read a formula.",
+        i = "Only the custom {.cls m3} takes its activations from \
+             {.arg formula}; leave it out."
+      ),
+      call = call
+    )
+  }
+  m3_activations(formula, model, call = call)
+  formula
+}
+
+#' One generator call's rows of the design
+#'
+#' The data frame itself; subject `i`'s rows of an `id`-keyed one, without
+#' `id`; or a function's result for this call, checked as a data frame is.
+#'
+#' @noRd
+trial_design_rows <- function(trial_design, i, n_trials, model, cov_names,
+                              task_col, needed, call = rlang::caller_env()) {
+  if (is.null(trial_design)) {
+    return(NULL)
+  }
+  if (is.function(trial_design)) {
+    rows <- trial_design(n_trials)
+    if (!is.data.frame(rows)) {
+      cli::cli_abort(
+        "A {.arg trial_design} function must return a data frame, \\
+         not {.obj_type_friendly {rows}}.",
+        call = call
+      )
+    }
+    if ("id" %in% names(rows)) {
+      cli::cli_abort(
+        c(
+          "The {.arg trial_design} function returned a column {.val id}.",
+          i = "It is called once per subject, so its rows are that \\
+               subject's; give a data frame for an {.val id}-keyed design."
+        ),
+        call = call
+      )
+    }
+    rows <- as.data.frame(rows)
+    rownames(rows) <- NULL
+    check_trial_design_columns(
+      names(rows), model, cov_names, task_col,
+      call = call
+    )
+    check_trial_design_rows(
+      nrow(rows), n_trials,
+      verb = "returned", call = call
+    )
+    check_trial_design_needs(names(rows), needed, call = call)
+    return(rows)
+  }
+  if (!"id" %in% names(trial_design)) {
+    return(trial_design)
+  }
+  own <- as.character(trial_design$id) == as.character(i)
+  rows <- trial_design[own, setdiff(names(trial_design), "id"), drop = FALSE]
+  rownames(rows) <- NULL
+  rows
+}
+
 #' Run the generator for every subject, and every task within a subject
+#'
+#' With a trial design, each call gets its rows as `trial_design` and the
+#' same rows are bound into the data before the generator's columns.
+#'
+#' @return A list with `data` and `design_columns`, the columns the design
+#'   contributed (`character()` without one).
 #' @noRd
 generate_data <- function(values, pars, model, generator, n_subjects,
-                          n_trials, tasks, task_col, cov_names) {
+                          n_trials, tasks, task_col, cov_names,
+                          trial_design = NULL, needed = character(),
+                          formula = NULL, call = rlang::caller_env()) {
   layout <- task_layout(pars, model, tasks, task_col)
+  design_columns <- NULL
   pieces <- lapply(seq_len(n_subjects), function(i) {
     lapply(seq_along(layout), function(k) {
       # keep the names when the matrix has a single column
       link_values <- stats::setNames(values[i, layout[[k]]], names(layout[[k]]))
-      rows <- generator(natural_pars(link_values, model), n_trials, model)
-      check_generated(rows, model, cov_names, task_col)
+      design <- trial_design_rows(
+        trial_design, i, n_trials, model, cov_names, task_col, needed,
+        call = call
+      )
+      pars_k <- natural_pars(link_values, model)
+      # the 0.2.0 call without a design or a formula; a formula reaches
+      # only an adapter that reads one (D58)
+      rows <- if (!is.null(formula)) {
+        generator(pars_k, n_trials, model,
+          trial_design = design,
+          formula = formula
+        )
+      } else if (is.null(design)) {
+        generator(pars_k, n_trials, model)
+      } else {
+        generator(pars_k, n_trials, model, trial_design = design)
+      }
+      check_generated(rows, model, cov_names, task_col, design)
       rows <- tibble::as_tibble(rows)
+      if (!is.null(design)) {
+        if (is.null(design_columns)) {
+          design_columns <<- names(design)
+        } else if (!identical(names(design), design_columns)) {
+          cli::cli_abort(
+            "The {.arg trial_design} function returned the columns \\
+             {.val {names(design)}} on one call and \\
+             {.val {design_columns}} on another.",
+            call = call
+          )
+        }
+        rows <- dplyr::bind_cols(tibble::as_tibble(design), rows)
+      }
       if (!is.null(tasks)) {
         rows <- tibble::add_column(
           rows,
@@ -481,7 +829,10 @@ generate_data <- function(values, pars, model, generator, n_subjects,
       )
     })
   })
-  dplyr::bind_rows(do.call(c, pieces))
+  list(
+    data = dplyr::bind_rows(do.call(c, pieces)),
+    design_columns = design_columns %||% character()
+  )
 }
 
 #' Run an expression under a seed, or as is when there is none
@@ -535,7 +886,8 @@ truth_tables <- function(pars, sds, values, cors = NULL, covariates = NULL) {
 #' that [recover()] and [recover_subjects()] can score a fit of that
 #' data. Subject values are drawn on the link scale around the
 #' population values, converted to the natural scale through
-#' [inverse_link()], and handed to the model's own `r<model>()` generator,
+#' [inverse_link()] (a `softmax` term excepted, see the details), and
+#' handed to the model's own `r<model>()` generator,
 #' or to the function you pass as `generator`, which always takes
 #' precedence over the built-in one.
 #'
@@ -594,10 +946,36 @@ truth_tables <- function(pars, sds, values, cors = NULL, covariates = NULL) {
 #'   scale) of subject values to use instead of drawing them, so that
 #'   replications can share the same simulated people. With `covariates`
 #'   it must give their values too.
+#' @param formula `NULL`, or the `bmmformula` the model is fitted with,
+#'   for a built-in generator that reads it: only the custom version of
+#'   `m3`, whose activation formulas exist nowhere else (see the section
+#'   "The m3 model"). A formula for any other model, or with a
+#'   `generator`, is an error: a generator you write closes over its own.
+#'   [recovery_grid()], [recovery_component()] and [sbc()] pass on the
+#'   formula they fit with.
+#' @param trial_design `NULL`, or the per-trial variables of the design
+#'   (set sizes, non-target locations, option counts): what a generator
+#'   needs per trial and the model reads from the data but does not hold.
+#'   One of
+#'   * a data frame of `n_trials` rows, one trial list used for every
+#'     subject (and every task);
+#'   * a data frame with an `id` column holding the subjects `1` to
+#'     `n_subjects`, `n_trials` rows each, one trial list per subject;
+#'   * a function `(n_trials)` returning a data frame of `n_trials` rows,
+#'     called once per subject and task under `seed`, for designs drawn at
+#'     random, such as non-target locations.
+#'
+#'   Each generator call receives its rows as `trial_design`, and the same
+#'   rows are bound into `data` after `id`, the covariates and the task
+#'   column. See the section "Trial design".
 #' @param generator A function `(pars, n_trials, model)` returning one
 #'   subject's rows as a data frame with the model's column names;
 #'   `pars` is a named list on the natural scale, fixed parameters
-#'   included. `NULL` uses the adapter bmmtools ships for the model.
+#'   included, except a parameter whose link is `softmax`, which arrives
+#'   on the link scale (see the details). With a `trial_design` it is
+#'   called as `(pars, n_trials,
+#'   model, trial_design)` and must have that fourth argument or `...`.
+#'   `NULL` uses the adapter bmmtools ships for the model.
 #' @param seed A seed applied with `withr::with_seed()` around the draws
 #'   and the generator; `NULL` leaves the random number generator alone.
 #'
@@ -611,12 +989,19 @@ truth_tables <- function(pars, sds, values, cors = NULL, covariates = NULL) {
 #'   `pars`, `sds`, `cors` (the full matrix over varying parameters then
 #'   covariates, `NULL` with fewer than two) and `covariates`,
 #'   `n_subjects`, `n_trials`, `seed` (`NA` when none), `model`,
-#'   `generator`, `tasks` and `task_col` (both `NULL` without tasks).
+#'   `generator`, `tasks` and `task_col` (both `NULL` without tasks),
+#'   `trial_design` (`NULL`, the data frame, or a function's text),
+#'   `trial_design_columns` (the columns it contributed to `data`) and
+#'   `formula` (`NULL`, or the formula that reached the generator, each
+#'   element deparsed to text).
 #'
 #' @details
 #' Adapters exist for `sdt_yn`, `sdt_mafc`, `ezdm` (three parameters),
-#' `ddm`, `cswald` (both versions), `mixture2p` and `sdm`. Every other
-#' model takes a `generator`.
+#' `ddm`, `cswald` (both versions), `mixture2p`, `sdm`, `mixture3p`,
+#' `imm` (`full`, `bsc` and `abc`) and `m3` (`ss`, `cs` and `custom`).
+#' Every other model takes a `generator`. The `mixture3p` and `imm`
+#' adapters need a `trial_design`; see the section "Trial design". The
+#' custom `m3` needs `formula`; see the section "The m3 model".
 #' The truth for the subjects and for the SDs lists only the parameters
 #' that vary, because a parameter that does not vary has nothing
 #' person-level to recover.
@@ -642,6 +1027,74 @@ truth_tables <- function(pars, sds, values, cors = NULL, covariates = NULL) {
 #' same in every task. Adding tasks changes the random numbers drawn
 #' compared with a simulation without them; `tasks = NULL` gives exactly
 #' the simulation of earlier versions.
+#'
+#' @section Trial design:
+#' A generator learns one subject's parameters and a number of trials. A
+#' model whose responses depend on what was shown on each trial ---
+#' `mixture3p` and `imm` need a set size and non-target locations --- gets
+#' those through `trial_design`. The engine hands each generator call its
+#' rows and binds the same rows into `data`, so the fit sees exactly the
+#' trials the responses were drawn from; a generator returns the response
+#' columns only, and returning a design column is an error. A design
+#' column must differ from the model's response columns, the covariates
+#' and the task column.
+#'
+#' **`mixture3p` and `imm`.** Their adapters read, from the columns the
+#' model names: the set size, when `set_size` is a column name (a number
+#' is every trial's set size); the non-target locations `nt_features`,
+#' relative to the target, in radians; and for `imm` `full` and `bsc` the
+#' distances `nt_distances`. A trial of set size `k` has its lures in the
+#' first `k - 1` non-target columns, which must not be `NA`; columns
+#' beyond are ignored and are `NA` by bmm's convention. Each trial is one
+#' call of [bmm::rmixture3p()] or [bmm::rimm()], with the weights bmm's
+#' likelihood gives that trial.
+#'
+#' **The `softmax` link.** `mixture3p`'s `thetat` and `thetant` are log
+#' weights against a guessing weight of 0: on a trial with lures,
+#' `(p_mem, p_nt, p_guess)` is the softmax of `(thetat, thetant, 0)`, the
+#' lures sharing `p_nt` equally, and on a set-size-1 trial there is no
+#' lure weight. Since no inverse of one term gives its natural value, a
+#' parameter whose link is `softmax` reaches the generator on the link
+#' scale, and [recover()] scores it there (its `scale` column says so).
+#'
+#' **`m3` with its numbers of options as columns.** When `num_options`
+#' names columns, those columns are a trial design and each of its rows
+#' is one trial: see the section "The m3 model".
+#'
+#' Without `trial_design` nothing changes: the generator is called with
+#' three arguments, as in bmmtools 0.2.0, and a seeded simulation gives
+#' the same data, and so the same [fit_cached()] key. A data frame draws
+#' no random numbers; a function draws its own, interleaved with the
+#' generator's, once per subject and task. What a function returns can
+#' only be checked once it has been called, so an error in it (wrong row
+#' count, a missing column) stops the simulation after some random numbers
+#' have been drawn; under `seed` that changes nothing, and without one the
+#' random number stream has moved.
+#'
+#' @section The m3 model:
+#' `m3`'s response is a count per category, in the columns `resp_cats`
+#' names. With numbers of options on the model (`num_options = c(1, 4,
+#' 5)`), a subject has **one row of `n_trials` trials** per task, drawn
+#' with one [bmm::rm3()] call, as `sdt_mafc` has one row of counts. With
+#' `num_options` naming columns, the options differ between trials, so
+#' those columns come from `trial_design` and **each row is one trial**:
+#' `n_trials` rows per subject, each counting one response in its
+#' category. The probabilities are bmm's: each category's activation,
+#' exponentiated under `choice_rule = "softmax"`, times its number of
+#' options, normalised. The parameters' links are elementwise, and which
+#' links the model has depends on the choice rule, so take `pars` on the
+#' link scale of the model as built: `bmm::parameters()` lists them for
+#' `ss` and `cs`, and the model's `links` for `custom`.
+#'
+#' The versions `ss` and `cs` take their activation formulas from bmm. The
+#' `custom` version knows its activations only from the formula it is
+#' fitted with, so it needs `formula`, holding one activation per category
+#' (`corr ~ b + a + c`), and a model built with a link for each parameter
+#' they use (`m3(..., links = list(c = "log", a = "log"))`); without links
+#' bmm knows no parameter to give a value to until it fits. Every
+#' parameter with a link must appear in an activation. Extra parameter
+#' formulas in `formula` (`c ~ 1 + (1 | id)`) are ignored here, and a
+#' grid records only the activations.
 #'
 #' @examples
 #' \dontrun{
@@ -670,6 +1123,55 @@ truth_tables <- function(pars, sds, values, cors = NULL, covariates = NULL) {
 #'   two_tasks$model,
 #'   re_cor = "within", task_col = "task"
 #' )
+#'
+#' # a per-trial design: a condition the generator reads on every trial
+#' shifted <- function(pars, n_trials, model, trial_design) {
+#'   mu <- ifelse(trial_design$cond == "a", 0, 0.5)
+#'   data.frame(y = vapply(mu, function(m) {
+#'     bmm::rmixture2p(1, mu = m, kappa = pars$kappa, p_mem = pars$thetat)
+#'   }, numeric(1)))
+#' }
+#' sim <- simulate_recovery(
+#'   bmm::mixture2p(resp_error = "y"),
+#'   pars = c(kappa = log(8), thetat = qlogis(0.75)),
+#'   n_subjects = 10, n_trials = 40,
+#'   trial_design = function(n_trials) {
+#'     data.frame(cond = sample(c("a", "b"), n_trials, replace = TRUE))
+#'   },
+#'   generator = shifted, seed = 1
+#' )
+#'
+#' # mixture3p: set size 2 to 4, non-target locations drawn per trial
+#' lures <- function(n_trials) {
+#'   ss <- sample(2:4, n_trials, replace = TRUE)
+#'   nt <- matrix(runif(3 * n_trials, -pi, pi), n_trials)
+#'   nt[col(nt) >= ss] <- NA
+#'   data.frame(ss = ss, nt1 = nt[, 1], nt2 = nt[, 2], nt3 = nt[, 3])
+#' }
+#' sim <- simulate_recovery(
+#'   bmm::mixture3p(
+#'     resp_error = "y", nt_features = paste0("nt", 1:3), set_size = "ss"
+#'   ),
+#'   pars = c(kappa = log(8), thetat = 1.5, thetant = 0),
+#'   n_subjects = 10, n_trials = 60, trial_design = lures, seed = 1
+#' )
+#'
+#' # a custom m3: the activation formulas reach the adapter through formula
+#' model <- bmm::m3(
+#'   resp_cats = c("corr", "other", "npl"), num_options = c(1, 4, 5),
+#'   choice_rule = "simple", version = "custom",
+#'   links = list(c = "log", a = "log")
+#' )
+#' formula <- bmm::bmf(
+#'   corr ~ b + a + c, other ~ b + a, npl ~ b,
+#'   c ~ 1 + (1 | id), a ~ 1 + (1 | id)
+#' )
+#' sim <- simulate_recovery(
+#'   model,
+#'   pars = c(c = log(3), a = log(0.5)),
+#'   n_subjects = 30, n_trials = 100, sds = c(c = 0.3),
+#'   formula = formula, seed = 1
+#' )
 #' }
 #'
 #' @export
@@ -685,6 +1187,8 @@ simulate_recovery <- function(model,
                               coding = c("cell", "contrast"),
                               contrasts = NULL,
                               subject_pars = NULL,
+                              formula = NULL,
+                              trial_design = NULL,
                               generator = NULL,
                               seed = NULL) {
   check_model(model)
@@ -696,7 +1200,8 @@ simulate_recovery <- function(model,
   }
 
   generator_name <- "user"
-  if (is.null(generator)) {
+  adapter <- is.null(generator)
+  if (adapter) {
     generator <- generator_for(model)
     if (is.null(generator)) {
       cli::cli_abort(c(
@@ -732,6 +1237,11 @@ simulate_recovery <- function(model,
   } else {
     contrasts <- NULL
   }
+  trial_design <- check_trial_design(
+    trial_design, n_subjects, n_trials, model, cov_names, task_col
+  )
+  check_trial_design_generator(trial_design, generator, model, adapter)
+  formula <- check_generator_formula(formula, model, adapter)
 
   # functions first, under the seed and in a fixed order, so that random
   # hyperparameters continue the stream the subject draws then take
@@ -752,10 +1262,13 @@ simulate_recovery <- function(model,
     } else {
       check_subject_pars(subject_pars, pars, sds, n_subjects, covariates)
     }
-    data <- generate_data(
+    generated <- generate_data(
       values, pars, model, generator, n_subjects, n_trials,
-      tasks, task_col, cov_names
+      tasks, task_col, cov_names, trial_design,
+      needed = if (adapter) trial_design_columns(model) else character(),
+      formula = formula
     )
+    data <- generated$data
     # covariates are drawn after the generator, so their random numbers
     # never shift the ones that produced the responses
     if (!is.null(parts)) {
@@ -770,7 +1283,8 @@ simulate_recovery <- function(model,
     }
     list(
       data = data, values = values,
-      pars = pars, sds = sds, cors = cors
+      pars = pars, sds = sds, cors = cors,
+      design_columns = generated$design_columns
     )
   })
 
@@ -823,7 +1337,13 @@ simulate_recovery <- function(model,
       model = model,
       generator = generator_name,
       tasks = tasks,
-      task_col = task_col
+      task_col = task_col,
+      # a function is kept as its text, as cache_key() keeps `init`: its
+      # environment would otherwise be saved into every cell file
+      trial_design = function_key(trial_design),
+      trial_design_columns = out$design_columns,
+      # as in the cache key: the text, not the environment it was built in
+      formula = if (!is.null(formula)) formula_key(formula)
     ),
     class = "bmmtools_simulation"
   )
@@ -839,6 +1359,19 @@ print.bmmtools_simulation <- function(x, ...) {
   if (length(x$covariates) > 0L) {
     extra <- c(extra, paste0(
       "; covariates: ", paste(names(x$covariates), collapse = ", ")
+    ))
+  }
+  if (length(x$trial_design_columns) > 0L) {
+    extra <- c(extra, paste0(
+      "; trial design: ", paste(x$trial_design_columns, collapse = ", ")
+    ))
+  }
+  activations <- intersect(
+    names(x$formula), unlist(x$model$resp_vars, use.names = FALSE)
+  )
+  if (length(activations) > 0L) {
+    extra <- c(extra, paste0(
+      "; activation formulas: ", paste(activations, collapse = ", ")
     ))
   }
   nonzero <- x$truth$cor[x$truth$cor$true_value != 0, , drop = FALSE]

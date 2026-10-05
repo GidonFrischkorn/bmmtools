@@ -80,7 +80,8 @@ subjects, and \code{true_value} is what a reader wants to learn about.
 \code{excludes_zero} is \code{ci_high < 0 | ci_low > 0}.
 
 \strong{On the natural scale} \code{sample_value} is recomputed from the subject
-values after \code{\link[=inverse_link]{inverse_link()}}, covariates untransformed. A generating
+values after \code{\link[=inverse_link]{inverse_link()}}, covariates and \code{softmax} terms
+untransformed. A generating
 correlation on the link scale has no natural-scale counterpart that
 one transform gives, so \code{true_value} is \code{0} where the link-scale value
 is 0 (independence survives a monotone transform) and \code{NA} otherwise.

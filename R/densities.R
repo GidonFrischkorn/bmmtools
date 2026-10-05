@@ -9,7 +9,7 @@
 # These exist only for `fit_ml(method = "optim")`. Decision 34 keeps the
 # Stan route free of any per-model code --- it optimises bmm's own generated
 # likelihood --- but the optim route has to know the likelihood in R, so it
-# is capped at the seven models of adapter_classes() for decision 13's own
+# is capped at the seven models of density_classes() for decision 13's own
 # reason: a general package cannot re-implement every model it validates.
 #
 # Two things measured 2026-09-17 before this file was written
@@ -23,6 +23,18 @@
 # 2. sdt_yn and sdt_mafc are missing from CRAN bmm 1.3.2 entirely, and their
 #    densities land on bmm's develop branch on their own schedule, one model
 #    at a time. Their tests guard per model with skip_if_no_bmm_model().
+
+#' The models `fit_ml(method = "optim")` has a density for
+#'
+#' The seven of 0.2.0. `mixture3p` and `imm` have generators but no
+#' density here: `dmixture3p()` and `dimm()` take one location vector per
+#' call, so a density would be one call per trial inside every step of the
+#' optimiser; their `"stan"` route optimises bmm's own likelihood.
+#'
+#' @noRd
+density_classes <- function() {
+  c("sdt_yn", "sdt_mafc", "ezdm", "ddm", "cswald", "mixture2p", "sdm")
+}
 
 #' Look a density adapter up by the model's class
 #'
