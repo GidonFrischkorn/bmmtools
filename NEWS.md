@@ -1,5 +1,19 @@
 # bmmtools (development version)
 
+* A benchmark module compares implementations of a model on the same
+  data: `benchmark()` runs them interleaved (A, B, A, B) and returns one
+  row per run, `benchmark_metrics()` measures a single fit, and
+  `benchmark_compile()` times a forced compile on its own. Compile time
+  and sampling time are kept apart, and every rate divides by seconds
+  summed over chains rather than by wall time, which would make the same
+  fit look cheaper on more cores: a run reports `us_per_gradient` (the
+  median over chains of chain sampling time over that chain's leapfrog
+  steps) and ESS per chain-second for bulk and tail, over the
+  post-warmup phase and over warmup plus sampling. `summary()` reports
+  the spread beside the centre per implementation, and the ratio between
+  implementations as a geometric mean of per-pair ratios with a t
+  interval on the logs -- never a bare quotient. No benchmark fit is
+  cached, so none can be served to a recovery grid (#4).
 * The README and DESCRIPTION name both groups bmmtools serves: model
   developers and methodologists, and researchers planning a study. A new
   README section, "Planning a study", shows how `recovery_grid()` and

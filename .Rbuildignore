@@ -18,3 +18,4 @@
 ^tests/testthat/_problems$
 ^data-raw$
 ^vignettes/articles$
+^\.git$

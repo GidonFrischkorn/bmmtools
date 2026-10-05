@@ -71,6 +71,14 @@ reference:
   - summary.bmmtools_cross_check
   - sbc
 
+- title: Benchmark
+  desc: What an implementation costs, in units that name their phase.
+  contents:
+  - benchmark
+  - benchmark_metrics
+  - benchmark_compile
+  - summary.bmmtools_benchmark
+
 - title: Plot
   contents:
   - plot_recovery
@@ -91,6 +99,8 @@ reference:
   - '`[.bmmtools_cross_check`'
   - '`[.bmmtools_prior_check`'
   - '`[.bmmtools_ml`'
+  - '`[.bmmtools_benchmark`'
+  - print.bmmtools_benchmark
   - starts_with("dplyr_reconstruct.")
 
 articles:
