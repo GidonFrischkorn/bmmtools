@@ -50,6 +50,7 @@ reference:
   - recover
   - summary.bmmtools_recovery
   - recovery_ccc
+  - prior_sd_table
   - extract_estimates
   - recover_correlations
   - summary.bmmtools_cor_recovery

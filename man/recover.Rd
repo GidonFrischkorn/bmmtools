@@ -13,6 +13,7 @@ recover(
   links = NULL,
   ci_level = 0.95,
   drop_constants = TRUE,
+  prior_sd = NULL,
   ...
 )
 
@@ -67,6 +68,17 @@ when \code{fits} is a fit.}
 model fixed are dropped by default: scoring them would report a
 parameter as perfectly recovered that was never estimated.}
 
+\item{prior_sd}{\code{NULL} (the default), or the prior SD on the link
+scale that each posterior SD is compared with for \code{contraction}. One
+of: a table with the columns \code{term}, \code{level} and \code{prior_sd_link}
+(and optionally \code{condition}), such as \code{\link[=prior_sd_table]{prior_sd_table()}} returns; a
+fit of the same model with \code{sample_prior = "only"}, whose posterior
+SDs are the prior SDs, read with \code{\link[=extract_estimates]{extract_estimates()}} so its terms
+match; or a \code{\link[=prior_check]{prior_check()}} with one prior set, whose cached fit is
+read. A fit that sampled the data is refused. Only
+\code{\link[=recover]{recover()}} takes it: subject rows have no contraction (see
+\code{contraction} below).}
+
 \item{...}{Not used.}
 
 \item{group}{The grouping factor subject-level estimates come from.}
@@ -77,7 +89,8 @@ columns \code{term}, \code{estimate}, \code{ci_low}, \code{ci_high}, \code{ci_me
 \code{ci_level}, \code{rhat}, \code{ess_bulk}, \code{ess_tail}, \code{true_value}, \code{bias},
 \code{covered}, \code{scale}, \code{level}, \code{id}, \code{converged}, \code{condition},
 \code{estimator}, \code{ci_low_50}, \code{ci_high_50}, \code{covered_50},
-\code{post_mean_link}, \code{post_sd_link} and \code{replication}.
+\code{post_mean_link}, \code{post_sd_link}, \code{z}, \code{contraction} and
+\code{replication}.
 
 \code{post_mean_link} and \code{post_sd_link} are the mean and SD of the
 posterior draws \strong{on the link scale, whatever \code{scale} is}: neither
@@ -85,6 +98,23 @@ is invariant under a nonlinear link, so neither is transformed with
 the estimate and its interval. \code{estimate} stays the posterior
 median. For a maximum-likelihood row they are the point estimate and
 its standard error; for a hand-built tibble without them, \code{NA}.
+
+\code{z} is the posterior z-score, \code{(post_mean_link - truth) / post_sd_link} with the truth on the link scale. Across replications
+whose generating values are drawn from the prior, a calibrated
+posterior gives z mean 0 and SD 1; with generating values held fixed,
+as a recovery grid holds them, z also carries the prior's pull
+toward its centre, so a calibrated posterior can show a nonzero mean
+and an SD below 1 (see \code{\link[=summary.bmmtools_recovery]{summary.bmmtools_recovery()}}). \code{contraction} is
+\code{1 - post_sd_link^2 / prior_sd_link^2}, the share of the prior
+variance the data removed: near 1 when the data decide the
+estimate, near 0 when the prior does, and below 0 when the posterior
+is wider than the prior. Both stay on the link scale. \code{z} is \code{NA}
+where the posterior SD is 0 or missing. \code{contraction} is \code{NA}
+without \code{prior_sd}, where it has no row for the term, for subject
+rows (a subject's posterior narrows through pooling as well as
+through its own data, so the ratio would not measure what the data
+did), and for maximum-likelihood rows, which have no prior.
+
 \code{converged} is the verdict of \code{\link[=check_convergence]{check_convergence()}} with its
 default thresholds when \code{fits} are fit objects; to gate with other
 thresholds, call \code{\link[=extract_estimates]{extract_estimates()}} with \verb{converged =} first and

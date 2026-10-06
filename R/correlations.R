@@ -1152,7 +1152,10 @@ point_estimator_rows <- function(subject_draws, cov, pair_table, scale,
 #'   `true_value`, `sample_value`, `bias`, `bias_sample`, `covered`,
 #'   `covered_sample`, `excludes_zero`, `scale`, `n`, `converged`,
 #'   `condition`, `ci_low_50`, `ci_high_50`, `covered_50`,
-#'   `post_mean_link`, `post_sd_link` and `replication`. Call
+#'   `post_mean_link`, `post_sd_link`, `z` and `replication`. `z` is
+#'   `(post_mean_link - true_value) / post_sd_link`, against the
+#'   generating correlation as `bias` is, and so `NA` wherever
+#'   `true_value` is. Call
 #'   [summary()][summary.bmmtools_cor_recovery()] on it for the
 #'   per-pair metrics and [plot_recovery()] to draw it.
 #'
@@ -1329,6 +1332,11 @@ recover_correlations <- function(fits,
   joined$covered_sample <- joined$sample_value >= joined$ci_low &
     joined$sample_value <= joined$ci_high
   joined$excludes_zero <- joined$ci_high < 0 | joined$ci_low > 0
+  # against the generating correlation on the scale the row ends up on,
+  # as `bias` is; `NA` where that truth is (D63, D90)
+  joined$z <- posterior_z(
+    joined$post_mean_link, joined$post_sd_link, joined$true_value
+  )
   joined$n <- as.integer(joined$n)
   if ("condition" %in% names(joined)) {
     joined$condition <- as.character(joined$condition)

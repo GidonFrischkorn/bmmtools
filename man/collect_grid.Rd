@@ -4,7 +4,13 @@
 \alias{collect_grid}
 \title{Read a finished recovery grid from its cell files}
 \usage{
-collect_grid(dir, scale = NULL, levels = NULL, correlations = NULL)
+collect_grid(
+  dir,
+  scale = NULL,
+  levels = NULL,
+  correlations = NULL,
+  prior_sd = NULL
+)
 }
 \arguments{
 \item{dir}{The directory a \code{\link[=recovery_grid]{recovery_grid()}} run wrote, holding
@@ -21,6 +27,12 @@ the natural one without refitting.}
 subset of what the cells hold; asking for something they do not hold
 is an error, because a level is extracted from a fit and the fits
 are not read here.}
+
+\item{prior_sd}{\code{NULL}, the default, uses the prior SDs the grid was
+scored with (\verb{<dir>/prior-sd.rds}, written when \code{\link[=recovery_grid]{recovery_grid()}} had
+a \code{prior_sd}), so the contraction is the grid's. Otherwise a source as
+\code{\link[=recover]{recover()}} takes it --- a table, a fit with \code{sample_prior = "only"},
+or a \code{\link[=prior_check]{prior_check()}} --- which replaces it.}
 }
 \value{
 A \code{bmmtools_recovery} with the attributes \code{\link[=recovery_grid]{recovery_grid()}}

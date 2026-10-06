@@ -1075,13 +1075,140 @@ score_cell_correlations <- function(runs, sims, cells, ok, request, links) {
   )
 }
 
+#' Check `recovery_grid()`'s `prior_sd` before anything runs
+#' @noRd
+check_grid_prior_sd <- function(prior_sd, call = rlang::caller_env()) {
+  if (is.null(prior_sd)) {
+    return(NULL)
+  }
+  if (is.data.frame(prior_sd)) {
+    return(check_prior_sd_table(prior_sd, call = call))
+  }
+  named <- is.character(prior_sd) && length(prior_sd) == 1L &&
+    prior_sd %in% c("fit", "analytic")
+  if (named) {
+    return(prior_sd)
+  }
+  cli::cli_abort(
+    c(
+      "{.arg prior_sd} must be {.code NULL}, {.val fit}, {.val analytic} \\
+       or a table of prior SDs, not {.obj_type_friendly {prior_sd}}.",
+      i = "A table has the columns {.val term}, {.val level} and \\
+           {.val prior_sd_link}."
+    ),
+    call = call
+  )
+}
+
+#' The prior SD table a grid scores against (D89)
+#'
+#' One source per distinct formula, model and prior among the rows that
+#' ran, never one per cell: a prior-only fit does not depend on the
+#' design's size beyond needing data to be called with, so the first
+#' cell of the first row in each set provides it. The table carries the
+#' row's `condition` so that rows with different priors stay apart.
+#'
+#' @noRd
+grid_prior_sd <- function(prior_sd, cells, sims, model_for, formula_for,
+                          prior, dir, dots, fitter, levels) {
+  if (is.null(prior_sd) || is.data.frame(prior_sd)) {
+    return(prior_sd)
+  }
+  # subject rows have no contraction (D63): nothing to fit for
+  if (length(intersect(levels, c("population", "effect", "sd"))) == 0L) {
+    return(NULL)
+  }
+  rows <- sort(unique(cells$row))
+  sets <- vapply(rows, function(r) {
+    rlang::hash(list(formula_key(formula_for(r)), model_for(r), prior))
+  }, character(1))
+  tables <- list()
+  for (set in unique(sets)) {
+    r <- rows[sets == set][[1L]]
+    i <- which(cells$row == r)[[1L]]
+    tables[[set]] <- if (identical(prior_sd, "analytic")) {
+      rlang::check_installed("bmm", "for the default priors.")
+      # only when given: measured 2026-10-05 on bmm 1.3.2.9000, an
+      # explicit `prior = NULL` makes default_prior() drop bmm's own
+      # priors and return brms's
+      prior_sd_table(rlang::exec(
+        bmm::default_prior, formula_for(r), sims[[i]]$data, model_for(r),
+        !!!if (!is.null(prior)) list(prior = prior)
+      ))
+    } else {
+      prior_sd_from_fit(
+        grid_prior_fit(
+          set, formula_for(r), sims[[i]]$data, model_for(r), prior,
+          cells$seed[[i]], dir, dots, fitter
+        ),
+        levels
+      )
+    }
+  }
+  dplyr::bind_rows(lapply(seq_along(rows), function(k) {
+    out <- tables[[sets[[k]]]]
+    if (is.null(out)) {
+      return(NULL)
+    }
+    out$condition <- rep(sprintf("row-%d", rows[[k]]), nrow(out))
+    out[c("term", "level", "prior_sd_link", "condition")]
+  }))
+}
+
+#' Keep the prior SD table a grid scored with, for [collect_grid()]
+#'
+#' A table, not a fit, so that it travels with the cell files to the
+#' machine that collects them. A run without one removes an earlier
+#' run's, so that a collection never contracts against priors the grid
+#' it reproduces did not use.
+#'
+#' @noRd
+write_prior_sd_record <- function(dir, prior_sd) {
+  path <- prior_sd_record_path(dir)
+  if (is.null(prior_sd)) {
+    if (file.exists(path)) unlink(path)
+    return(invisible(NULL))
+  }
+  write_atomic(path, function(tmp) saveRDS(prior_sd, tmp))
+  invisible(path)
+}
+
+#' @noRd
+prior_sd_record_path <- function(dir) {
+  file.path(dir, "prior-sd.rds")
+}
+
+#' The prior-only fit of one prior set, cached in the grid's directory
+#'
+#' The backend is named in the call, so the cache key records the one
+#' that ran rather than resolving it again later (#24).
+#'
+#' @noRd
+grid_prior_fit <- function(set, formula, data, model, prior, seed, dir,
+                           dots, fitter) {
+  backend <- resolve_backend(dots$backend)
+  dots <- dots[setdiff(names(dots), c("sample_prior", "backend"))]
+  args <- c(
+    list(
+      formula = formula, data = data, model = model, prior = prior,
+      file = file.path(dir, paste0("prior-", substr(set, 1L, 12L))),
+      sample_prior = "only",
+      backend = backend,
+      .fitter = fitter
+    ),
+    if (!is.na(seed)) list(seed = seed),
+    dots
+  )
+  rlang::exec(fit_cached, !!!args)
+}
+
 #' Score every cell that has estimates
 #'
 #' @return A `bmmtools_recovery` with the attributes `correlations` (a
 #'   `bmmtools_cor_recovery`, or absent) and `subject_means`.
 #' @noRd
 score_cells <- function(runs, sims, cells, links, scale = "natural",
-                        request = extraction_request()) {
+                        request = extraction_request(), prior_sd = NULL) {
   ok <- which(vapply(runs, function(r) r$status == "ok", logical(1)))
   if (length(ok) == 0L) {
     cli::cli_abort("No cell produced a fit; nothing to score.")
@@ -1100,7 +1227,7 @@ score_cells <- function(runs, sims, cells, links, scale = "natural",
     pieces$population <- recover(
       estimates[estimates$level == "population", ],
       truth_pop,
-      scale = scale, links = links
+      scale = scale, links = links, prior_sd = prior_sd
     )
   }
   # a cell-means simulation has no effect table at all, which is not the
@@ -1118,7 +1245,7 @@ score_cells <- function(runs, sims, cells, links, scale = "natural",
       pieces$effect <- recover(
         estimates[estimates$level == "effect", ],
         truth_effect,
-        level = "effect", scale = "link"
+        level = "effect", scale = "link", prior_sd = prior_sd
       )
     }
   }
@@ -1155,7 +1282,7 @@ score_cells <- function(runs, sims, cells, links, scale = "natural",
     pieces$sd <- recover(
       estimates[estimates$level == "sd", ],
       truth_sd,
-      level = "sd", scale = "link"
+      level = "sd", scale = "link", prior_sd = prior_sd
     )
   }
   if (length(pieces) == 0L) {
@@ -1325,6 +1452,18 @@ grid_formula <- function(formula, row, i, model, re_cor, task_col,
 #'   record.
 #' @param prior Passed to [fit_cached()]; with components, `NULL` or a list
 #'   with a prior per component.
+#' @param prior_sd The prior SD each posterior is contracted against
+#'   (Milestone 22, D89): `NULL` (the default) for no contraction and no
+#'   extra fit; `"fit"` to fit the prior alone (`sample_prior = "only"`)
+#'   once per distinct formula, model and prior among the grid's rows,
+#'   cached in `dir` through [fit_cached()] with the backend named, and
+#'   reused by every cell that shares it; `"analytic"` for the closed
+#'   forms of [prior_sd_table()] applied to `bmm::default_prior()` with
+#'   `prior`, which needs no fit and leaves `NA` where there is no closed
+#'   form; or a table as [recover()] takes it, which may carry a
+#'   `condition` column (`"row-1"`, ...) to differ between rows. Subject
+#'   rows have no contraction (D63). The table used is written to
+#'   `<dir>/prior-sd.rds`, which [collect_grid()] reads.
 #' @param trial_design As in [simulate_recovery()], the same for every
 #'   cell. A data frame without `id` needs every row of the grid to have
 #'   its number of rows as `n_trials`; a function of `n_trials` serves a
@@ -1564,6 +1703,7 @@ recovery_grid <- function(model,
                           contrasts = NULL,
                           formula = NULL,
                           prior = NULL,
+                          prior_sd = NULL,
                           trial_design = NULL,
                           generator = NULL,
                           seed = NULL,
@@ -1580,7 +1720,26 @@ recovery_grid <- function(model,
                           ...,
                           .fitter = NULL) {
   first_model <- grid_first_model(model, grid)
+  prior_sd <- check_grid_prior_sd(prior_sd)
+  if (identical(prior_sd, "analytic") && !is.null(prior)) {
+    # measured 2026-10-05 on bmm 1.3.2.9000: default_prior(prior = )
+    # replaces bmm's own priors where bmm() merges them, so the closed
+    # forms would describe priors the fits did not use
+    cli::cli_abort(c(
+      "{.code prior_sd = \"analytic\"} reads bmm's default priors and \\
+       cannot take {.arg prior} into account.",
+      i = "Use {.code prior_sd = \"fit\"}, or pass {.fn prior_sd_table} \\
+           of one fitted cell as the table."
+    ))
+  }
   if (is_component_list(first_model)) {
+    if (!is.null(prior_sd)) {
+      cli::cli_abort(c(
+        "{.arg prior_sd} is not supported for a grid of components yet.",
+        i = "Score the components with {.fn recover} and its \\
+             {.arg prior_sd}."
+      ))
+    }
     given <- c(
       pars = !missing(pars), sds = !missing(sds),
       tasks = !missing(tasks), task_col = !missing(task_col),
@@ -1782,6 +1941,20 @@ recovery_grid <- function(model,
     )
   }
 
+  # before the cells, so that a prior that cannot be sampled alone fails
+  # before the long part rather than after it
+  if (is.character(prior_sd)) {
+    for (r in unique(cells$row)) {
+      i <- which(cells$row == r)[[1L]]
+      if (is.null(sims[[i]])) sims[[i]] <- simulate_cell(i)
+    }
+  }
+  prior_sd <- grid_prior_sd(
+    prior_sd, cells, sims, model_for, formula_for, prior, dir, dots,
+    .fitter, extraction$levels
+  )
+  write_prior_sd_record(dir, prior_sd)
+
   for (i in seq_len(nrow(cells))) {
     if (is.null(sims[[i]])) sims[[i]] <- simulate_cell(i)
     runs[[i]] <- run_cell(
@@ -1807,7 +1980,9 @@ recovery_grid <- function(model,
     )
   }
 
-  out <- score_cells(runs, sims, cells, unlist(links), scale, request)
+  out <- score_cells(runs, sims, cells, unlist(links), scale, request,
+    prior_sd = prior_sd
+  )
   attr(out, "cells") <- tibble::tibble(
     condition = sprintf("row-%d", cells$row),
     replication = cells$rep,

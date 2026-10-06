@@ -12,7 +12,8 @@
 #' because its type is the caller's choice --- an index, a name or a
 #' grid identifier --- and only its presence is required. The 50 %
 #' interval and `covered_50` follow (Milestone 12, decision 46), then the
-#' link-scale posterior mean and SD (Milestone 22, decisions 59 to 61).
+#' link-scale posterior mean and SD (Milestone 22, decisions 59 to 61),
+#' then the posterior z-score and contraction computed from them.
 #'
 #' @noRd
 recovery_contract <- function() {
@@ -39,7 +40,9 @@ recovery_contract <- function() {
     ci_high_50 = "double",
     covered_50 = "logical",
     post_mean_link = "double",
-    post_sd_link = "double"
+    post_sd_link = "double",
+    z = "double",
+    contraction = "double"
   )
 }
 
@@ -54,7 +57,8 @@ recovery_contract_columns <- function() {
 #' `condition` exists only for a grid; both are filled with `NA` rather
 #' than demanded. So are the 50 % interval and whether it covered, which
 #' a table from before that interval existed does not have: its 50 %
-#' coverage is then unknown, never 0. So are the posterior moments.
+#' coverage is then unknown, never 0. So are the posterior moments, and
+#' the z-score and contraction a table from before them lacks.
 #'
 #' @noRd
 fill_optional_columns <- function(x) {
@@ -62,12 +66,17 @@ fill_optional_columns <- function(x) {
   if (!"condition" %in% names(x)) x$condition <- rep(NA_character_, nrow(x))
   x <- fill_optional_estimates(x)
   if (!"covered_50" %in% names(x)) x$covered_50 <- rep(NA, nrow(x))
+  for (column in c("z", "contraction")) {
+    if (!column %in% names(x)) x[[column]] <- rep(NA_real_, nrow(x))
+  }
   x
 }
 
 #' The columns `summary()` of a recovery object returns
 #'
-#' The apabayes request A1 columns, plus `n_replications`. A single
+#' The apabayes request A1 columns, plus `n_replications`, then the
+#' posterior z-score and contraction columns with their Monte Carlo
+#' standard errors (Milestone 22, D61 and D90). A single
 #' shape serves both [recover()] and [recover_subjects()] so that
 #' downstream code reads one contract. At population level `n` and
 #' `n_replications` differ only when a replication contributed no
@@ -83,7 +92,7 @@ recovery_summary_columns <- function() {
     "r", "r_low", "r_high", "rank_r",
     "ccc", "ccc_low", "ccc_high", "ccc_accuracy", "ccc_scale_shift",
     "ccc_location_shift", "calibration_slope", "calibration_intercept",
-    "truth_sd"
+    "truth_sd", "z_mean", "z_sd", "contraction", "z_mean_mcse", "z_sd_mcse"
   )
 }
 
@@ -403,6 +412,31 @@ summarise_errors <- function(rows) {
   )
 }
 
+#' The z-score and contraction summary of a group of rows (D90)
+#'
+#' z is standardised per row, so the rows of every replication pool
+#' without the within-then-combine step the subject correlations need.
+#' `NA` rows are left out, and `n` is the count of those that remain.
+#' The MCSEs are exact for independent normal z only: subject rows of one
+#' replication share a population posterior, and heavy tails widen the
+#' SD's sampling error, so both understate there.
+#'
+#' @noRd
+summarise_z <- function(rows) {
+  z <- rows$z[!is.na(rows$z)]
+  n <- length(z)
+  z_sd <- if (n >= 2L) stats::sd(z) else NA_real_
+  list(
+    z_mean = if (n >= 1L) mean(z) else NA_real_,
+    z_sd = z_sd,
+    # `[[`: a correlation recovery has no contraction column, and a
+    # tibble warns on `$` of one it does not have
+    contraction = mean_or_na(rows[["contraction"]]),
+    z_mean_mcse = if (n >= 2L) z_sd / sqrt(n) else NA_real_,
+    z_sd_mcse = if (n >= 2L) z_sd / sqrt(2 * (n - 1)) else NA_real_
+  )
+}
+
 #' Population-level summary: one correlation across replications
 #' @noRd
 summarise_population <- function(rows) {
@@ -430,7 +464,8 @@ summarise_population <- function(rows) {
       calibration_slope = ccc$calibration_slope,
       calibration_intercept = ccc$calibration_intercept,
       truth_sd = ccc$truth_sd
-    )
+    ),
+    summarise_z(rows)
   )
 }
 
@@ -493,7 +528,8 @@ summarise_subject <- function(rows) {
       # an intercept can be 0 or negative: arithmetic mean (decision 48)
       calibration_intercept = mean_or_na(pull("calibration_intercept")),
       truth_sd = sqrt(mean_or_na(pull("truth_sd")^2))
-    )
+    ),
+    summarise_z(rows)
   )
 }
 
@@ -539,11 +575,36 @@ summarise_subject <- function(rows) {
 #'   `ci_width_50`, `detected`, `sign_recovery`, `r`,
 #'   `r_low`, `r_high`, `rank_r`,
 #'   `ccc`, `ccc_low`, `ccc_high`, `ccc_accuracy`, `ccc_scale_shift`,
-#'   `ccc_location_shift`, `calibration_slope`, `calibration_intercept`
-#'   and `truth_sd`, the
+#'   `ccc_location_shift`, `calibration_slope`, `calibration_intercept`,
+#'   `truth_sd`, `z_mean`, `z_sd`, `contraction`, `z_mean_mcse` and
+#'   `z_sd_mcse`. `truth_sd` is the
 #'   standard deviation of the generating values. `r` and `ccc` both grow
 #'   with `truth_sd` at a fixed measurement error, so compare them only
 #'   at a similar spread.
+#'
+#' **z and contraction.** `z_mean` and `z_sd` are the mean and SD of the
+#' rows' posterior z-scores (see [recover()]), pooled over every row of
+#' the group with no within-replication step, since each z is already
+#' standardised. When the generating values are drawn from the prior, a
+#' calibrated posterior gives 0 and 1, and a `z_sd` above 1 says the
+#' posterior is too narrow for its error, below 1 too wide. When they are
+#' held fixed, as in a [recovery_grid()], the prior's pull toward its
+#' centre enters both: a calibrated posterior then has `z_mean` away from
+#' 0 for a value far from the prior's centre, and `z_sd` below 1 in
+#' proportion to how much the prior still contributes (for a conjugate
+#' normal, the posterior SD over the sampling error). The reading is
+#' clean where contraction is near 1, and that is why the two are
+#' reported together.
+#' `contraction` is the mean of the rows' contractions. Read together
+#' they separate what coverage alone cannot: a posterior that covers the
+#' truth because the data located it (contraction near 1, `z_sd` near 1)
+#' from one that covers it because it never moved from a prior that
+#' already contained it (contraction near 0). `z_mean_mcse` is
+#' `z_sd / sqrt(n)` and `z_sd_mcse` is `z_sd / sqrt(2 * (n - 1))`, with
+#' `n` the rows that have a z; both are exact for independent normal z
+#' and understate when subject rows of one replication share a population
+#' posterior or when z has heavy tails. With fewer than two z, `z_sd`
+#' and both MCSEs are `NA`.
 #'
 #' @details
 #' Rows are grouped by `estimator` as well as by term and level, so two
@@ -574,7 +635,8 @@ summarise_subject <- function(rows) {
 #' **The print.** Printing the summary shows a core set of columns ---
 #' the condition, the term, the estimator when there is more than one,
 #' the level, the scale, `n`, `bias`, `rmse`, `coverage`, `coverage_50`,
-#' `r`, `ccc` and the calibration columns --- and says how many it hides.
+#' `z_mean`, `z_sd`, `contraction`, `r`, `ccc` and the calibration columns
+#' --- and says how many it hides.
 #' The object itself keeps all of them; `tibble::as_tibble()` prints
 #' every one.
 #'
@@ -648,7 +710,8 @@ empty_recovery_summary <- function() {
     ccc_low = "double", ccc_high = "double", ccc_accuracy = "double",
     ccc_scale_shift = "double", ccc_location_shift = "double",
     calibration_slope = "double", calibration_intercept = "double",
-    truth_sd = "double"
+    truth_sd = "double", z_mean = "double", z_sd = "double",
+    contraction = "double", z_mean_mcse = "double", z_sd_mcse = "double"
   )
   tibble::as_tibble(lapply(types, function(type) vector(type, 0L)))
 }
@@ -745,8 +808,8 @@ print.bmmtools_recovery <- function(x, ...) {
 summary_print_columns <- function(x) {
   core <- c(
     "condition", "term", "estimator", "level", "scale", "n", "bias",
-    "rmse", "coverage", "coverage_50", "r", "ccc", "calibration_slope",
-    "calibration_intercept"
+    "rmse", "coverage", "coverage_50", "z_mean", "z_sd", "contraction",
+    "r", "ccc", "calibration_slope", "calibration_intercept"
   )
   # `[[` rather than `$`: a column subset keeps the class, and a tibble
   # warns on `$` of a column it does not have
@@ -808,7 +871,8 @@ cor_recovery_contract <- function() {
     ci_high_50 = "double",
     covered_50 = "logical",
     post_mean_link = "double",
-    post_sd_link = "double"
+    post_sd_link = "double",
+    z = "double"
   )
 }
 
@@ -826,7 +890,8 @@ cor_recovery_summary_columns <- function() {
     "bias_sample", "rmse_sample", "coverage", "coverage_50",
     "coverage_sample", "ci_width", "ci_width_50", "rejection_rate",
     "false_positive_rate", "power",
-    "r", "r_low", "r_high", "ccc", "ccc_low", "ccc_high"
+    "r", "r_low", "r_high", "ccc", "ccc_low", "ccc_high",
+    "z_mean", "z_sd", "z_mean_mcse", "z_sd_mcse"
   )
 }
 
@@ -932,40 +997,44 @@ summarise_cor_rows <- function(rows) {
   rejection <- mean_or_na(as.double(rows$excludes_zero))
   r <- metric_r(rows$estimate, rows$sample_value)
   ccc <- metric_ccc(rows$estimate, rows$sample_value)
-  list(
-    n_replications = length(unique(rows$replication)),
-    n_converged = count_converged(rows),
-    true_value = if (length(truth) == 1L) as.double(truth) else NA_real_,
-    sample_sd = sd_or_na(rows$sample_value),
-    mean_estimate = mean_or_na(rows$estimate),
-    bias = metric_bias(rows$estimate, rows$true_value),
-    rmse = metric_rmse(rows$estimate, rows$true_value),
-    bias_sample = metric_bias(rows$estimate, rows$sample_value),
-    rmse_sample = metric_rmse(rows$estimate, rows$sample_value),
-    coverage = metric_coverage(rows$true_value, rows$ci_low, rows$ci_high),
-    coverage_50 = metric_coverage(
-      rows$true_value, rows$ci_low_50, rows$ci_high_50
+  c(
+    list(
+      n_replications = length(unique(rows$replication)),
+      n_converged = count_converged(rows),
+      true_value = if (length(truth) == 1L) as.double(truth) else NA_real_,
+      sample_sd = sd_or_na(rows$sample_value),
+      mean_estimate = mean_or_na(rows$estimate),
+      bias = metric_bias(rows$estimate, rows$true_value),
+      rmse = metric_rmse(rows$estimate, rows$true_value),
+      bias_sample = metric_bias(rows$estimate, rows$sample_value),
+      rmse_sample = metric_rmse(rows$estimate, rows$sample_value),
+      coverage = metric_coverage(rows$true_value, rows$ci_low, rows$ci_high),
+      coverage_50 = metric_coverage(
+        rows$true_value, rows$ci_low_50, rows$ci_high_50
+      ),
+      coverage_sample = metric_coverage(
+        rows$sample_value, rows$ci_low, rows$ci_high
+      ),
+      ci_width = metric_ci_width(rows$ci_low, rows$ci_high),
+      ci_width_50 = metric_ci_width(rows$ci_low_50, rows$ci_high_50),
+      rejection_rate = rejection,
+      # an NA true_value is a nonzero correlation on the natural scale, so
+      # it counts as "not 0"
+      false_positive_rate = if (all(rows$true_value %in% 0)) {
+        rejection
+      } else {
+        NA_real_
+      },
+      power = if (!any(rows$true_value %in% 0)) rejection else NA_real_,
+      r = r$r,
+      r_low = r$r_low,
+      r_high = r$r_high,
+      ccc = ccc$ccc,
+      ccc_low = ccc$ccc_low,
+      ccc_high = ccc$ccc_high
     ),
-    coverage_sample = metric_coverage(
-      rows$sample_value, rows$ci_low, rows$ci_high
-    ),
-    ci_width = metric_ci_width(rows$ci_low, rows$ci_high),
-    ci_width_50 = metric_ci_width(rows$ci_low_50, rows$ci_high_50),
-    rejection_rate = rejection,
-    # an NA true_value is a nonzero correlation on the natural scale, so
-    # it counts as "not 0"
-    false_positive_rate = if (all(rows$true_value %in% 0)) {
-      rejection
-    } else {
-      NA_real_
-    },
-    power = if (!any(rows$true_value %in% 0)) rejection else NA_real_,
-    r = r$r,
-    r_low = r$r_low,
-    r_high = r$r_high,
-    ccc = ccc$ccc,
-    ccc_low = ccc$ccc_low,
-    ccc_high = ccc$ccc_high
+    # z only: correlation contraction is NA in 0.3.0 (D63)
+    summarise_z(rows)[c("z_mean", "z_sd", "z_mean_mcse", "z_sd_mcse")]
   )
 }
 
@@ -1004,8 +1073,11 @@ new_cor_recovery_summary <- function(x) {
 #'   `bias_sample`, `rmse_sample`, `coverage`, `coverage_50`,
 #'   `coverage_sample`, `ci_width`, `ci_width_50`, `rejection_rate`,
 #'   `false_positive_rate`, `power`, `r`, `r_low`, `r_high`, `ccc`,
-#'   `ccc_low` and `ccc_high`, preceded by `condition` when the object
-#'   came from a grid. `coverage_50` and `ci_width_50` are the coverage of
+#'   `ccc_low`, `ccc_high`, `z_mean`, `z_sd`, `z_mean_mcse` and
+#'   `z_sd_mcse`, preceded by `condition` when the object
+#'   came from a grid. The z columns summarise the rows' `z`, as in
+#'   [summary.bmmtools_recovery()]; a correlation has no contraction in
+#'   this version. `coverage_50` and `ci_width_50` are the coverage of
 #'   the generating correlation and the mean width of the central 50 %
 #'   interval; they are `NA` when the estimates carry no such interval.
 #'

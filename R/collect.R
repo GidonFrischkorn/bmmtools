@@ -131,6 +131,11 @@ check_collected <- function(stored, levels, correlations,
 #'   subset of what the cells hold; asking for something they do not hold
 #'   is an error, because a level is extracted from a fit and the fits
 #'   are not read here.
+#' @param prior_sd `NULL`, the default, uses the prior SDs the grid was
+#'   scored with (`<dir>/prior-sd.rds`, written when [recovery_grid()] had
+#'   a `prior_sd`), so the contraction is the grid's. Otherwise a source as
+#'   [recover()] takes it --- a table, a fit with `sample_prior = "only"`,
+#'   or a [prior_check()] --- which replaces it.
 #'
 #' @return A `bmmtools_recovery` with the attributes [recovery_grid()]
 #'   gives it. `cells$elapsed` is `NA`: no cell was run, so none took
@@ -153,7 +158,7 @@ check_collected <- function(stored, levels, correlations,
 #'
 #' @export
 collect_grid <- function(dir, scale = NULL, levels = NULL,
-                         correlations = NULL) {
+                         correlations = NULL, prior_sd = NULL) {
   if (!is.character(dir) || length(dir) != 1L || is.na(dir)) {
     cli::cli_abort(
       "{.arg dir} must be a single path, not {.obj_type_friendly {dir}}."
@@ -230,7 +235,14 @@ collect_grid <- function(dir, scale = NULL, levels = NULL,
     ))
   }
 
-  out <- score_cells(runs, sims, cells, links, scale, request)
+  prior_sd <- if (is.null(prior_sd)) {
+    read_prior_sd_record(dir)
+  } else {
+    resolve_prior_sd(prior_sd, levels)
+  }
+  out <- score_cells(runs, sims, cells, links, scale, request,
+    prior_sd = prior_sd
+  )
   attr(out, "cells") <- tibble::tibble(
     condition = sprintf("row-%d", cells$row),
     replication = cells$rep,
@@ -250,4 +262,14 @@ collect_grid <- function(dir, scale = NULL, levels = NULL,
     attr(out, "ml_cells") <- ml_cell_table(runs, cells, dir, record$ml)
   }
   out
+}
+
+#' The prior SD table a grid was scored with, or `NULL`
+#' @noRd
+read_prior_sd_record <- function(dir) {
+  path <- prior_sd_record_path(dir)
+  if (!file.exists(path)) {
+    return(NULL)
+  }
+  check_prior_sd_table(readRDS(path))
 }

@@ -1315,3 +1315,43 @@ test_that("correlation recovery rows carry the moments", {
   plain <- recover_correlations(three_reps()$fits, input$truth, scale = "link")
   expect_true(all(is.na(plain$post_sd_link)))
 })
+
+# posterior z (Milestone 22.2, D63: z only, no contraction) ----------------
+
+test_that("correlation rows carry z against the generating correlation", {
+  contract <- names(cor_recovery_contract())
+  expect_identical(contract[match("post_sd_link", contract) + 1L], "z")
+  expect_false("contraction" %in% contract)
+  input <- three_reps()
+  input$fits$post_mean_link <- c(0.6, 0.3, 0.8)
+  input$fits$post_sd_link <- c(0.1, 0.4, 0)
+  out <- recover_correlations(input$fits, input$truth, scale = "link")
+  expect_equal(out$z, c(1, -0.5, NA))
+})
+
+test_that("the correlation summary carries z_mean, z_sd and their MCSE", {
+  input <- three_reps()
+  input$fits$post_mean_link <- c(0.6, 0.3, 0.8)
+  input$fits$post_sd_link <- c(0.1, 0.4, 0.1)
+  s <- summary(recover_correlations(input$fits, input$truth, scale = "link"))
+  z <- c(1, -0.5, 3)
+  expect_equal(s$z_mean, mean(z))
+  expect_equal(s$z_sd, stats::sd(z))
+  expect_equal(s$z_mean_mcse, stats::sd(z) / sqrt(3))
+  expect_equal(s$z_sd_mcse, stats::sd(z) / sqrt(4))
+  expect_false("contraction" %in% names(s))
+  expect_true(all(
+    c("z_mean", "z_sd", "z_mean_mcse", "z_sd_mcse") %in%
+      names(empty_cor_recovery_summary())
+  ))
+})
+
+test_that("correlation z on the natural scale is NA where the truth is", {
+  input <- three_reps(scale = "natural")
+  input$fits$post_mean_link <- c(0.6, 0.3, 0.8)
+  input$fits$post_sd_link <- c(0.1, 0.4, 0.1)
+  out <- suppressMessages(recover_correlations(input$fits, input$truth,
+    scale = "natural", links = c(kappa = "log", thetat = "logit")
+  ))
+  expect_true(all(is.na(out$z)))
+})
