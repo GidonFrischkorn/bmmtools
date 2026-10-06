@@ -1320,3 +1320,75 @@ test_that("softmax terms at the subject level and on the link scale", {
     scale = "link", links = c(thetat = "softmax")
   ))
 })
+
+# the posterior moments (Milestone 22, D60) -------------------------------
+
+with_moments <- function(estimates, mean, sd) {
+  estimates$post_mean_link <- as.double(mean)
+  estimates$post_sd_link <- as.double(sd)
+  estimates
+}
+
+test_that("recovery rows carry the moments after covered_50", {
+  contract <- names(recovery_contract())
+  expect_identical(
+    contract[match("covered_50", contract) + 1:2],
+    c("post_mean_link", "post_sd_link")
+  )
+  estimates <- with_moments(
+    fake_estimates(c("a", "b"), estimate = c(0, 1)), c(0.1, 1.2), c(0.3, 0.4)
+  )
+  out <- recover(estimates, fake_truth(c("a", "b"), c(0, 1)), scale = "link")
+  expect_equal(out$post_mean_link, c(0.1, 1.2))
+  expect_equal(out$post_sd_link, c(0.3, 0.4))
+})
+
+test_that("an estimates tibble without moments scores with NA moments", {
+  estimates <- fake_estimates(c("a", "b"), estimate = c(0, 1))
+  out <- recover(estimates, fake_truth(c("a", "b"), c(0, 1)), scale = "link")
+  expect_type(out$post_mean_link, "double")
+  expect_true(all(is.na(out$post_mean_link)))
+  expect_true(all(is.na(out$post_sd_link)))
+})
+
+test_that("scale = natural never transforms the moments, under any link", {
+  for (link in c(
+    "identity", "log", "softplus", "log1p", "logm1", "inverse", "sqrt",
+    "logit", "probit", "tan_half", "loglog", "cloglog"
+  )) {
+    estimates <- with_moments(
+      fake_estimates("a", estimate = 0.6, ci_low = 0.4, ci_high = 0.8),
+      0.62, 0.11
+    )
+    truth <- fake_truth("a", 0.5)
+    natural <- recover(estimates, truth, scale = "natural", links = c(a = link))
+    linked <- recover(estimates, truth, scale = "link", links = c(a = link))
+    expect_identical(natural$post_mean_link, 0.62, label = link)
+    expect_identical(natural$post_sd_link, 0.11, label = link)
+    expect_identical(natural$post_sd_link, linked$post_sd_link, label = link)
+  }
+})
+
+test_that("a mixture3p object invents no natural-scale moments", {
+  # D56 and D60: the softmax terms have no natural value, and the
+  # moments of every term stay on the link scale whatever `scale` says
+  terms <- c("kappa", "thetat", "thetant")
+  estimates <- with_moments(
+    fake_estimates(
+      terms,
+      estimate = c(2, 1, -0.5), ci_low = c(1, 0, -1), ci_high = c(3, 2, 0)
+    ),
+    c(2.05, 1.02, -0.48), c(0.2, 0.3, 0.35)
+  )
+  truth <- fake_truth(terms, c(2, 1.5, -0.5))
+  links <- c(
+    mu1 = "tan_half", kappa = "log", thetat = "softmax",
+    thetant = "softmax"
+  )
+  out <- suppressMessages(
+    recover(estimates, truth, scale = "natural", links = links)
+  )
+  expect_equal(out$post_mean_link, c(2.05, 1.02, -0.48))
+  expect_equal(out$post_sd_link, c(0.2, 0.3, 0.35))
+  expect_identical(out$scale, c("natural", "link", "link"))
+})

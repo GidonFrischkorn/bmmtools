@@ -323,14 +323,23 @@ natural_interval <- function(ci_low, ci_high, link) {
 #' A term whose link is joint (`softmax`, D56) stays on the link scale
 #' too, and its rows' `scale` says so.
 #'
+#' `z` and `contraction` are computed before any transform, from the
+#' link-scale moments and truth (Milestone 22, D60).
+#'
 #' @noRd
-score_level <- function(estimates, truth, level, resolved, error_call) {
+score_level <- function(estimates, truth, level, resolved, error_call,
+                        prior_sd = NULL) {
   estimates <- estimates[estimates$level == level, , drop = FALSE]
   keys <- level_keys(level)
   if ("replication" %in% names(truth)) keys <- c(keys, "replication")
   if ("condition" %in% names(truth)) keys <- c(keys, "condition")
 
   joined <- join_truth(estimates, truth, keys, call = error_call)
+  # the truth is still on the link scale here, as the moments are (D60)
+  joined$z <- posterior_z(
+    joined$post_mean_link, joined$post_sd_link, joined$true_value
+  )
+  joined$contraction <- row_contraction(joined, level, prior_sd)
 
   scale <- if (level %in% c("sd", "effect")) "link" else resolved$scale
   if (identical(scale, "natural")) {
@@ -348,6 +357,237 @@ score_level <- function(estimates, truth, level, resolved, error_call) {
     joined$scale[joined$term %in% joint] <- "link"
   }
   joined
+}
+
+#' The posterior z-score of each row (Milestone 22, D59, D90)
+#'
+#' `(mean - truth) / sd` on the link scale. A zero or missing SD gives
+#' `NA`: a constant has no spread to standardise by, and `Inf` would
+#' poison every mean taken over it.
+#'
+#' @noRd
+posterior_z <- function(mean, sd, truth) {
+  ok <- !is.na(sd) & sd > 0
+  out <- rep(NA_real_, length(mean))
+  out[ok] <- (mean[ok] - truth[ok]) / sd[ok]
+  out
+}
+
+#' The contraction of each row against its prior SD (D61, D63, D64, D90)
+#'
+#' `1 - post_sd_link^2 / prior_sd_link^2`, matched on `term` and `level`,
+#' and on `condition` when the prior table has one. `NA` for subject rows
+#' (D63: a subject posterior narrows through pooling as well as its own
+#' data), for ML rows (D64: no prior), where no prior SD matches, and
+#' where the prior SD is zero, missing or infinite. Not clamped at 0: a
+#' posterior wider than its prior is a finding.
+#'
+#' @noRd
+row_contraction <- function(joined, level, prior_sd) {
+  out <- rep(NA_real_, nrow(joined))
+  if (is.null(prior_sd) || identical(level, "subject") || nrow(joined) == 0L) {
+    return(out)
+  }
+  prior <- match_prior_sd(joined, level, prior_sd)
+  ok <- !is.na(prior) & is.finite(prior) & prior > 0 &
+    !fill_estimator(joined) %in% "ml"
+  out[ok] <- 1 - joined$post_sd_link[ok]^2 / prior[ok]^2
+  out
+}
+
+#' The prior SD of each row, `NA` where the table has none
+#' @noRd
+match_prior_sd <- function(joined, level, prior_sd) {
+  by_condition <- "condition" %in% names(prior_sd) &&
+    "condition" %in% names(joined)
+  key <- function(term, lv, condition) {
+    if (by_condition) {
+      paste(term, lv, condition, sep = "\r")
+    } else {
+      paste(term, lv, sep = "\r")
+    }
+  }
+  table_key <- key(prior_sd$term, prior_sd$level, prior_sd$condition)
+  row_key <- key(joined$term, rep(level, nrow(joined)), joined$condition)
+  prior_sd$prior_sd_link[match(row_key, table_key)]
+}
+
+#' Turn `prior_sd` into a table of `term`, `level`, `prior_sd_link`
+#'
+#' `NULL` stays `NULL`. A data frame must have the three columns, and may
+#' have `condition` (a grid's row label) as well. A prior check is read
+#' through its cached fit, and a fit through [extract_estimates()], so its
+#' terms match the posterior's by construction (D87). A brmsfit must have
+#' sampled the prior alone: a posterior passed by mistake would give a
+#' contraction near 0 and nothing would say why.
+#'
+#' The prior check's test comes first because it is a data frame too.
+#'
+#' @noRd
+resolve_prior_sd <- function(prior_sd, level, call = rlang::caller_env()) {
+  if (is.null(prior_sd)) {
+    return(NULL)
+  }
+  if (inherits(prior_sd, "bmmtools_prior_check")) {
+    return(prior_sd_from_fit(prior_check_fit(prior_sd, call), level))
+  }
+  if (is.data.frame(prior_sd)) {
+    return(check_prior_sd_table(prior_sd, call = call))
+  }
+  if (inherits(prior_sd, "brmsfit")) {
+    mode <- attr(prior_sd$prior, "sample_prior")
+    if (!identical(mode, "only")) {
+      mode <- if (is.null(mode)) "unknown" else as.character(mode)[[1L]]
+      cli::cli_abort(
+        c(
+          "A fit given as {.arg prior_sd} must have sampled the prior \\
+           alone.",
+          x = "This one has {.arg sample_prior} {.val {mode}}.",
+          i = "Refit with {.code sample_prior = \"only\"}, or use \\
+               {.fn prior_check}, whose fits do."
+        ),
+        call = call
+      )
+    }
+    return(prior_sd_from_fit(prior_sd, level))
+  }
+  cli::cli_abort(
+    c(
+      "{.arg prior_sd} must be a data frame of prior SDs, a fit with \\
+       {.code sample_prior = \"only\"}, or a {.cls bmmtools_prior_check}, \\
+       not {.obj_type_friendly {prior_sd}}.",
+      i = "{.fn prior_sd_table} gives the table from a fit's priors."
+    ),
+    call = call
+  )
+}
+
+#' The prior SDs of a prior-only fit, read as the posterior's are
+#'
+#' Subject rows are not asked for: their contraction is `NA` (D63).
+#'
+#' @noRd
+prior_sd_from_fit <- function(fit, level) {
+  level <- intersect(level, c("population", "effect", "sd"))
+  if (length(level) == 0L) {
+    return(NULL)
+  }
+  estimates <- extract_estimates(fit, level = level)
+  sd <- estimates$post_sd_link
+  if (is.null(sd)) sd <- rep(NA_real_, nrow(estimates))
+  tibble::tibble(
+    term = as.character(estimates$term),
+    level = as.character(estimates$level),
+    prior_sd_link = as.double(sd)
+  )
+}
+
+#' The cached prior-only fit of a one-set prior check
+#' @noRd
+prior_check_fit <- function(x, call = rlang::caller_env()) {
+  files <- attr(x, "files")
+  # nolint next: object_usage_linter. Used by cli's glue interpolation.
+  sets <- names(files) %||% attr(x, "sets")
+  if (length(files) != 1L) {
+    cli::cli_abort(
+      c(
+        "A prior check given as {.arg prior_sd} must hold one prior set.",
+        x = "This one holds {length(files)}: {.val {sets}}.",
+        i = "Run {.fn prior_check} on the set the fits used."
+      ),
+      call = call
+    )
+  }
+  path <- cache_paths(files[[1L]])$rds
+  if (!file.exists(path)) {
+    cli::cli_abort(
+      c(
+        "The prior check's fit is not at {.path {path}}.",
+        i = "Without {.arg file}, {.fn prior_check} keeps its fit in a \\
+             temporary file that ends with the session; give it \\
+             {.arg file} to keep the fit."
+      ),
+      call = call
+    )
+  }
+  readRDS(path)
+}
+
+#' @noRd
+check_prior_sd_table <- function(x, call = rlang::caller_env()) {
+  needed <- c("term", "level", "prior_sd_link")
+  missing <- setdiff(needed, names(x))
+  if (length(missing) > 0L) {
+    cli::cli_abort(
+      c(
+        "A {.arg prior_sd} table needs the column{?s} {.val {missing}}.",
+        i = "It has {.val {names(x)}}."
+      ),
+      call = call
+    )
+  }
+  if (!is.numeric(x$prior_sd_link)) {
+    cli::cli_abort(
+      "Column {.val prior_sd_link} of {.arg prior_sd} must be numeric, \\
+       not {.obj_type_friendly {x$prior_sd_link}}.",
+      call = call
+    )
+  }
+  out <- tibble::tibble(
+    term = as.character(x$term),
+    level = as.character(x$level),
+    prior_sd_link = as.double(x$prior_sd_link)
+  )
+  if ("condition" %in% names(x)) out$condition <- as.character(x$condition)
+  key <- do.call(paste, c(as.list(out[setdiff(names(out), "prior_sd_link")]),
+    sep = "\r"
+  ))
+  if (anyDuplicated(key) > 0L) {
+    # nolint next: object_usage_linter. Used by cli's glue interpolation.
+    twice <- unique(out$term[duplicated(key)])
+    cli::cli_abort(
+      c(
+        "{.arg prior_sd} gives a prior SD for {.val {twice}} more than \\
+         once.",
+        i = "Give one row per term and level, or add a {.val condition} \\
+             column to tell rows apart."
+      ),
+      call = call
+    )
+  }
+  out
+}
+
+#' Say once which rows that could have a contraction had no prior SD
+#' @noRd
+inform_missing_prior_sd <- function(joined, prior_sd) {
+  if (is.null(prior_sd)) {
+    return(invisible(NULL))
+  }
+  could <- joined$level %in% c("population", "effect", "sd") &
+    !fill_estimator(joined) %in% "ml"
+  missing <- could & is.na(match_prior_sd_any(joined, prior_sd))
+  if (!any(missing)) {
+    return(invisible(NULL))
+  }
+  # nolint next: object_usage_linter. Used by cli's glue interpolation.
+  what <- unique(paste0(joined$term[missing], " (", joined$level[missing], ")"))
+  cli::cli_inform(c(
+    "No prior SD for {.val {what}}; {cli::qty(length(what))}{?its/their} \\
+     contraction is {.val {NA}}."
+  ))
+  invisible(NULL)
+}
+
+#' `match_prior_sd()` over rows of several levels
+#' @noRd
+match_prior_sd_any <- function(joined, prior_sd) {
+  out <- rep(NA_real_, nrow(joined))
+  for (lv in unique(joined$level)) {
+    at <- joined$level == lv
+    out[at] <- match_prior_sd(joined[at, , drop = FALSE], lv, prior_sd)
+  }
+  out
 }
 
 #' The columns a level's truth joins on, besides replication and condition
@@ -404,8 +644,9 @@ check_truth_frame <- function(truth, call = rlang::caller_env()) {
 #' The shared body of recover() and recover_subjects()
 #' @noRd
 score_recovery <- function(fits, truth, level, group, scale, links,
-                           ci_level, drop_constants, call, error_call) {
-  estimates <- fill_inner_interval(as_estimates_input(
+                           ci_level, drop_constants, call, error_call,
+                           prior_sd = NULL) {
+  estimates <- fill_optional_estimates(as_estimates_input(
     fits, level, group, ci_level, drop_constants,
     call = error_call
   ))
@@ -420,10 +661,13 @@ score_recovery <- function(fits, truth, level, group, scale, links,
     }
     check_truth(truths[[lv]], level_keys(lv), call = error_call)
   }
+  prior_sd <- resolve_prior_sd(prior_sd, level, call = error_call)
   resolved <- resolve_links(fits, links, scale, call = error_call)
 
   pieces <- lapply(level, function(lv) {
-    score_level(estimates, truths[[lv]], lv, resolved, error_call)
+    score_level(estimates, truths[[lv]], lv, resolved, error_call,
+      prior_sd = prior_sd
+    )
   })
   link_only <- intersect(c("sd", "effect"), level)
   if (length(link_only) > 0L && identical(resolved$scale, "natural")) {
@@ -437,6 +681,7 @@ score_recovery <- function(fits, truth, level, group, scale, links,
     ))
   }
   joined <- dplyr::bind_rows(pieces)
+  inform_missing_prior_sd(joined, prior_sd)
   if (identical(resolved$scale, "natural")) {
     natural <- !joined$level %in% c("sd", "effect")
     inform_joint_link_terms(
@@ -567,13 +812,50 @@ check_estimator_balance <- function(x) {
 #' @param drop_constants Passed to [extract_estimates()]. Parameters the
 #'   model fixed are dropped by default: scoring them would report a
 #'   parameter as perfectly recovered that was never estimated.
+#' @param prior_sd `NULL` (the default), or the prior SD on the link
+#'   scale that each posterior SD is compared with for `contraction`. One
+#'   of: a table with the columns `term`, `level` and `prior_sd_link`
+#'   (and optionally `condition`), such as [prior_sd_table()] returns; a
+#'   fit of the same model with `sample_prior = "only"`, whose posterior
+#'   SDs are the prior SDs, read with [extract_estimates()] so its terms
+#'   match; or a [prior_check()] with one prior set, whose cached fit is
+#'   read. A fit that sampled the data is refused. Only
+#'   [recover()] takes it: subject rows have no contraction (see
+#'   `contraction` below).
 #' @param ... Not used.
 #'
 #' @return A `bmmtools_recovery` object: a tibble subclass with the
 #'   columns `term`, `estimate`, `ci_low`, `ci_high`, `ci_method`,
 #'   `ci_level`, `rhat`, `ess_bulk`, `ess_tail`, `true_value`, `bias`,
 #'   `covered`, `scale`, `level`, `id`, `converged`, `condition`,
-#'   `estimator` and `replication`.
+#'   `estimator`, `ci_low_50`, `ci_high_50`, `covered_50`,
+#'   `post_mean_link`, `post_sd_link`, `z`, `contraction` and
+#'   `replication`.
+#'
+#'   `post_mean_link` and `post_sd_link` are the mean and SD of the
+#'   posterior draws **on the link scale, whatever `scale` is**: neither
+#'   is invariant under a nonlinear link, so neither is transformed with
+#'   the estimate and its interval. `estimate` stays the posterior
+#'   median. For a maximum-likelihood row they are the point estimate and
+#'   its standard error; for a hand-built tibble without them, `NA`.
+#'
+#'   `z` is the posterior z-score, `(post_mean_link - truth) /
+#'   post_sd_link` with the truth on the link scale. Across replications
+#'   whose generating values are drawn from the prior, a calibrated
+#'   posterior gives z mean 0 and SD 1; with generating values held fixed,
+#'   as a recovery grid holds them, z also carries the prior's pull
+#'   toward its centre, so a calibrated posterior can show a nonzero mean
+#'   and an SD below 1 (see [summary.bmmtools_recovery()]). `contraction` is
+#'   `1 - post_sd_link^2 / prior_sd_link^2`, the share of the prior
+#'   variance the data removed: near 1 when the data decide the
+#'   estimate, near 0 when the prior does, and below 0 when the posterior
+#'   is wider than the prior. Both stay on the link scale. `z` is `NA`
+#'   where the posterior SD is 0 or missing. `contraction` is `NA`
+#'   without `prior_sd`, where it has no row for the term, for subject
+#'   rows (a subject's posterior narrows through pooling as well as
+#'   through its own data, so the ratio would not measure what the data
+#'   did), and for maximum-likelihood rows, which have no prior.
+#'
 #'   `converged` is the verdict of [check_convergence()] with its
 #'   default thresholds when `fits` are fit objects; to gate with other
 #'   thresholds, call [extract_estimates()] with `converged =` first and
@@ -632,6 +914,7 @@ recover <- function(fits,
                     links = NULL,
                     ci_level = 0.95,
                     drop_constants = TRUE,
+                    prior_sd = NULL,
                     ...) {
   rlang::check_dots_empty()
   level <- rlang::arg_match(
@@ -643,7 +926,8 @@ recover <- function(fits,
     fits, truth,
     level = level, group = NULL, scale = scale, links = links,
     ci_level = ci_level, drop_constants = drop_constants,
-    call = match.call(), error_call = rlang::current_env()
+    call = match.call(), error_call = rlang::current_env(),
+    prior_sd = prior_sd
   )
 }
 

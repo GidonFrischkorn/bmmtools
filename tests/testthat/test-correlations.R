@@ -235,7 +235,7 @@ test_that("the returned columns follow the spec order and types", {
   expect_named(out, c(
     "term", "var1", "var2", "estimator", "estimate", "ci_low", "ci_high",
     "ci_method", "ci_level", "rhat", "ess_bulk", "ess_tail", "scale", "n",
-    "converged", "ci_low_50", "ci_high_50"
+    "converged", "ci_low_50", "ci_high_50", "post_mean_link", "post_sd_link"
   ))
   expect_type(out$n, "integer")
   expect_type(out$converged, "logical")
@@ -1268,4 +1268,90 @@ test_that("a softmax term is correlated on the link scale, with a message", {
     x,
     estimator = "point", scale = "natural", links = c(kappa = "log")
   ))
+})
+
+# the posterior moments (Milestone 22, D63) -------------------------------
+
+test_that("draws rows carry the moments of the per-draw correlations", {
+  x <- fake_subject_draws(n_subjects = 7L)
+  out <- correlations_from_parts(x, estimator = "draws")
+  per_draw <- oracle_draw_cors(x, "kappa", "thetat")
+  expect_equal(out$post_mean_link, mean(per_draw))
+  expect_equal(out$post_sd_link, stats::sd(per_draw))
+})
+
+test_that("point rows have no posterior moments", {
+  out <- correlations_from_parts(fake_subject_draws(), estimator = "point")
+  expect_true(is.na(out$post_mean_link))
+  expect_true(is.na(out$post_sd_link))
+})
+
+test_that("model rows carry the moments of the cor estimates", {
+  rows <- tibble::tibble(
+    term = "kappa__thetat", estimate = 0.3, ci_low = -0.2, ci_high = 0.7,
+    rhat = 1, ess_bulk = 800, ess_tail = 800, level = "cor",
+    post_mean_link = 0.28, post_sd_link = 0.21
+  )
+  out <- model_cor_rows(rows)
+  expect_equal(out$post_mean_link, 0.28)
+  expect_equal(out$post_sd_link, 0.21)
+  rows$post_mean_link <- NULL
+  rows$post_sd_link <- NULL
+  expect_true(is.na(model_cor_rows(rows)$post_sd_link))
+})
+
+test_that("correlation recovery rows carry the moments", {
+  contract <- names(cor_recovery_contract())
+  expect_identical(
+    contract[match("covered_50", contract) + 1:2],
+    c("post_mean_link", "post_sd_link")
+  )
+  input <- three_reps()
+  input$fits$post_mean_link <- c(0.5, 0.45, 0.7)
+  input$fits$post_sd_link <- c(0.1, 0.2, 0.15)
+  out <- recover_correlations(input$fits, input$truth, scale = "link")
+  expect_equal(out$post_sd_link, c(0.1, 0.2, 0.15))
+  # and without them, NA
+  plain <- recover_correlations(three_reps()$fits, input$truth, scale = "link")
+  expect_true(all(is.na(plain$post_sd_link)))
+})
+
+# posterior z (Milestone 22.2, D63: z only, no contraction) ----------------
+
+test_that("correlation rows carry z against the generating correlation", {
+  contract <- names(cor_recovery_contract())
+  expect_identical(contract[match("post_sd_link", contract) + 1L], "z")
+  expect_false("contraction" %in% contract)
+  input <- three_reps()
+  input$fits$post_mean_link <- c(0.6, 0.3, 0.8)
+  input$fits$post_sd_link <- c(0.1, 0.4, 0)
+  out <- recover_correlations(input$fits, input$truth, scale = "link")
+  expect_equal(out$z, c(1, -0.5, NA))
+})
+
+test_that("the correlation summary carries z_mean, z_sd and their MCSE", {
+  input <- three_reps()
+  input$fits$post_mean_link <- c(0.6, 0.3, 0.8)
+  input$fits$post_sd_link <- c(0.1, 0.4, 0.1)
+  s <- summary(recover_correlations(input$fits, input$truth, scale = "link"))
+  z <- c(1, -0.5, 3)
+  expect_equal(s$z_mean, mean(z))
+  expect_equal(s$z_sd, stats::sd(z))
+  expect_equal(s$z_mean_mcse, stats::sd(z) / sqrt(3))
+  expect_equal(s$z_sd_mcse, stats::sd(z) / sqrt(4))
+  expect_false("contraction" %in% names(s))
+  expect_true(all(
+    c("z_mean", "z_sd", "z_mean_mcse", "z_sd_mcse") %in%
+      names(empty_cor_recovery_summary())
+  ))
+})
+
+test_that("correlation z on the natural scale is NA where the truth is", {
+  input <- three_reps(scale = "natural")
+  input$fits$post_mean_link <- c(0.6, 0.3, 0.8)
+  input$fits$post_sd_link <- c(0.1, 0.4, 0.1)
+  out <- suppressMessages(recover_correlations(input$fits, input$truth,
+    scale = "natural", links = c(kappa = "log", thetat = "logit")
+  ))
+  expect_true(all(is.na(out$z)))
 })

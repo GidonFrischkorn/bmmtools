@@ -1765,3 +1765,83 @@ test_that("ML rows without the 50 % interval rerun ML alone", {
   ml <- out[out$estimator == "ml" & out$converged, ]
   expect_false(anyNA(ml$ci_low_50))
 })
+
+# sidecars without the posterior moments (Milestone 22, D49's shape) ------
+
+strip_moments <- function(path, tables = c(
+                            "estimates", "cor_estimates", "ml_estimates"
+                          )) {
+  sidecar <- readRDS(path)
+  for (name in tables) {
+    if (!is.null(sidecar[[name]])) {
+      sidecar[[name]]$post_mean_link <- NULL
+      sidecar[[name]]$post_sd_link <- NULL
+    }
+  }
+  saveRDS(sidecar, path)
+}
+
+test_that("a grid stores the posterior moments", {
+  skip_if_not_installed("bmm")
+  dir <- withr::local_tempdir()
+  out <- suppressMessages(
+    grid_run(dir, grid_mock_fitter(), correlations = "draws")
+  )
+  expect_false(anyNA(out$post_sd_link))
+  sidecar <- readRDS(grid_sidecars(dir)[[1L]])
+  expect_true("post_sd_link" %in% names(sidecar$estimates))
+  expect_true("post_sd_link" %in% names(sidecar$cor_estimates))
+  expect_false(anyNA(attr(out, "correlations")$post_sd_link))
+})
+
+test_that("a sidecar without the moments is re-extracted, not refitted", {
+  skip_if_not_installed("bmm")
+  dir <- withr::local_tempdir()
+  first <- suppressMessages(
+    grid_run(dir, grid_mock_fitter(), correlations = "draws")
+  )
+  for (path in grid_sidecars(dir)) strip_moments(path)
+
+  mock <- grid_mock_fitter()
+  second <- suppressMessages(grid_run(dir, mock, correlations = "draws"))
+
+  expect_identical(mock$calls$n, 0L)
+  for (path in grid_sidecars(dir)) {
+    sidecar <- readRDS(path)
+    expect_true("post_sd_link" %in% names(sidecar$estimates))
+    expect_true("post_sd_link" %in% names(sidecar$cor_estimates))
+  }
+  expect_equal(second$post_sd_link, first$post_sd_link)
+})
+
+test_that("only cor estimates without the moments also count as stale", {
+  skip_if_not_installed("bmm")
+  dir <- withr::local_tempdir()
+  suppressMessages(grid_run(dir, grid_mock_fitter(), correlations = "draws"))
+  path <- grid_sidecars(dir)[[1L]]
+  strip_moments(path, "cor_estimates")
+
+  key <- readRDS(path)$key
+  request <- list(
+    levels = c("population", "subject"), correlations = "draws",
+    cor_scale = "link"
+  )
+  expect_null(read_sidecar(path, key, request))
+})
+
+test_that("ML rows without the moments rerun ML alone", {
+  skip_if_not_installed("bmm")
+  dir <- withr::local_tempdir()
+  quietly(suppressMessages(
+    grid_run(dir, grid_mock_fitter(), ml = list(method = "optim"))
+  ))
+  for (path in grid_sidecars(dir)) strip_moments(path, "ml_estimates")
+  mock <- grid_mock_fitter()
+  out <- quietly(suppressMessages(
+    grid_run(dir, mock, ml = list(method = "optim"))
+  ))
+  expect_identical(mock$calls$n, 0L)
+  ml <- out[out$estimator == "ml" & out$converged, ]
+  expect_type(ml$post_sd_link, "double")
+  expect_false(anyNA(ml$post_sd_link))
+})

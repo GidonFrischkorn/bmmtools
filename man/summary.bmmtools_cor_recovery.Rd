@@ -22,8 +22,11 @@ A \code{bmmtools_cor_recovery_summary} tibble with the columns
 \code{bias_sample}, \code{rmse_sample}, \code{coverage}, \code{coverage_50},
 \code{coverage_sample}, \code{ci_width}, \code{ci_width_50}, \code{rejection_rate},
 \code{false_positive_rate}, \code{power}, \code{r}, \code{r_low}, \code{r_high}, \code{ccc},
-\code{ccc_low} and \code{ccc_high}, preceded by \code{condition} when the object
-came from a grid. \code{coverage_50} and \code{ci_width_50} are the coverage of
+\code{ccc_low}, \code{ccc_high}, \code{z_mean}, \code{z_sd}, \code{z_mean_mcse} and
+\code{z_sd_mcse}, preceded by \code{condition} when the object
+came from a grid. The z columns summarise the rows' \code{z}, as in
+\code{\link[=summary.bmmtools_recovery]{summary.bmmtools_recovery()}}; a correlation has no contraction in
+this version. \code{coverage_50} and \code{ci_width_50} are the coverage of
 the generating correlation and the mean width of the central 50 \%
 interval; they are \code{NA} when the estimates carry no such interval.
 }

@@ -73,12 +73,16 @@ pooled into a single bias and RMSE.}
 \value{
 A tibble with the columns \code{term}, \code{estimate}, \code{ci_low},
 \code{ci_high}, \code{ci_method}, \code{ci_level}, \code{rhat}, \code{ess_bulk}, \code{ess_tail},
-\code{level}, \code{id}, \code{converged}, \code{estimator}, \code{ci_low_50} and
-\code{ci_high_50}, in that order. \code{id} is \code{NA} except on subject rows;
-\code{converged} and \code{estimator} are the same value on every row of a fit.
+\code{level}, \code{id}, \code{converged}, \code{estimator}, \code{ci_low_50}, \code{ci_high_50},
+\code{post_mean_link} and \code{post_sd_link}, in that order. \code{id} is \code{NA}
+except on subject rows; \code{converged} and \code{estimator} are the same
+value on every row of a fit.
 \code{ci_low_50} and \code{ci_high_50} bound the central 50 \% interval, the
 25th and 75th percentiles of the draws, whatever \code{ci_level} is:
 \code{\link[=recover]{recover()}} scores the coverage of both intervals.
+\code{post_mean_link} and \code{post_sd_link} are the mean and standard
+deviation of the draws on the link scale, which \code{\link[=recover]{recover()}} carries
+untransformed whatever its \code{scale}.
 }
 \description{
 The bridge between a fitted model and everything bmmtools scores. It

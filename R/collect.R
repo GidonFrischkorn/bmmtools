@@ -28,18 +28,24 @@ collect_cell <- function(paths) {
   if (!is.null(stored$estimates) && nrow(stored$estimates) > 0L) {
     converged <- stored$estimates$converged[[1L]]
   }
-  # a cell file written before the 50 % interval existed (decision 49):
-  # its bounds are unknown, filled with NA, and collect_grid() says so
+  # a cell file written before the 50 % interval (decision 49) or the
+  # posterior moments (Milestone 22) existed: what it lacks is unknown,
+  # filled with NA, and collect_grid() says so
   tables <- c("estimates", "cor_estimates", "ml_estimates")
-  no_inner <- !all(vapply(
-    tables, function(name) has_inner_interval(stored[[name]]), logical(1)
-  ))
+  lacks <- function(columns) {
+    !all(vapply(
+      tables, function(name) has_current_columns(stored[[name]], columns),
+      logical(1)
+    ))
+  }
+  no_inner <- lacks(inner_interval_columns())
+  no_moments <- lacks(posterior_moment_columns())
   for (name in tables) {
     if (!is.null(stored[[name]])) {
-      stored[[name]] <- fill_inner_interval(stored[[name]])
+      stored[[name]] <- fill_optional_estimates(stored[[name]])
     }
   }
-  list(sim = sim, no_inner = no_inner, run = list(
+  list(sim = sim, no_inner = no_inner, no_moments = no_moments, run = list(
     status = "ok", message = NA_character_,
     estimates = stored$estimates,
     cor_estimates = stored$cor_estimates,
@@ -109,7 +115,9 @@ check_collected <- function(stored, levels, correlations,
 #' are read with `ci_low_50`, `ci_high_50` and `covered_50` set to `NA`,
 #' so their `coverage_50` is `NA`, and a message says how many there
 #' were. Rerunning the grid with the fits still in `dir` re-extracts them
-#' without refitting.
+#' without refitting. Cell files written before it stored the posterior
+#' mean and SD are read with `post_mean_link` and `post_sd_link` set to
+#' `NA`, and a second message counts them.
 #'
 #' @param dir The directory a [recovery_grid()] run wrote, holding
 #'   `grid.rds` and the cell files. Written by bmmtools 0.2.0 or later;
@@ -123,6 +131,11 @@ check_collected <- function(stored, levels, correlations,
 #'   subset of what the cells hold; asking for something they do not hold
 #'   is an error, because a level is extracted from a fit and the fits
 #'   are not read here.
+#' @param prior_sd `NULL`, the default, uses the prior SDs the grid was
+#'   scored with (`<dir>/prior-sd.rds`, written when [recovery_grid()] had
+#'   a `prior_sd`), so the contraction is the grid's. Otherwise a source as
+#'   [recover()] takes it --- a table, a fit with `sample_prior = "only"`,
+#'   or a [prior_check()] --- which replaces it.
 #'
 #' @return A `bmmtools_recovery` with the attributes [recovery_grid()]
 #'   gives it. `cells$elapsed` is `NA`: no cell was run, so none took
@@ -145,7 +158,7 @@ check_collected <- function(stored, levels, correlations,
 #'
 #' @export
 collect_grid <- function(dir, scale = NULL, levels = NULL,
-                         correlations = NULL) {
+                         correlations = NULL, prior_sd = NULL) {
   if (!is.character(dir) || length(dir) != 1L || is.na(dir)) {
     cli::cli_abort(
       "{.arg dir} must be a single path, not {.obj_type_friendly {dir}}."
@@ -194,6 +207,18 @@ collect_grid <- function(dir, scale = NULL, levels = NULL,
            with the fits in place re-extracts them without refitting."
     ))
   }
+  n_no_moments <- sum(vapply(
+    collected, function(x) isTRUE(x$no_moments), logical(1)
+  ))
+  if (n_no_moments > 0L) {
+    cli::cli_inform(c(
+      "{n_no_moments} cell file{?s} {?has/have} no posterior mean and SD: \\
+       written before bmmtools stored them.",
+      i = "Their {.field post_mean_link} and {.field post_sd_link} are \\
+           {.code NA}. Rerunning the grid with the fits in place \\
+           re-extracts them without refitting."
+    ))
+  }
 
   status <- vapply(runs, function(r) r$status, character(1))
   missing <- which(status == "missing")
@@ -210,7 +235,14 @@ collect_grid <- function(dir, scale = NULL, levels = NULL,
     ))
   }
 
-  out <- score_cells(runs, sims, cells, links, scale, request)
+  prior_sd <- if (is.null(prior_sd)) {
+    read_prior_sd_record(dir)
+  } else {
+    resolve_prior_sd(prior_sd, levels)
+  }
+  out <- score_cells(runs, sims, cells, links, scale, request,
+    prior_sd = prior_sd
+  )
   attr(out, "cells") <- tibble::tibble(
     condition = sprintf("row-%d", cells$row),
     replication = cells$rep,
@@ -230,4 +262,14 @@ collect_grid <- function(dir, scale = NULL, levels = NULL,
     attr(out, "ml_cells") <- ml_cell_table(runs, cells, dir, record$ml)
   }
   out
+}
+
+#' The prior SD table a grid was scored with, or `NULL`
+#' @noRd
+read_prior_sd_record <- function(dir) {
+  path <- prior_sd_record_path(dir)
+  if (!file.exists(path)) {
+    return(NULL)
+  }
+  check_prior_sd_table(readRDS(path))
 }

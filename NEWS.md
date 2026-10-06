@@ -14,6 +14,39 @@
   implementations as a geometric mean of per-pair ratios with a t
   interval on the logs -- never a bare quotient. No benchmark fit is
   cached, so none can be served to a recovery grid (#4).
+* Estimates, recovery rows and correlation estimates gain
+  `post_mean_link` and `post_sd_link`, the posterior mean and SD of the
+  draws on the link scale. They stay on the link scale whatever `scale`
+  a recovery is scored on, because neither is invariant under a
+  nonlinear link; `estimate` stays the posterior median. Maximum-
+  likelihood rows carry the point estimate and its standard error, and
+  `point` correlations `NA`. They are the groundwork for posterior
+  z-scores and contraction in `summary()`. A grid cell file without them
+  is re-extracted from its cached fit on the next `recovery_grid()` run,
+  without refitting; `collect_grid()` reads it with `NA` and says so
+  (#16).
+* Recovery rows gain `z`, the posterior z-score `(post_mean_link -
+  truth) / post_sd_link`, and `contraction`, `1 - post_sd_link^2 /
+  prior_sd_link^2`, both on the link scale; `summary()` reports
+  `z_mean`, `z_sd` and the mean `contraction`, with `z_mean_mcse` and
+  `z_sd_mcse`, and its print shows the first three after
+  `coverage_50`. Together they tell a posterior that covers the truth
+  because the data located it from one that covers it because it never
+  left a prior that already held it. The prior SD comes from the new
+  `prior_sd` argument of `recover()` and `recovery_grid()`: a table, a
+  fit with `sample_prior = "only"`, or a one-set `prior_check()`;
+  `recovery_grid(prior_sd = "fit")` fits the prior once per distinct
+  prior set and caches it, and `"analytic"` uses the new
+  `prior_sd_table()`, which gives the prior SD in closed form for
+  normal, logistic and Student t priors, their halves on standard
+  deviations, and the exponential prior bmm puts on them.
+  `collect_grid()` reuses the table the grid scored with and takes
+  `prior_sd` to replace it. Without a source, `contraction` is `NA`;
+  subject rows and maximum-likelihood rows never have one. Correlation
+  recoveries gain `z` and the z summary columns. The article "Recovery
+  summary columns" defines them and shows, on a grid with one to 100
+  trials per subject, intervals that cover the truth while the
+  posterior is still mostly the prior (#16).
 * The README and DESCRIPTION name both groups bmmtools serves: model
   developers and methodologists, and researchers planning a study. A new
   README section, "Planning a study", shows how `recovery_grid()` and

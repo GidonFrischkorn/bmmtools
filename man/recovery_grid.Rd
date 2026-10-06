@@ -19,6 +19,7 @@ recovery_grid(
   contrasts = NULL,
   formula = NULL,
   prior = NULL,
+  prior_sd = NULL,
   trial_design = NULL,
   generator = NULL,
   seed = NULL,
@@ -89,6 +90,19 @@ record.}
 
 \item{prior}{Passed to \code{\link[=fit_cached]{fit_cached()}}; with components, \code{NULL} or a list
 with a prior per component.}
+
+\item{prior_sd}{The prior SD each posterior is contracted against
+(Milestone 22, D89): \code{NULL} (the default) for no contraction and no
+extra fit; \code{"fit"} to fit the prior alone (\code{sample_prior = "only"})
+once per distinct formula, model and prior among the grid's rows,
+cached in \code{dir} through \code{\link[=fit_cached]{fit_cached()}} with the backend named, and
+reused by every cell that shares it; \code{"analytic"} for the closed
+forms of \code{\link[=prior_sd_table]{prior_sd_table()}} applied to \code{bmm::default_prior()} with
+\code{prior}, which needs no fit and leaves \code{NA} where there is no closed
+form; or a table as \code{\link[=recover]{recover()}} takes it, which may carry a
+\code{condition} column (\code{"row-1"}, ...) to differ between rows. Subject
+rows have no contraction (D63). The table used is written to
+\verb{<dir>/prior-sd.rds}, which \code{\link[=collect_grid]{collect_grid()}} reads.}
 
 \item{trial_design}{As in \code{\link[=simulate_recovery]{simulate_recovery()}}, the same for every
 cell. A data frame without \code{id} needs every row of the grid to have

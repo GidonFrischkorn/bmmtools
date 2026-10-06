@@ -58,8 +58,15 @@ it \code{NA} for other classes; a logical scalar is used as given.}
 \value{
 A tibble with the columns \code{term}, \code{var1}, \code{var2}, \code{estimator},
 \code{estimate}, \code{ci_low}, \code{ci_high}, \code{ci_method}, \code{ci_level}, \code{rhat},
-\code{ess_bulk}, \code{ess_tail}, \code{scale}, \code{n} (subjects) and \code{converged}.
+\code{ess_bulk}, \code{ess_tail}, \code{scale}, \code{n} (subjects), \code{converged},
+\code{ci_low_50}, \code{ci_high_50}, \code{post_mean_link} and \code{post_sd_link}.
 \code{term} is \code{var1__var2}, the two names sorted in the C locale.
+\code{post_mean_link} and \code{post_sd_link} are the mean and SD of the
+correlation's draws for \code{model} and \code{draws}, and \code{NA} for \code{point},
+which has none. Despite the suffix, which the column shares with
+\code{\link[=extract_estimates]{extract_estimates()}}, they describe the correlation itself: for
+\code{draws} under \code{scale = "natural"}, the correlation of the
+natural-scale values.
 }
 \description{
 Three estimates of how two subject-level parameters, or a parameter

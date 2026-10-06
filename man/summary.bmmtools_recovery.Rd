@@ -22,11 +22,36 @@ A \code{bmmtools_recovery_summary} tibble with the columns \code{term},
 \code{ci_width_50}, \code{detected}, \code{sign_recovery}, \code{r},
 \code{r_low}, \code{r_high}, \code{rank_r},
 \code{ccc}, \code{ccc_low}, \code{ccc_high}, \code{ccc_accuracy}, \code{ccc_scale_shift},
-\code{ccc_location_shift}, \code{calibration_slope}, \code{calibration_intercept}
-and \code{truth_sd}, the
+\code{ccc_location_shift}, \code{calibration_slope}, \code{calibration_intercept},
+\code{truth_sd}, \code{z_mean}, \code{z_sd}, \code{contraction}, \code{z_mean_mcse} and
+\code{z_sd_mcse}. \code{truth_sd} is the
 standard deviation of the generating values. \code{r} and \code{ccc} both grow
 with \code{truth_sd} at a fixed measurement error, so compare them only
 at a similar spread.
+
+\strong{z and contraction.} \code{z_mean} and \code{z_sd} are the mean and SD of the
+rows' posterior z-scores (see \code{\link[=recover]{recover()}}), pooled over every row of
+the group with no within-replication step, since each z is already
+standardised. When the generating values are drawn from the prior, a
+calibrated posterior gives 0 and 1, and a \code{z_sd} above 1 says the
+posterior is too narrow for its error, below 1 too wide. When they are
+held fixed, as in a \code{\link[=recovery_grid]{recovery_grid()}}, the prior's pull toward its
+centre enters both: a calibrated posterior then has \code{z_mean} away from
+0 for a value far from the prior's centre, and \code{z_sd} below 1 in
+proportion to how much the prior still contributes (for a conjugate
+normal, the posterior SD over the sampling error). The reading is
+clean where contraction is near 1, and that is why the two are
+reported together.
+\code{contraction} is the mean of the rows' contractions. Read together
+they separate what coverage alone cannot: a posterior that covers the
+truth because the data located it (contraction near 1, \code{z_sd} near 1)
+from one that covers it because it never moved from a prior that
+already contained it (contraction near 0). \code{z_mean_mcse} is
+\code{z_sd / sqrt(n)} and \code{z_sd_mcse} is \code{z_sd / sqrt(2 * (n - 1))}, with
+\code{n} the rows that have a z; both are exact for independent normal z
+and understate when subject rows of one replication share a population
+posterior or when z has heavy tails. With fewer than two z, \code{z_sd}
+and both MCSEs are \code{NA}.
 }
 \description{
 One row per parameter and level, with these recovery metrics: bias,
@@ -88,7 +113,8 @@ as with a hand-built tibble that has no \code{ci_low_50}/\code{ci_high_50}.
 \strong{The print.} Printing the summary shows a core set of columns ---
 the condition, the term, the estimator when there is more than one,
 the level, the scale, \code{n}, \code{bias}, \code{rmse}, \code{coverage}, \code{coverage_50},
-\code{r}, \code{ccc} and the calibration columns --- and says how many it hides.
+\code{z_mean}, \code{z_sd}, \code{contraction}, \code{r}, \code{ccc} and the calibration columns
+--- and says how many it hides.
 The object itself keeps all of them; \code{tibble::as_tibble()} prints
 every one.
 

@@ -742,3 +742,45 @@ test_that("a Laplace fit whose extractor has no inner bounds fills NA", {
   expect_named(out, names(estimates_contract()), ignore.order = TRUE)
   expect_true(all(is.na(out$ci_low_50)))
 })
+
+# the posterior moments (Milestone 22, D64) -------------------------------
+
+test_that("the Wald route's moments are the ML point and its standard error", {
+  skip_if_not_installed("bmm")
+  dat <- fake_ml_data(n = 3L, n_trials = 5L)
+  out <- fit_ml(
+    fake_ml_model(free = "kappa"), dat,
+    method = "optim", nll = ml_square_nll()
+  )
+  expect_equal(out$post_mean_link, out$estimate)
+  expect_equal(out$post_sd_link, rep(1 / sqrt(5), 3L), tolerance = 1e-5)
+})
+
+test_that("a singular Hessian costs the standard error too", {
+  skip_if_not_installed("bmm")
+  flat <- function(pars, data, model) 0
+  out <- fit_ml(
+    fake_ml_model(free = "kappa"), fake_ml_data(n = 2L),
+    method = "optim", nll = flat
+  )
+  expect_type(out$post_sd_link, "double")
+  expect_true(all(is.na(out$post_sd_link)))
+})
+
+test_that("the Laplace route carries the moments and blanks them with the rest", {
+  est <- ml_population_rows(c("kappa_id1", "kappa_id2"), estimate = c(1, 40))
+  est$post_mean_link <- est$estimate + 0.01
+  est$post_sd_link <- c(0.3, 0.4)
+  out <- ml_subject_rows(est, "kappa", c("1", "2"), "id", max_abs_link = 20)
+  expect_equal(out$post_mean_link, c(1.01, NA_real_))
+  expect_equal(out$post_sd_link, c(0.3, NA_real_))
+})
+
+test_that("a Laplace fit whose extractor has no moments fills NA", {
+  est <- ml_population_rows(c("kappa_id1", "kappa_id2"))
+  out <- ml_subject_rows(est, "kappa", c("1", "2"), "id")
+  expect_named(out, names(estimates_contract()), ignore.order = TRUE)
+  expect_type(out$post_mean_link, "double")
+  expect_true(all(is.na(out$post_mean_link)))
+  expect_true(all(is.na(out$post_sd_link)))
+})
