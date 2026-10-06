@@ -43,7 +43,10 @@
   `collect_grid()` reuses the table the grid scored with and takes
   `prior_sd` to replace it. Without a source, `contraction` is `NA`;
   subject rows and maximum-likelihood rows never have one. Correlation
-  recoveries gain `z` and the z summary columns (#16).
+  recoveries gain `z` and the z summary columns. The article "Recovery
+  summary columns" defines them and shows, on a grid with one to 100
+  trials per subject, intervals that cover the truth while the
+  posterior is still mostly the prior (#16).
 * The README and DESCRIPTION name both groups bmmtools serves: model
   developers and methodologists, and researchers planning a study. A new
   README section, "Planning a study", shows how `recovery_grid()` and

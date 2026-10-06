@@ -4,8 +4,32 @@ bibliography: REFERENCES.bib
 ---
 
 ```{r setup, include = FALSE}
-knitr::opts_chunk$set(collapse = TRUE, comment = "#>")
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 7,
+  fig.height = 4,
+  out.width = "100%"
+)
 options(width = 90)
+# paths relative to the package root, whether this renders from the
+# package root (pkgdown) or from vignettes/articles
+from_root <- function(path) {
+  if (dir.exists("vignettes")) path else file.path("..", "..", path)
+}
+# the code shown is read from the script that produced the results
+shown <- function(label, file) {
+  lines <- readLines(from_root(file))
+  markers <- grep("^## ---- ", lines)
+  start <- markers[lines[markers] == paste("## ----", label)]
+  end <- c(markers[markers > start], length(lines) + 1L)[[1L]] - 1L
+  code <- lines[(start + 1L):end]
+  while (length(code) > 0L && !nzchar(trimws(code[[length(code)]]))) {
+    code <- code[-length(code)]
+  }
+  code
+}
+fmt <- function(x, digits = 2) formatC(x, format = "f", digits = digits)
 library(bmmtools)
 ```
 
@@ -23,6 +47,10 @@ print(s[1:4, c(
 print(s[1:4, c(
   "condition", "term", "level", "r", "r_low", "r_high", "rank_r", "ccc",
   "calibration_slope", "calibration_intercept"
+)], width = Inf)
+print(s[1:4, c(
+  "condition", "term", "level", "z_mean", "z_sd", "z_mean_mcse",
+  "z_sd_mcse", "contraction"
 )], width = Inf)
 ```
 
@@ -205,6 +233,43 @@ from 1. `ccc_accuracy`, `ccc_location_shift` and
 negative), and `truth_sd` is the square root of the mean variance. At subject level
 $\rho_c = r \cdot C_b$ therefore holds only approximately.
 
+## z-score and contraction
+
+These two are computed on the link scale whatever the `scale` column
+says, from the posterior mean $m_i$ and posterior standard deviation
+$s_i$ that each row stores as `post_mean_link` and `post_sd_link`. For a
+maximum likelihood row, $m_i$ is the point estimate and $s_i$ its
+standard error. [Coverage is not recovery](#coverage-is-not-recovery)
+shows how to read them.
+
+`z_mean`, `z_sd`
+: The mean and standard deviation of the posterior z-scores
+  $z_i = (m_i - \theta_i) / s_i$, one per row. Because each $z_i$ is
+  already standardised, the subject rows of all replications are pooled
+  directly, without the within-then-combine step of the correlations.
+  Rows whose $z_i$ is `NA` are left out.
+
+`z_mean_mcse`, `z_sd_mcse`
+: Their Monte Carlo standard errors, $\operatorname{SD}(z)/\sqrt{n}$ and
+  $\operatorname{SD}(z)/\sqrt{2(n-1)}$. For independent, normally
+  distributed $z_i$ the first is exact and the second the large-sample
+  approximation to the sampling error of an SD. Subject rows of one
+  replication share a population posterior, and heavy tails widen the sampling error of a
+  standard deviation, so at subject level both understate it.
+
+`contraction`
+: The mean, over the rows that have one, of
+  $c_i = 1 - s_i^2 / \sigma^2_{\text{prior},i}$,
+  the share of the prior variance that the data removed. It needs the
+  prior standard deviation of each parameter, given as `prior_sd` to
+  `recover()` or `recovery_grid()`: a table such as
+  `prior_sd_table()` returns, or a prior-only fit. Without one it is
+  `NA`, as in `recovery_mixture2p` above. It is also `NA` at subject
+  level, where a posterior narrows through pooling as well as through
+  the subject's own data, and for maximum likelihood rows, which have
+  no prior. It is not clamped at 0: a posterior wider than its prior is
+  a finding, not a rounding error.
+
 ## Reading the concordance
 
 $r$ asks whether the estimates order the generating values correctly.
@@ -267,6 +332,127 @@ $\rho_c$, like $r$, grows with the spread of the generating values at a
 fixed measurement error: in the same simulation, doubling `truth_sd`
 raised $\rho_c$ for the calibrated posterior mean from .657 to .885.
 Compare either coefficient only between rows with similar `truth_sd`.
+
+## Coverage is not recovery
+
+An interval can contain the generating value for two reasons: the data
+located the parameter, or the prior put its mass near the truth.
+Coverage counts both alike. In a recovery study the analyst chooses the
+generating values and the priors, usually from the same sense of what
+is plausible, so the second reason is easy to meet by accident. The
+case that motivated these columns came from the development of a
+linear ballistic accumulator model for bmm, not from bmmtools: a
+recovery reported every parameter inside its 95 % interval, while in
+one scenario the likelihood was flat along one direction of the
+parameter space. Along that direction the posterior SD was 0.494 and
+the prior SD 0.500, a contraction of $1 - 0.494^2 / 0.500^2 = 0.024$.
+The interval covered because the prior did.
+
+Contraction and the z-score separate the two reasons
+[@schadPrincipledBayesianWorkflow2020]. Contraction says how much the
+data narrowed the prior: near 1 the posterior is the data's, near 0 it
+is still the prior. The z-score says how far the posterior mean is
+from the truth in units of posterior SD. Plotted against each other,
+they mark four regions [@schadPrincipledBayesianWorkflow2020, Figure 5]:
+high contraction with small $|z|$ is the ideal; high contraction with
+large $|z|$ is a posterior fitted to noise in the data; low contraction
+with small $|z|$ is a parameter the design does not identify; and low
+contraction with large $|z|$ is a prior in conflict with the likelihood.
+
+```{r contraction-data, include = FALSE}
+ct <- readRDS(from_root("vignettes/articles/assets/metrics-contraction.rds"))
+rows <- tibble::as_tibble(ct$out)
+rows$n_trials <- ct$cells$n_trials[match(rows$condition, ct$cells$condition)]
+ct_summary <- tibble::as_tibble(ct$summary)
+ct_summary$n_trials <- ct$cells$n_trials[
+  match(ct_summary$condition, ct$cells$condition)
+]
+pick <- function(x, trials, term, level) {
+  x[x$n_trials == trials & x$term == term & x$level == level, ]
+}
+one_sd <- pick(rows, 1, "thetat", "sd")
+sum_one_sd <- pick(ct_summary, 1, "thetat", "sd")
+sum_hundred_sd <- pick(ct_summary, 100, "thetat", "sd")
+one_pop <- rows[rows$n_trials == 1 & rows$level == "population", ]
+one_sd_rows <- rows[rows$n_trials %in% c(1, 3) & rows$level == "sd", ]
+hundred <- rows[rows$n_trials == 100, ]
+# the prose below states these; a regenerated asset must still satisfy them
+stopifnot(all(one_sd$covered), all(one_sd_rows$z > 0))
+```
+
+A design that informs every parameter well puts all its points in the
+ideal corner, which shows little. The grid below is built to reach the
+low end as well: `mixture2p` with 20 subjects and 1, 3, 10, 30 or 100
+trials each, `r max(rows$replication)` replications per row, bmm's default
+priors, and their closed-form SDs through `prior_sd = "analytic"`.
+
+```{r contraction-run, eval = FALSE, code = shown("run", "vignettes/articles/precompute/metrics-contraction.R")}
+```
+
+```{r contraction-plot, echo = FALSE, fig.height = 3.8}
+library(ggplot2)
+ggplot(rows, aes(contraction, z, colour = factor(n_trials))) +
+  geom_hline(yintercept = 0, colour = "grey60") +
+  geom_point(size = 1.8, alpha = 0.8) +
+  facet_grid(level ~ term) +
+  scale_colour_viridis_d(end = 0.9) +
+  labs(
+    x = "Contraction", y = "Posterior z-score",
+    colour = "Trials per\nsubject"
+  )
+```
+
+`r sum(rows$covered)` of the `r nrow(rows)` intervals contain the
+generating value, so a coverage table finds nothing wrong with this
+grid. (The count includes the one replication, at 10 trials, whose fit
+missed bmmtools' convergence thresholds.) Contraction does. With 100 trials per subject it lies
+between `r fmt(min(hundred$contraction), 3)` and
+`r fmt(max(hundred$contraction), 3)` for every term. With one trial it
+falls to `r fmt(min(one_pop$contraction))`--`r fmt(max(one_pop$contraction))`
+for the population values, and for the SD of `thetat` to a median of
+`r fmt(stats::median(one_sd$contraction))`; in
+`r sum(one_sd$contraction < 0)` replications the posterior is wider
+than the prior (contraction down to `r fmt(min(one_sd$contraction), 3)`).
+All `r nrow(one_sd)` of those intervals covered, and their z-scores lie
+between `r fmt(min(one_sd$z))` and `r fmt(max(one_sd$z))`. The
+replications agree with each other because each reports the prior, not
+because each locates the parameter.
+
+### Reading z when the generating values are fixed
+
+The usual reading of z, a mean of 0 for no bias and an SD of 1 for
+calibrated uncertainty, holds when the generating values are drawn from
+the prior, as in simulation-based calibration and in the procedure of
+@schadPrincipledBayesianWorkflow2020. A recovery grid holds them fixed,
+and then z also carries the prior's pull. In a conjugate normal model
+with prior $\mathcal{N}(\mu_0, \tau^2)$, a fixed truth $\theta$ and
+contraction $c$, the z-score over replications is distributed as
+
+$$z \sim \mathcal{N}\!\left(\sqrt{1 - c}\,\delta,\; c\right), \qquad \delta = \frac{\mu_0 - \theta}{\tau},$$
+
+so its SD is $\sqrt{c}$, the posterior SD over the standard error of
+the data-only estimate, which is below 1. Its mean moves away from 0 on the side of the prior
+mean as $c$ falls, because the posterior mean is pulled towards the
+prior mean. With
+$\theta$ drawn from the prior, the same model gives $z \sim
+\mathcal{N}(0, 1)$ at every contraction.
+
+bmm's models are not conjugate, and the formula does not predict the
+grid's numbers term by term. The direction shows all the same. The
+spread of z shrinks as contraction falls: for the SD of `thetat`, `z_sd` is
+`r fmt(sum_hundred_sd$z_sd)` at 100 trials and
+`r fmt(sum_one_sd$z_sd, 3)` at one. And every z of the two SD terms at
+one and three trials is positive (the smallest is
+`r fmt(min(one_sd_rows$z), 3)`): bmm's default prior on an SD,
+`exponential(1)`, has its mean at 1, above the generating SDs of
+`r ct$sds[["kappa"]]` and `r ct$sds[["thetat"]]`.
+
+Read `z_mean` and `z_sd` against 0 and 1 only where contraction is near
+1. At $c = 0.99$ the conjugate shift is $0.1\,\delta$ and the SD
+$0.995$. Below that, read `contraction` first. With
+`r max(rows$replication)` replications per row, `z_sd_mcse` is
+$1/\sqrt{18} \approx 0.24$ of `z_sd` itself, so this grid supports the
+direction of these differences, not their size.
 
 ## The scale
 
