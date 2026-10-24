@@ -261,6 +261,20 @@ name_columns <- function(data, names) {
   data
 }
 
+#' The criterion argument of `rsdt_yn()` and `dsdt_yn()`: `criterion` or
+#' `bias`, whichever member `pars` carries
+#'
+#' bmm 1.4.1 offers the two as alternatives (D91), and its functions take
+#' exactly one ("Give exactly one of 'criterion' ... or 'bias'"), so the
+#' absent one is left out rather than passed as `NULL`.
+#' @noRd
+sdt_location <- function(pars) {
+  if (!is.null(pars$bias)) {
+    return(list(bias = pars$bias))
+  }
+  list(criterion = pars$criterion)
+}
+
 #' Yes/no signal detection: one row per stimulus class
 #'
 #' With a trial design, one row per design row, each of its own stimulus
@@ -269,18 +283,20 @@ name_columns <- function(data, names) {
 generate_sdt_yn <- function(pars, n_trials, model, trial_design = NULL) {
   if (!is.null(trial_design)) {
     columns <- count_design_columns(model)
-    counts <- bmm_fun("rsdt_yn")(
+    counts <- rlang::exec(
+      bmm_fun("rsdt_yn"),
       nrow(trial_design), trial_design[[columns[[2L]]]],
       trial_design[[columns[[1L]]]],
-      d = pars$d, criterion = pars$criterion, sdratio = pars$sdratio,
+      d = pars$d, !!!sdt_location(pars), sdratio = pars$sdratio,
       dist = model$other_vars$dist
     )
     return(name_columns(data.frame(counts), list(model$resp_vars$response)))
   }
   stimulus <- c(1, 0)
-  counts <- bmm_fun("rsdt_yn")(
+  counts <- rlang::exec(
+    bmm_fun("rsdt_yn"),
     2L, n_trials, stimulus,
-    d = pars$d, criterion = pars$criterion, sdratio = pars$sdratio,
+    d = pars$d, !!!sdt_location(pars), sdratio = pars$sdratio,
     dist = model$other_vars$dist
   )
   name_columns(

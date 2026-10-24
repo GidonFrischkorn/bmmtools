@@ -69,7 +69,7 @@ check_component_values <- function(pars, sds, model, tasks, task_col,
     reference <- pars
     if (is.function(pars)) {
       info <- model_parameters(model)
-      terms <- c(task_terms(info$free, tasks, task_col), info$fixed)
+      terms <- c(task_terms(info$candidates, tasks, task_col), info$fixed)
       reference <- stats::setNames(rep(0, length(terms)), terms)
     }
     sds <- expand_task_values(sds, model, tasks, task_col, "sds", call = call)
@@ -175,6 +175,7 @@ recovery_component <- function(model,
     check_generator_formula(formula, model, adapter = TRUE)
   }
   check_component_values(pars, sds, model, design$tasks, design$task_col)
+  if (is.numeric(pars)) check_formula_member(formula, pars, model)
 
   structure(
     list(
@@ -290,7 +291,7 @@ check_component_cors <- function(cors, specs, call = rlang::caller_env()) {
   given <- unique(c(rownames(cors), colnames(cors)))
   for (spec in specs) {
     if (is.null(spec$tasks)) next
-    free <- model_parameters(spec$model)$free
+    free <- model_parameters(spec$model)$candidates
     bare <- intersect(given, prefix_terms(free, spec$name))
     if (length(bare) > 0L) {
       par <- sub(paste0("^", spec$name, "_"), "", bare[[1L]])
@@ -656,8 +657,18 @@ check_component_prior <- function(prior, components,
 
 #' The formula a component is fitted with: its own, else the default
 #' @noRd
-component_formula <- function(spec) {
-  spec$formula %||% recovery_formula(spec$model, task_col = spec$task_col)
+component_formula <- function(spec, sim = NULL,
+                              call = rlang::caller_env()) {
+  if (!is.null(spec$formula)) {
+    if (!is.null(sim)) {
+      check_formula_member(
+        spec$formula, sim$pars, spec$model,
+        where = paste0("Component {.val ", spec$name, "}: "), call = call
+      )
+    }
+    return(spec$formula)
+  }
+  recovery_formula(spec$model, task_col = spec$task_col, pars = sim$pars)
 }
 
 #' Fit every component of a simulation set, each on its own
@@ -729,7 +740,7 @@ fit_components <- function(sim_set, dir, prior = NULL, ..., .fitter = NULL) {
 
   fits <- lapply(stats::setNames(nm = components), function(nm) {
     sim <- sim_set$components[[nm]]
-    formula <- component_formula(sim_set$specs[[nm]])
+    formula <- component_formula(sim_set$specs[[nm]], sim)
     rlang::exec(
       fit_cached,
       formula = formula, data = sim$data, model = sim$model,

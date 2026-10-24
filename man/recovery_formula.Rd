@@ -9,7 +9,8 @@ recovery_formula(
   group = "id",
   re_cor = c("none", "within", "all"),
   task_col = NULL,
-  coding = c("cell", "contrast")
+  coding = c("cell", "contrast"),
+  pars = NULL
 )
 }
 \arguments{
@@ -39,6 +40,11 @@ study of \emph{effects} wants. It needs \code{task_col}. The contrast matrix
 itself is carried by the data, not by the formula: give it to
 \code{\link[=simulate_recovery]{simulate_recovery()}} or \code{\link[=recovery_grid]{recovery_grid()}} as \code{contrasts}, which
 attaches it to the task column so brms builds the matching design.}
+
+\item{pars}{\code{NULL}, or the population values the data were simulated
+with, usually a simulation's \code{pars}. Only the names are read: they
+choose which member of an alternative parameterization the formula
+estimates (see the section below). \code{NULL} writes bmm's default member.}
 }
 \value{
 A \code{bmmformula}.
@@ -50,6 +56,19 @@ and nothing for the ones it fixes. \code{\link[=recovery_grid]{recovery_grid()}}
 formula is given; a user who wants to change one term can start
 from it.
 }
+\section{Alternative parameterizations}{
+
+Some bmm models offer two parameters for one quantity and estimate
+only one of them: from bmm 1.4.1, \code{sdt_yn()} and \code{sdt_rating()} have
+\code{criterion} (measured from the noise mean) and \code{bias} (measured from
+the midpoint between the noise and signal means). The formula writes
+the member \code{pars} names, and bmm's default, the first of the group,
+when \code{pars} is \code{NULL} or names neither. Naming both is an error, as it
+is in bmm. \code{\link[=simulate_recovery]{simulate_recovery()}} and \code{\link[=recovery_grid]{recovery_grid()}} choose the
+member the same way, so \code{recovery_formula(sim$model, pars = sim$pars)}
+fits what \code{sim} simulated.
+}
+
 \examples{
 \dontrun{
 recovery_formula(bmm::mixture2p(resp_error = "y"))

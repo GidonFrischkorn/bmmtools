@@ -66,11 +66,12 @@ density_for <- function(model) {
 #' Yes/no signal detection: one row per stimulus class
 #' @noRd
 density_sdt_yn <- function(pars, data, model) {
-  bmm_fun("dsdt_yn")(
+  rlang::exec(
+    bmm_fun("dsdt_yn"),
     data[[model$resp_vars$response]],
     data[[model$other_vars$n_trials]],
     data[[model$other_vars$stimulus]],
-    d = pars$d, criterion = pars$criterion, sdratio = pars$sdratio,
+    d = pars$d, !!!sdt_location(pars), sdratio = pars$sdratio,
     dist = model$other_vars$dist, log = TRUE
   )
 }

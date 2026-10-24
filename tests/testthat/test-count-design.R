@@ -317,8 +317,14 @@ test_that("each sdt_mafc row is drawn from its own number of trials", {
 
 test_that("each sdt_yn row is drawn from its own stimulus class", {
   skip_if_no_sdt()
+  # bias 0 is a criterion halfway between the noise and signal means:
+  # hit rate pnorm(1.5), false-alarm rate 1 - pnorm(1.5). Written as
+  # `criterion = 0` against a bmm whose criterion was measured from that
+  # midpoint; bmm 1.4.1 measures `criterion` from the noise mean and calls
+  # the midpoint version `bias` (#543), under which criterion 0 gives a
+  # false-alarm rate of .5 and a difference of about 499
   sim <- simulate_recovery(
-    yn_model(), c(d = 3, criterion = 0),
+    yn_model(), c(d = 3, bias = 0),
     n_subjects = 1, n_trials = 2,
     trial_design = data.frame(stim = c(0, 1), n = 1000), seed = 1
   )

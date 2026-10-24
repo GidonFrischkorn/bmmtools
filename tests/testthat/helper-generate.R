@@ -47,6 +47,14 @@ grid_mock_fitter <- function(fail_on = NULL) {
 mock_terms <- function(formula, data, model) {
   p <- bmm_parameter_info(model)
   free <- p$parameter[!p$fixed]
+  # bmm 1.4.1 lists both members of an alternative group (sdt_yn's
+  # criterion and bias) as not fixed, but a fit estimates one: the member
+  # the formula names, or the group's first when it names neither
+  for (group in model$alternative_parameters) {
+    kept <- intersect(group, names(formula))
+    if (length(kept) == 0L) kept <- group[[1L]]
+    free <- setdiff(free, setdiff(group, kept))
+  }
   rhs <- if (length(formula) > 0L) all.vars(formula[[1L]][[3L]]) else NULL
   task_col <- setdiff(rhs, c("id", "p"))
   if (length(task_col) != 1L || !is.factor(data[[task_col]])) {

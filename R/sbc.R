@@ -51,19 +51,22 @@ escape_regex <- function(x) {
 #'   slope's `sd_id__kappa_cond` is a draw of its level. The trailing
 #'   `_` after the parameter is what keeps `^b_kappa_` off
 #'   `b_kappa2_Intercept`.
+#' @param named The formula's parameter names, which choose the member of
+#'   an alternative group whose draws are looked for (D91); `NULL` looks
+#'   for bmm's default member.
 #' @return A character vector of regexes named `"<level>:<term>"`. The
 #'   name says which variable each pattern is there to find, which is
 #'   what lets `prior_parameter_draws()` report a pattern that found
 #'   nothing instead of quietly returning a narrower matrix.
 #' @noRd
 sbc_variables <- function(model, group, level, broad = FALSE,
-                          call = rlang::caller_env()) {
+                          named = NULL, call = rlang::caller_env()) {
   check_model(model, call = call)
   level <- rlang::arg_match(
     level, c("population", "sd", "cor", "subject"),
     multiple = TRUE, error_call = call
   )
-  free <- model_parameters(model)$free
+  free <- model_parameters(model, named)$free
   esc <- escape_regex(free)
   out <- character(0)
   add <- function(out, patterns, lvl, terms) {
@@ -713,7 +716,7 @@ sbc_level_obstacle <- function(level, groups) {
 #'   pattern to subset from the prior fit, the union of the two) and
 #'   `level` (the levels that survived).
 #' @noRd
-sbc_pattern_sets <- function(model, groups, group, level,
+sbc_pattern_sets <- function(model, groups, group, level, named = NULL,
                              call = rlang::caller_env()) {
   dropped <- character(0)
   for (lvl in level) {
@@ -741,7 +744,7 @@ sbc_pattern_sets <- function(model, groups, group, level,
   has_group <- length(groups$varying) > 0L
   patterns <- sbc_variables(
     model, if (has_group) group else NULL, union(draw, rank),
-    call = call
+    named = named, call = call
   )
   levels <- sbc_variable_levels(patterns)
   patterns <- patterns[
@@ -1045,7 +1048,7 @@ sbc_m3_totals <- function(data, model, call = rlang::caller_env()) {
 #'   subject numbers themselves.
 #' @noRd
 sbc_generator <- function(draws, rank, model, layout, correlated, group,
-                          call = rlang::caller_env()) {
+                          named = NULL, call = rlang::caller_env()) {
   # a plain matrix, not `as.matrix()`: that keeps the `draws_matrix`
   # class, whose `[` drops the variable names one row at a time and
   # would then index every value as NA
@@ -1055,7 +1058,7 @@ sbc_generator <- function(draws, rank, model, layout, correlated, group,
     as.numeric(draws),
     nrow = posterior::ndraws(draws), dimnames = list(NULL, available)
   )
-  free <- model_parameters(model)$free
+  free <- model_parameters(model, named)$free
   population <- paste0("b_", free, "_Intercept")
 
   sds <- stats::setNames(
@@ -1164,12 +1167,12 @@ check_sbc_generator <- function(generator, call = rlang::caller_env()) {
 #'   draw names rather than patterns.
 #' @noRd
 sbc_generator_sets <- function(model, groups, group, level, available,
-                               call = rlang::caller_env()) {
+                               named = NULL, call = rlang::caller_env()) {
   has_group <- !is.null(groups$group)
   classes <- c("population", "sd", "cor", "subject")
   patterns <- sbc_variables(
     model, if (has_group) group else NULL, classes,
-    broad = TRUE, call = call
+    broad = TRUE, named = named, call = call
   )
   pattern_levels <- sbc_variable_levels(patterns)
   matched <- lapply(patterns, function(p) grep(p, available, value = TRUE))
@@ -1806,7 +1809,11 @@ sbc <- function(model,
   if (!user && adapter_reads_formula(model)) {
     layout$formula <- check_generator_formula(formula, model, adapter = TRUE)
   }
-  sets <- if (!user) sbc_pattern_sets(model, groups, group, level)
+  # sbc() has no `pars`: the formula's parameters choose the member of an
+  # alternative group, and the draw patterns follow it (D91, D92)
+  named <- names(formula)
+  check_alternatives(model, named, "formula")
+  sets <- if (!user) sbc_pattern_sets(model, groups, group, level, named)
 
   check_improper_priors(formula, data, model, list(sbc = prior))
   base <- file %||% tempfile(pattern = "bmmtools-sbc-")
@@ -1818,7 +1825,8 @@ sbc <- function(model,
     # read off the fit's own names, not built from the formula
     draws <- prior_parameter_draws(fit, n_sims, c(all = "."), seed = seed)
     sets <- sbc_generator_sets(
-      model, groups, group, level, posterior::variables(draws)
+      model, groups, group, level, posterior::variables(draws),
+      named = named
     )
     draws <- posterior::subset_draws(draws, variable = sets$take)
     ranked <- sets$rank
@@ -1838,7 +1846,10 @@ sbc <- function(model,
       needs_group = !is.null(groups$group)
     )
   } else {
-    sbc_generator(draws, ranked, model, layout, groups$correlated, group)
+    sbc_generator(
+      draws, ranked, model, layout, groups$correlated, group,
+      named = named
+    )
   }
   datasets <- with_seed_if(
     seed, SBC::generate_datasets(sbc_generator_object, n_sims)

@@ -40,7 +40,7 @@
 #' @return A `bmmformula`.
 #' @noRd
 no_pooling_formula <- function(model, by = "id", formula = NULL,
-                               call = rlang::caller_env()) {
+                               named = NULL, call = rlang::caller_env()) {
   check_model(model, call = call)
   if (!is.null(formula)) {
     return(formula)
@@ -64,7 +64,7 @@ no_pooling_formula <- function(model, by = "id", formula = NULL,
     )
   }
   rlang::check_installed("bmm", "to build a bmm formula.")
-  free <- model_parameters(model)$free
+  free <- model_parameters(model, named)$free
   formulas <- lapply(free, function(p) {
     stats::as.formula(paste0(p, " ~ 0 + ", by), env = globalenv())
   })
@@ -84,9 +84,9 @@ no_pooling_formula <- function(model, by = "id", formula = NULL,
 #' counts than at the scale the articles use.
 #'
 #' @noRd
-flat_ml_prior <- function(model, call = rlang::caller_env()) {
+flat_ml_prior <- function(model, named = NULL, call = rlang::caller_env()) {
   rlang::check_installed("brms", "to build a flat prior.")
-  free <- model_parameters(model)$free
+  free <- model_parameters(model, named)$free
   priors <- lapply(free, function(p) {
     brms::set_prior("", class = "b", nlpar = p)
   })
@@ -533,7 +533,10 @@ ml_cells_table <- function(rows) {
 #' @param formula An already-reduced `bmmformula` with no group-level
 #'   terms. `NULL`, the default, writes `p ~ 0 + <by>` for every free
 #'   parameter. Supply one for a design `fit_ml()` does not write itself.
-#'   `method = "optim"` builds no formula and does not accept one.
+#'   `method = "optim"` builds no formula and does not accept one. For a
+#'   model with alternative parameterizations (`criterion` or `bias` of
+#'   `sdt_yn`), the member the formula names is estimated; the default
+#'   formula writes bmm's default, `criterion`.
 #' @param by The column defining one independent set of parameters. A
 #'   single column in this version.
 #' @param method `"stan"` optimises bmm's own generated likelihood through
@@ -561,7 +564,8 @@ ml_cells_table <- function(rows) {
 #' @param start Named link-scale start values for `method = "optim"`, one
 #'   per free parameter. `NULL`, the default, starts at zero, which was
 #'   measured to reach the same optimum as a start at the Stan mode on
-#'   every subject of the reference run.
+#'   every subject of the reference run. Its names also choose the member
+#'   of an alternative parameterization that is estimated.
 #' @param nll A function of `(pars, data, model)` returning the negative
 #'   log-likelihood of one subject's `data` as a single number, where
 #'   `pars` is a named list on the natural scale with the model's fixed
@@ -637,7 +641,13 @@ fit_ml <- function(model,
     )
   }
 
-  free <- model_parameters(model)$free
+  # the formula's parameters, or the start values', choose a member of an
+  # alternative group (D91); neither gives bmm's default
+  named <- c(names(formula), names(start))
+  check_alternatives(model, names(formula), "formula")
+  check_alternatives(model, names(start), "start")
+  check_alternatives(model, named, c("formula", "start"))
+  free <- model_parameters(model, named)$free
   optim <- identical(method, "optim")
 
   # Arguments that belong to the other route are named errors rather than
@@ -709,7 +719,7 @@ fit_ml <- function(model,
              {.val cmdstanr} backend; no other combination gives a mode."
       ))
     }
-    f <- no_pooling_formula(model, by = by, formula = formula)
+    f <- no_pooling_formula(model, by = by, formula = formula, named = named)
     group <- all.vars(f[[1L]][[3L]])[1L]
   }
 
@@ -733,7 +743,9 @@ fit_ml <- function(model,
       ci_level = ci_level, max_abs_link = max_abs_link
     )
   } else {
-    ml_prior <- if (identical(prior, "flat")) flat_ml_prior(model) else NULL
+    ml_prior <- if (identical(prior, "flat")) {
+      flat_ml_prior(model, named = names(f))
+    }
     fit <- fit_cached(
       formula = f,
       data = data,

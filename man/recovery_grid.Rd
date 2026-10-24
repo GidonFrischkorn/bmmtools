@@ -86,7 +86,19 @@ returning a \code{bmmformula}, called once per row, for designs whose
 formula depends on the row. For a custom \code{m3} with its built-in
 generator the formula also holds the activations, so it reaches the
 generator too (see \code{\link[=simulate_recovery]{simulate_recovery()}}) and is written to the grid
-record.}
+record.
+
+For a model with alternative parameterizations (from bmm 1.4.1,
+\code{criterion} and \code{bias} of \code{sdt_yn} and \code{sdt_rating}), \code{pars} chooses
+the member that is simulated and recovered, and the default formula
+of each cell writes that member, as \code{recovery_formula(pars = )} does.
+A given formula, or a \code{formula} or \code{start} in \code{ml}, must estimate the
+same member; one that names the other, or names neither while \code{pars}
+chose the non-default member, is refused before any cell is fitted.
+A function \code{pars} is checked as each row's first cell is simulated,
+so a mismatch in a later row stops the grid after the earlier rows'
+fits. With
+\code{ml}, each cell's ML fit estimates the cell's member.}
 
 \item{prior}{Passed to \code{\link[=fit_cached]{fit_cached()}}; with components, \code{NULL} or a list
 with a prior per component.}
