@@ -5,7 +5,7 @@
 \alias{summary.bmmtools_recovery_summary}
 \title{Summarise a recovery object into per-parameter metrics}
 \usage{
-\method{summary}{bmmtools_recovery}(object, ...)
+\method{summary}{bmmtools_recovery}(object, precision = NULL, ...)
 
 \method{summary}{bmmtools_recovery_summary}(object, ...)
 }
@@ -13,7 +13,14 @@
 \item{object}{A \code{bmmtools_recovery} object from \code{\link[=recover]{recover()}} or
 \code{\link[=recover_subjects]{recover_subjects()}}.}
 
-\item{...}{Not used.}
+\item{precision}{Optional targets for the width of the \code{ci_level}
+interval: a data frame with the columns \code{term}, \code{level} and \code{width},
+and optionally \code{condition}, or a named numeric vector, which is
+shorthand for population-level targets (\code{c(kappa = 1)}). Each width
+is read on the row's own \code{scale}. Adds \code{precision_target},
+\code{precision_met} and \code{precision_met_mcse}; see "Precision" below.}
+
+\item{...}{Not used; a misspelt argument is an error.}
 }
 \value{
 A \code{bmmtools_recovery_summary} tibble with the columns \code{term},
@@ -27,7 +34,9 @@ A \code{bmmtools_recovery_summary} tibble with the columns \code{term},
 \code{z_sd_mcse}, \code{reliability_true}, \code{reliability_true_mcse},
 \code{reliability_model}, \code{reliability_model_mcse}, \code{reliability_gap},
 \code{reliability_gap_mcse}, \code{coverage_mcse}, \code{coverage_50_mcse},
-\code{detected_mcse} and \code{sign_recovery_mcse}. \code{truth_sd} is the
+\code{detected_mcse} and \code{sign_recovery_mcse}, followed, when
+\code{precision} is given, by \code{precision_target}, \code{precision_met} and
+\code{precision_met_mcse}. \code{truth_sd} is the
 standard deviation of the generating values. \code{r} and \code{ccc} both grow
 with \code{truth_sd} at a fixed measurement error, so compare them only
 at a similar spread.
@@ -99,6 +108,27 @@ error of the pooled coverage when every replication has the same
 number of subjects, as a grid has. \code{detected_mcse} and
 \code{sign_recovery_mcse} are \code{NA} there, with their rates. A group whose
 rows mix \code{ci_level}s has no nominal mass, and \code{coverage_mcse} is \code{NA}.
+
+\strong{Precision.} With \code{precision}, \code{precision_met} is the share of
+\code{ci_level} intervals no wider than \code{precision_target} (inclusive),
+and \code{precision_met_mcse} its Monte Carlo standard error. The width is
+\code{ci_high - ci_low} on the row's own \code{scale}, which is the one printed
+beside it: natural for population and subject rows scored natural,
+link for sd, effect and softmax rows. A natural-scale width is not
+translated onto a link-scale row, because a width does not map
+through a nonlinear link. On a population row the share is over
+replications and the MCSE binomial at the observed rate. On a subject
+row it is over every subject interval of every replication --- the
+chance that one participant's interval is this narrow --- and the MCSE
+is the SD of the per-replication shares over the square root of
+their number. Rows without a target have \code{NA}. A term is named with
+its level, because one name can be a population, an sd and a subject
+row at once; the named-vector shorthand means the population row. An
+unnamed vector, a target for a term and level the recovery does not
+have, a key given twice, and a width that is not positive and finite
+are errors. A target applies to every estimator of its term and level,
+and, without a \code{condition} column, to every condition. A group whose
+rows mix scales or \code{ci_level}s has no share (\code{NA}).
 }
 \description{
 One row per parameter and level, with these recovery metrics: bias,
@@ -161,8 +191,9 @@ as with a hand-built tibble that has no \code{ci_low_50}/\code{ci_high_50}.
 the condition, the term, the estimator when there is more than one,
 the level, the scale, \code{n}, \code{bias}, \code{rmse}, \code{coverage}, \code{coverage_50},
 \code{z_mean}, \code{z_sd}, \code{contraction}, \code{r}, \code{ccc}, \code{reliability_true} and
-\code{reliability_model} when there are subject rows, and the calibration
-columns --- and says how many it hides.
+\code{reliability_model} when there are subject rows, the calibration
+columns, and \code{precision_target} and \code{precision_met} when \code{precision}
+was given --- and says how many it hides.
 The object itself keeps all of them; \code{tibble::as_tibble()} prints
 every one.
 
@@ -174,6 +205,9 @@ to \code{n} there would assert something that was never measured.
 }
 \examples{
 summary(recovery_mixture2p)
+
+# the share of intervals on mean kappa at most 2 wide, per design
+summary(recovery_mixture2p, precision = c(kappa = 2))
 
 # one cell of the example grid, subject level only
 recovery_mixture2p |>

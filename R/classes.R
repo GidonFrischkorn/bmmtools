@@ -181,10 +181,20 @@ new_bmmtools_recovery <- function(x,
   )
 }
 
+#' The columns `summary(precision = )` appends (Milestone 24, D95)
+#' @noRd
+precision_summary_columns <- function() {
+  c("precision_target", "precision_met", "precision_met_mcse")
+}
+
 #' @noRd
 new_bmmtools_recovery_summary <- function(x) {
   columns <- recovery_summary_columns()
   if ("condition" %in% names(x)) columns <- c("condition", columns)
+  # present only when asked for, as `condition` is only on a grid
+  if ("precision_target" %in% names(x)) {
+    columns <- c(columns, precision_summary_columns())
+  }
   x <- tibble::as_tibble(x)[columns]
   structure(x, class = c("bmmtools_recovery_summary", class(x)))
 }
@@ -518,6 +528,177 @@ summarise_reliability <- function(per) {
   )
 }
 
+#' Read `precision` into a table of targets (D95)
+#'
+#' A data frame with `term`, `level`, `width` and optionally
+#' `condition`, or a named numeric vector, which is shorthand for
+#' `level = "population"`. Each width must be positive and finite, and
+#' each key may appear once.
+#'
+#' @return `NULL`, or a tibble with `term`, `level`, `width` and, when
+#'   given, `condition`.
+#' @noRd
+check_precision <- function(precision, call = rlang::caller_env()) {
+  if (is.null(precision)) {
+    return(NULL)
+  }
+  # `c(kappa = NA)` is logical; it is a missing width, not a wrong type
+  if (is.logical(precision) && all(is.na(precision))) {
+    precision[] <- NA_real_
+    storage.mode(precision) <- "double"
+  }
+  if (is.numeric(precision) && !is.data.frame(precision)) {
+    terms <- names(precision)
+    if (is.null(terms) || any(is.na(terms) | terms == "")) {
+      cli::cli_abort(
+        c(
+          "A {.arg precision} vector must name the term of every width.",
+          i = "For example {.code precision = c(kappa = 1)}, which sets \\
+               the population-level target; a table with {.val term}, \\
+               {.val level} and {.val width} sets other levels."
+        ),
+        call = call
+      )
+    }
+    precision <- tibble::tibble(
+      term = terms, level = "population", width = unname(precision)
+    )
+  } else if (!is.data.frame(precision)) {
+    cli::cli_abort(
+      "{.arg precision} must be a named numeric vector or a data frame, \\
+       not {.obj_type_friendly {precision}}.",
+      call = call
+    )
+  }
+
+  missing <- setdiff(c("term", "level", "width"), names(precision))
+  if (length(missing) > 0L) {
+    cli::cli_abort(
+      c(
+        "A {.arg precision} table needs the column{?s} {.val {missing}}.",
+        i = "It has {.val {names(precision)}}."
+      ),
+      call = call
+    )
+  }
+  width <- precision$width
+  usable <- is.numeric(width) && all(is.finite(width)) && all(width > 0)
+  if (!usable) {
+    cli::cli_abort(
+      c(
+        "Every {.arg precision} width must be a positive, finite number.",
+        i = "It has {.val {format(width)}}."
+      ),
+      call = call
+    )
+  }
+  out <- tibble::tibble(
+    term = as.character(precision$term),
+    level = as.character(precision$level),
+    width = as.double(width)
+  )
+  if ("condition" %in% names(precision)) {
+    out$condition <- as.character(precision$condition)
+  }
+  key <- precision_key(out)
+  if (anyDuplicated(key) > 0L) {
+    # nolint next: object_usage_linter. Used by cli's glue interpolation.
+    twice <- unique(paste0(out$term, " (", out$level, ")")[duplicated(key)])
+    cli::cli_abort(
+      c(
+        "{.arg precision} sets a width for {.val {twice}} more than once.",
+        i = "Give one row per term and level, or add a {.val condition} \\
+             column to tell rows apart."
+      ),
+      call = call
+    )
+  }
+  out
+}
+
+#' The key a precision target and a summary group share
+#' @noRd
+precision_key <- function(x, condition = "condition" %in% names(x)) {
+  parts <- list(x$term, x$level)
+  if (condition) parts <- c(list(x$condition), parts)
+  do.call(paste, c(parts, sep = "\r"))
+}
+
+#' Refuse a target that names nothing the recovery scored
+#' @noRd
+check_precision_matches <- function(precision, object,
+                                    call = rlang::caller_env()) {
+  by_condition <- "condition" %in% names(precision)
+  scored <- precision_key(object, by_condition)
+  unmatched <- !precision_key(precision) %in% scored
+  if (!any(unmatched)) {
+    return(invisible(NULL))
+  }
+  # nolint next: object_usage_linter. Used by cli's glue interpolation.
+  what <- paste0(
+    if (by_condition) paste0(precision$condition[unmatched], ": "),
+    precision$term[unmatched], " (", precision$level[unmatched], ")"
+  )
+  # nolint next: object_usage_linter. Used by cli's glue interpolation.
+  have <- unique(paste0(object$term, " (", object$level, ")"))
+  conditions <- unique(object$condition[!is.na(object$condition)])
+  cli::cli_abort(
+    c(
+      "{.arg precision} sets a width for {.val {what}}, which the \\
+       recovery has no rows for.",
+      i = "It has {.val {have}}.",
+      i = if (by_condition && length(conditions) == 0L) {
+        "It has no conditions; drop the {.val condition} column."
+      } else if (by_condition) {
+        "Its conditions are {.val {conditions}}."
+      }
+    ),
+    call = call
+  )
+}
+
+#' The share of a group's intervals no wider than its target (D95)
+#'
+#' Inclusive, up to floating-point error in `ci_high - ci_low`. One
+#' interval per replication at population level, so the MCSE is binomial
+#' at the observed rate; at subject level every subject interval of every
+#' replication counts, and the MCSE is the SD of the per-replication
+#' shares over the square root of their number, because the subjects of
+#' one fit are not independent.
+#'
+#' @noRd
+summarise_precision <- function(rows, target) {
+  out <- list(
+    precision_target = target,
+    precision_met = NA_real_,
+    precision_met_mcse = NA_real_
+  )
+  # one target cannot judge widths on two scales or of two masses at once
+  mixed <- length(unique(rows$scale)) > 1L ||
+    length(unique(rows$ci_level)) > 1L
+  if (is.na(target) || mixed) {
+    return(out)
+  }
+  width <- rows$ci_high - rows$ci_low
+  keep <- !is.na(width)
+  if (!any(keep)) {
+    return(out)
+  }
+  # inclusive up to the rounding of the subtraction, which is relative to
+  # the endpoints rather than to the width
+  slack <- 4 * .Machine$double.eps *
+    pmax(abs(rows$ci_low[keep]), abs(rows$ci_high[keep]), target)
+  met <- width[keep] <= target + slack
+  out$precision_met <- mean(met)
+  out$precision_met_mcse <- if (identical(rows$level[[1L]], "subject")) {
+    shares <- vapply(split(met, rows$replication[keep]), mean, 0)
+    replication_mean(shares)$mcse
+  } else {
+    metric_rate_mcse(out$precision_met, length(met))
+  }
+  out
+}
+
 #' The six reliability columns, which a population row leaves NA
 #' @noRd
 no_reliability <- function() {
@@ -683,7 +864,13 @@ summarise_subject <- function(rows) {
 #'
 #' @param object A `bmmtools_recovery` object from [recover()] or
 #'   [recover_subjects()].
-#' @param ... Not used.
+#' @param precision Optional targets for the width of the `ci_level`
+#'   interval: a data frame with the columns `term`, `level` and `width`,
+#'   and optionally `condition`, or a named numeric vector, which is
+#'   shorthand for population-level targets (`c(kappa = 1)`). Each width
+#'   is read on the row's own `scale`. Adds `precision_target`,
+#'   `precision_met` and `precision_met_mcse`; see "Precision" below.
+#' @param ... Not used; a misspelt argument is an error.
 #'
 #' @return A `bmmtools_recovery_summary` tibble with the columns `term`,
 #'   `estimator`, `level`, `scale`, `n`, `n_replications`, `n_converged`,
@@ -696,7 +883,9 @@ summarise_subject <- function(rows) {
 #'   `z_sd_mcse`, `reliability_true`, `reliability_true_mcse`,
 #'   `reliability_model`, `reliability_model_mcse`, `reliability_gap`,
 #'   `reliability_gap_mcse`, `coverage_mcse`, `coverage_50_mcse`,
-#'   `detected_mcse` and `sign_recovery_mcse`. `truth_sd` is the
+#'   `detected_mcse` and `sign_recovery_mcse`, followed, when
+#'   `precision` is given, by `precision_target`, `precision_met` and
+#'   `precision_met_mcse`. `truth_sd` is the
 #'   standard deviation of the generating values. `r` and `ccc` both grow
 #'   with `truth_sd` at a fixed measurement error, so compare them only
 #'   at a similar spread.
@@ -770,6 +959,27 @@ summarise_subject <- function(rows) {
 #' `sign_recovery_mcse` are `NA` there, with their rates. A group whose
 #' rows mix `ci_level`s has no nominal mass, and `coverage_mcse` is `NA`.
 #'
+#' **Precision.** With `precision`, `precision_met` is the share of
+#' `ci_level` intervals no wider than `precision_target` (inclusive),
+#' and `precision_met_mcse` its Monte Carlo standard error. The width is
+#' `ci_high - ci_low` on the row's own `scale`, which is the one printed
+#' beside it: natural for population and subject rows scored natural,
+#' link for sd, effect and softmax rows. A natural-scale width is not
+#' translated onto a link-scale row, because a width does not map
+#' through a nonlinear link. On a population row the share is over
+#' replications and the MCSE binomial at the observed rate. On a subject
+#' row it is over every subject interval of every replication --- the
+#' chance that one participant's interval is this narrow --- and the MCSE
+#' is the SD of the per-replication shares over the square root of
+#' their number. Rows without a target have `NA`. A term is named with
+#' its level, because one name can be a population, an sd and a subject
+#' row at once; the named-vector shorthand means the population row. An
+#' unnamed vector, a target for a term and level the recovery does not
+#' have, a key given twice, and a width that is not positive and finite
+#' are errors. A target applies to every estimator of its term and level,
+#' and, without a `condition` column, to every condition. A group whose
+#' rows mix scales or `ci_level`s has no share (`NA`).
+#'
 #' @details
 #' Rows are grouped by `estimator` as well as by term and level, so two
 #' estimators of the same parameter scored against one truth give two
@@ -800,8 +1010,9 @@ summarise_subject <- function(rows) {
 #' the condition, the term, the estimator when there is more than one,
 #' the level, the scale, `n`, `bias`, `rmse`, `coverage`, `coverage_50`,
 #' `z_mean`, `z_sd`, `contraction`, `r`, `ccc`, `reliability_true` and
-#' `reliability_model` when there are subject rows, and the calibration
-#' columns --- and says how many it hides.
+#' `reliability_model` when there are subject rows, the calibration
+#' columns, and `precision_target` and `precision_met` when `precision`
+#' was given --- and says how many it hides.
 #' The object itself keeps all of them; `tibble::as_tibble()` prints
 #' every one.
 #'
@@ -829,19 +1040,27 @@ summarise_subject <- function(rows) {
 #' @examples
 #' summary(recovery_mixture2p)
 #'
+#' # the share of intervals on mean kappa at most 2 wide, per design
+#' summary(recovery_mixture2p, precision = c(kappa = 2))
+#'
 #' # one cell of the example grid, subject level only
 #' recovery_mixture2p |>
 #'   dplyr::filter(condition == "row-4", level == "subject") |>
 #'   summary()
 #'
 #' @export
-summary.bmmtools_recovery <- function(object, ...) {
+summary.bmmtools_recovery <- function(object, precision = NULL, ...) {
+  rlang::check_dots_empty()
   check_recovery_contract(object)
+  precision <- check_precision(precision)
   if (nrow(object) == 0L) {
-    return(new_bmmtools_recovery_summary(
-      empty_recovery_summary()
-    ))
+    empty <- empty_recovery_summary()
+    if (!is.null(precision)) {
+      for (column in precision_summary_columns()) empty[[column]] <- double()
+    }
+    return(new_bmmtools_recovery_summary(empty))
   }
+  if (!is.null(precision)) check_precision_matches(precision, object)
 
   # a grid carries its row label in `condition`; a plain recovery does
   # not, and the summary then has no such column
@@ -859,6 +1078,13 @@ summary.bmmtools_recovery <- function(object, ...) {
       summarise_subject(rows)
     } else {
       summarise_population(rows)
+    }
+    if (!is.null(precision)) {
+      at <- match(
+        precision_key(rows[1L, ], "condition" %in% names(precision)),
+        precision_key(precision)
+      )
+      body <- c(body, summarise_precision(rows, precision$width[at]))
     }
     tibble::as_tibble(c(
       if (by_condition) list(condition = rows$condition[[1L]]),
@@ -904,6 +1130,8 @@ empty_recovery_summary <- function() {
 #' @rdname summary.bmmtools_recovery
 #' @export
 summary.bmmtools_recovery_summary <- function(object, ...) {
+  # a summary has no intervals left to judge, so `precision` cannot apply
+  rlang::check_dots_empty()
   object
 }
 
@@ -989,7 +1217,8 @@ print.bmmtools_recovery <- function(x, ...) {
 #' `condition` only for a grid and `estimator` only when there is a
 #' comparison to make; the calibration columns only when present; the
 #' two reliabilities only when a subject level is there to have them
-#' (Milestone 24, D98). Every MCSE stays hidden (D66).
+#' (Milestone 24, D98); the precision target and its share only when
+#' `precision` asked for them. Every MCSE stays hidden (D66).
 #'
 #' @noRd
 summary_print_columns <- function(x) {
@@ -997,7 +1226,8 @@ summary_print_columns <- function(x) {
     "condition", "term", "estimator", "level", "scale", "n", "bias",
     "rmse", "coverage", "coverage_50", "z_mean", "z_sd", "contraction",
     "r", "ccc", "reliability_true", "reliability_model",
-    "calibration_slope", "calibration_intercept"
+    "calibration_slope", "calibration_intercept",
+    "precision_target", "precision_met"
   )
   # `[[` rather than `$`: a column subset keeps the class, and a tibble
   # warns on `$` of a column it does not have

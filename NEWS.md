@@ -86,6 +86,16 @@
   between replications on subject rows), `detected_mcse` and
   `sign_recovery_mcse`. The print shows both reliabilities when there
   are subject rows (#17).
+* `summary()` of a recovery takes `precision`, a target width for the
+  `ci_level` interval, and reports `precision_target`, the share of
+  intervals no wider than it (`precision_met`) and that share's Monte
+  Carlo standard error. Targets are a table of `term`, `level` and
+  `width` (optionally per `condition`), or a named vector for
+  population rows (`precision = c(kappa = 1)`), and are read on each
+  row's own scale. On subject rows the share is over every subject
+  interval -- the chance that one participant's interval is that narrow
+  -- with an MCSE between replications. `summary()` now refuses an
+  argument it does not know instead of ignoring it (#17).
 * The README and DESCRIPTION name both groups bmmtools serves: model
   developers and methodologists, and researchers planning a study. A new
   README section, "Planning a study", shows how `recovery_grid()` and
