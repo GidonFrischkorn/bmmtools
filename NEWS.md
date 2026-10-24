@@ -1,5 +1,28 @@
 # bmmtools (development version)
 
+* A validation of a bmm model is now one plan and one run.
+  `validation_plan()` resolves everything a validation needs before
+  anything is fitted: the generating values, a grid of designs with its
+  replications, the sampler budget, the design point and prior of the
+  simulation-based calibration, the prior-check layout, an optional
+  reference implementation, the criteria, the seed, the owner and a
+  version, with a content hash that changes only when what is planned
+  changes. `validation_defaults()` holds the values a plan fills from;
+  entries ship for `mixture2p` and `ezdm`, and a model without one needs
+  `pars`. `run_validation()` runs the stages in order (run record, prior
+  predictive check, SBC, recovery grid, computation, identifiability,
+  individual differences, agreement) into one directory, each cached
+  under its own folder. A rerun reads every stage whose inputs did not
+  change, a stage that fails is recorded with its message while the
+  others run, and stages that do not exist yet (data requirements,
+  model recovery, posterior checks) are listed as not run with their
+  issue. The result keeps every stage's own object and adds
+  `card_numbers()`, every number a card prints with its Monte Carlo
+  standard error, `verdict_table()`, each criterion in words with its
+  value and verdict, and a headline that says "validated" only with the
+  plan version beside it. `compare_validations()` flags the numbers that
+  moved between two runs by more than their Monte Carlo error (#21, #9).
+
 * bmmtools works with bmm 1.4.1, which offers `criterion` and `bias` of
   `sdt_yn()` and `sdt_rating()` as alternative parameterizations, of
   which a fit estimates one. It read both as free parameters, so
