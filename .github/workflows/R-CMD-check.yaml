@@ -54,7 +54,9 @@ jobs:
       # and a pinned commit would freeze bmmtools on one SBC revision
       # until someone updates it by hand.
       #
-      # This leg installs released bmm; R-CMD-check-develop installs
+      # This leg installs released bmm (CRAN 1.4.1 or later: DESCRIPTION
+      # requires it, and from it every model the tests guard for is
+      # present, so nothing skips); R-CMD-check-develop installs
       # bmm's own `develop` branch instead, so an unreleased model's
       # adapter is tested before its release rather than only after
       # (issue #7). Each model's tests guard on its own symbols with

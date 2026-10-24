@@ -31,7 +31,10 @@ fit_ml(
 \item{formula}{An already-reduced \code{bmmformula} with no group-level
 terms. \code{NULL}, the default, writes \verb{p ~ 0 + <by>} for every free
 parameter. Supply one for a design \code{fit_ml()} does not write itself.
-\code{method = "optim"} builds no formula and does not accept one.}
+\code{method = "optim"} builds no formula and does not accept one. For a
+model with alternative parameterizations (\code{criterion} or \code{bias} of
+\code{sdt_yn}), the member the formula names is estimated; the default
+formula writes bmm's default, \code{criterion}.}
 
 \item{by}{The column defining one independent set of parameters. A
 single column in this version.}
@@ -66,7 +69,8 @@ still counts as converged.}
 \item{start}{Named link-scale start values for \code{method = "optim"}, one
 per free parameter. \code{NULL}, the default, starts at zero, which was
 measured to reach the same optimum as a start at the Stan mode on
-every subject of the reference run.}
+every subject of the reference run. Its names also choose the member
+of an alternative parameterization that is estimated.}
 
 \item{nll}{A function of \verb{(pars, data, model)} returning the negative
 log-likelihood of one subject's \code{data} as a single number, where

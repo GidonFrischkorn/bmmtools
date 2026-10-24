@@ -1,18 +1,19 @@
 # Skip helpers for parts of bmm that not every installed bmm has.
 #
 # `skip_if_not_installed("bmm")` is not a strong enough guard on its own:
-# bmm's signal-detection stack --- the `sdt_yn` and `sdt_mafc` models, their
-# `r*()` generators and their `d*()` densities --- arrives one model at a
-# time. CRAN bmm 1.3.2 exports none of it; popov-lab's `develop` branch
-# exports `sdt_yn` and, since 2026-09-28 (#361), `sdt_mafc`, but not yet
-# `sdt_ranking`, `sdt_rating`, `sdt_cdp` or `rmpt`. A guard checked against
-# one symbol would pass a `develop` run through to a model that branch does
-# not have yet, turning a skip into an error --- measured 2026-09-17 against
-# CRAN bmm 1.3.2: 9 errors, 7 in test-generate.R and 2 in test-prior-check.R,
-# all from a guard that checked only `sdt_yn`.
+# it answers "is bmm installed", never "does this build carry this model".
+# bmm's models arrive one at a time, on `develop` before CRAN. CRAN bmm
+# 1.4.1, the minimum bmmtools declares since 0.3.0, exports the whole
+# signal-detection stack (`sdt_yn`, `sdt_mafc`, `sdt_ranking`, `sdt_rating`,
+# `sdt_cdp`, their `r*()` and `d*()` functions) and `rmpt()`, so on it no
+# test here skips. The guard stays for the CI develop leg and for whatever
+# lands on `develop` next: a guard checked against one symbol would pass a
+# run through to a model that build does not have yet, turning a skip into
+# an error (measured 2026-09-17 against CRAN bmm 1.3.2: 9 errors from a
+# guard that checked only `sdt_yn`).
 #
-# The guard is on the symbol rather than on a version number because no
-# release has decided which version carries which model, so a version
+# The guard is on the symbol rather than on a version number because which
+# version carries which model is decided by bmm's releases, so a version
 # number here would be a guess that silently keeps skipping once the guess
 # is wrong.
 

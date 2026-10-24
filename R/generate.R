@@ -13,16 +13,183 @@
 #' `model$fixed_parameters`). Reading the slots directly keeps this
 #' layer usable on a model object built without bmm loaded.
 #'
+#' **Alternative parameterizations (D91).** bmm 1.4.1 lists groups of
+#' parameters of which a fit estimates exactly one in
+#' `model$alternative_parameters` (`sdt_yn` and `sdt_rating`:
+#' `c("criterion", "bias")`, measured 2026-10-24). Every member is in
+#' `links` and none is fixed, so links minus fixed would make all of them
+#' free. Instead one member per group is free: the first member that
+#' `named` names, else the group's first, which is bmm's own default. The
+#' others are in `unchosen` and are neither free nor fixed. A member is
+#' named by its own name or by a task term of it (`bias_task2`).
+#' `check_alternatives()` is what refuses naming two members of a group.
+#'
+#' @param named The names that choose a member: those of `pars`, or a
+#'   formula's parameters. `NULL` chooses every group's default.
+#' @return A list with `free`, `fixed`, `links`, `fixed_values`,
+#'   `alternatives` (the model's groups, `list()` when it has none),
+#'   `unchosen` and `candidates` (every parameter a value could be given
+#'   to: the free ones and the unchosen members).
 #' @noRd
-model_parameters <- function(model) {
+model_parameters <- function(model, named = NULL) {
   links <- model$links
   fixed <- model$fixed_parameters
+  candidates <- setdiff(names(links), names(fixed))
+  groups <- alternative_groups(model)
+  unchosen <- character()
+  for (group in groups) {
+    hits <- group[names_alternative(group, named)]
+    chosen <- if (length(hits) > 0L) hits[[1L]] else group[[1L]]
+    unchosen <- c(unchosen, setdiff(group, chosen))
+  }
   list(
-    free = setdiff(names(links), names(fixed)),
+    free = setdiff(candidates, unchosen),
     fixed = names(fixed),
     links = links,
-    fixed_values = fixed
+    fixed_values = fixed,
+    alternatives = groups,
+    unchosen = unchosen,
+    candidates = candidates
   )
+}
+
+#' A model's groups of alternative parameters
+#'
+#' Only members bmm also lists as estimated (in `links`, not fixed), and
+#' only groups with two of them, so that a malformed entry cannot remove a
+#' parameter from the free set.
+#'
+#' @return A list of character vectors, `list()` when there are none.
+#' @noRd
+alternative_groups <- function(model) {
+  candidates <- setdiff(names(model$links), names(model$fixed_parameters))
+  groups <- lapply(model$alternative_parameters, function(g) {
+    intersect(as.character(g), candidates)
+  })
+  Filter(function(g) length(g) >= 2L, groups)
+}
+
+#' Which members of a group `named` names, by name or by a task term
+#' @return A logical vector along `group`.
+#' @noRd
+names_alternative <- function(group, named) {
+  named <- as.character(named)
+  named <- named[!is.na(named)]
+  vapply(group, function(member) {
+    any(named == member | startsWith(named, paste0(member, "_")))
+  }, logical(1), USE.NAMES = FALSE)
+}
+
+#' Refuse names that give two members of one alternative group
+#'
+#' bmm's rule, which its formula check enforces in the same words: the
+#' members are "alternative parameterizations of the same quantity, so
+#' only one of them can be estimated".
+#'
+#' @param arg The argument the names came from, for the message.
+#' @noRd
+check_alternatives <- function(model, named, arg = "pars",
+                               call = rlang::caller_env()) {
+  for (group in alternative_groups(model)) {
+    both <- group[names_alternative(group, named)]
+    if (length(both) > 1L) {
+      cli::cli_abort(
+        c(
+          "{.arg {arg}} names {.val {both}}, which are alternative \\
+           parameterizations of the same quantity, so only one of them \\
+           can be estimated.",
+          i = "Give one of them; bmm's default is {.val {group[[1L]]}}."
+        ),
+        call = call
+      )
+    }
+  }
+  invisible(named)
+}
+
+#' Refuse a user formula that names a member `pars` did not choose (D92)
+#'
+#' The truth would describe one member and the fit the other. A formula
+#' that names neither member estimates bmm's default, the group's first,
+#' so it is compared as if it named that one. A formula naming two members
+#' of a group is refused in bmm's words first.
+#'
+#' @param formula A `bmmformula`, or anything whose names are parameters
+#'   (`fit_ml()`'s `start`).
+#' @param where A prefix for the message, such as `"Grid row 2: "`.
+#' @param arg The argument's name, for the message.
+#' @noRd
+check_formula_member <- function(formula, pars, model, where = "",
+                                 arg = "formula",
+                                 call = rlang::caller_env()) {
+  groups <- alternative_groups(model)
+  if (is.null(formula) || length(groups) == 0L) {
+    return(invisible(formula))
+  }
+  check_alternatives(model, names(formula), arg, call = call)
+  chosen <- function(group, named) {
+    hits <- group[names_alternative(group, named)]
+    if (length(hits) > 0L) hits[[1L]] else group[[1L]]
+  }
+  for (group in groups) {
+    # nolint start: object_usage_linter. Used by cli's glue interpolation.
+    fitted <- chosen(group, names(formula))
+    simulated <- chosen(group, names(pars))
+    # nolint end
+    if (!identical(fitted, simulated)) {
+      cli::cli_abort(
+        c(
+          paste0(
+            where, "{.arg {arg}} estimates {.val {fitted}}, but \\
+            {.arg pars} chose its alternative {.val {simulated}}."
+          ),
+          i = "Only one member of {.val {group}} is estimated, and a \\
+               formula that names neither estimates bmm's default \\
+               {.val {group[[1L]]}}; the truth and the fit would describe \\
+               different quantities.",
+          i = "Name {.val {simulated}} in the formula, or omit \\
+               {.arg formula} for the default formula."
+        ),
+        call = call
+      )
+    }
+  }
+  invisible(formula)
+}
+
+#' Refuse an entry for a member `pars` did not choose
+#'
+#' For `sds`, `cors`, a formula: anything that names a member of an
+#' alternative group when the realised `pars` named another. A member that
+#' `pars` names too is not refused, so a reference vector holding every
+#' candidate (a component whose `pars` is still a function) passes.
+#'
+#' @param entries The names to check.
+#' @param pars_names The names of `pars`, which chose the members.
+#' @param arg What the entries are, for the message (`"{.arg sds}"`).
+#' @noRd
+check_unchosen <- function(entries, pars_names, model, arg,
+                           call = rlang::caller_env()) {
+  for (group in alternative_groups(model)) {
+    given <- group[names_alternative(group, entries)]
+    chosen <- group[names_alternative(group, pars_names)]
+    bad <- setdiff(given, chosen)
+    if (length(bad) > 0L) {
+      chosen <- if (length(chosen) > 0L) chosen[[1L]] else group[[1L]]
+      cli::cli_abort(
+        c(
+          paste0(
+            arg, " names {.val {bad}}, an alternative to {.val {chosen}}, \\
+            which {.arg pars} chose."
+          ),
+          i = "Only one member of {.val {group}} is estimated; the truth \\
+               and the fit would describe different quantities."
+        ),
+        call = call
+      )
+    }
+  }
+  invisible(entries)
 }
 
 #' @noRd
@@ -59,8 +226,6 @@ check_count <- function(x, name, minimum = 1, call = rlang::caller_env()) {
 #' @noRd
 check_pars <- function(pars, model, tasks = NULL, task_col = NULL,
                        call = rlang::caller_env()) {
-  info <- model_parameters(model)
-  info$free <- task_terms(info$free, tasks, task_col)
   bad <- !is.numeric(pars) || is.null(names(pars)) ||
     anyNA(names(pars)) || !all(nzchar(names(pars)))
   if (bad) {
@@ -70,6 +235,9 @@ check_pars <- function(pars, model, tasks = NULL, task_col = NULL,
       call = call
     )
   }
+  check_alternatives(model, names(pars), "pars", call = call)
+  info <- model_parameters(model, names(pars))
+  info$free <- task_terms(info$free, tasks, task_col)
   known <- c(info$free, info$fixed)
   unknown <- setdiff(names(pars), known)
   if (length(unknown) > 0L) {
@@ -91,10 +259,25 @@ check_pars <- function(pars, model, tasks = NULL, task_col = NULL,
   }
   missing <- setdiff(info$free, names(pars))
   if (length(missing) > 0L) {
+    # a missing default member could have been given as its alternative;
+    # not said when `pars` chose a member and only missed one of its terms
+    groups <- Filter(function(g) {
+      any(names_alternative(g, missing)) &&
+        !any(names_alternative(g, names(pars)))
+    }, info$alternatives)
+    alternative_hint <- vapply(groups, function(g) {
+      paste0(
+        "{.val ", g[[1L]], "} has the alternative",
+        if (length(g) > 2L) "s " else " ",
+        paste0("{.val ", g[-1L], "}", collapse = ", "),
+        "; give exactly one of them."
+      )
+    }, character(1))
     cli::cli_abort(
       c(
         "{.arg pars} is missing {.val {missing}}.",
-        i = "Every estimated parameter needs a value: {.val {info$free}}."
+        i = "Every estimated parameter needs a value: {.val {info$free}}.",
+        stats::setNames(alternative_hint, rep("i", length(alternative_hint)))
       ),
       call = call
     )
@@ -125,6 +308,7 @@ check_sds <- function(sds, pars, model, call = rlang::caller_env()) {
       call = call
     )
   }
+  check_unchosen(names(sds), names(pars), model, "{.arg sds}", call = call)
   unknown <- setdiff(names(sds), names(pars))
   if (length(unknown) > 0L) {
     cli::cli_abort(
@@ -353,7 +537,7 @@ check_tasks <- function(tasks, task_col, model, covariates = NULL,
   # n_trials before any generator runs, at the price of a few odd names
   columns <- Filter(is.character, c(model$resp_vars, model$other_vars))
   taken <- c(
-    "id", info$free, info$fixed, unlist(columns, use.names = FALSE),
+    "id", info$candidates, info$fixed, unlist(columns, use.names = FALSE),
     names(covariates)
   )
   if (task_col %in% taken) {
@@ -402,13 +586,15 @@ expand_task_values <- function(x, model, tasks, task_col, arg,
   if (is.null(tasks) || !shaped) {
     return(x)
   }
-  info <- model_parameters(model)
   given <- names(x)
-  per_task <- lapply(stats::setNames(nm = info$free), function(p) {
+  info <- model_parameters(model, given)
+  # every member of an alternative group owns its terms, so that naming
+  # the unchosen one, or both, reaches the check that says so
+  per_task <- lapply(stats::setNames(nm = info$candidates), function(p) {
     task_terms(p, tasks, task_col)
   })
   owner <- rep(NA_character_, length(given))
-  for (p in info$free) {
+  for (p in info$candidates) {
     owner[given == p | given %in% per_task[[p]]] <- p
   }
   unknown <- given[is.na(owner) & !given %in% info$fixed]
@@ -448,7 +634,7 @@ check_task_cors <- function(cors, model, tasks, task_col,
   if (is.null(tasks) || !is.matrix(cors)) {
     return(invisible(cors))
   }
-  free <- model_parameters(model)$free
+  free <- model_parameters(model)$candidates
   bare <- intersect(unique(c(rownames(cors), colnames(cors))), free)
   if (length(bare) > 0L) {
     cli::cli_abort(
@@ -475,7 +661,7 @@ task_layout <- function(pars, model, tasks, task_col) {
   if (is.null(tasks)) {
     return(list(stats::setNames(terms, terms)))
   }
-  info <- model_parameters(model)
+  info <- model_parameters(model, terms)
   fixed <- terms[terms %in% info$fixed]
   lapply(tasks, function(task) {
     suffix <- paste0("_", task_col, task)
@@ -1028,6 +1214,15 @@ truth_tables <- function(pars, sds, values, cors = NULL, covariates = NULL) {
 #' that vary, because a parameter that does not vary has nothing
 #' person-level to recover.
 #'
+#' **Alternative parameterizations.** Where bmm offers two parameters for
+#' one quantity and estimates only one of them (from bmm 1.4.1,
+#' `criterion` and `bias` of `sdt_yn` and `sdt_rating`), `pars` names the
+#' one to simulate and recover, and naming both is an error. The other
+#' appears nowhere: not in `truth`, and not in `sds` or `cors`, which may
+#' not name it. Without either, the error asks for bmm's default, the
+#' first of the group. Fit with `recovery_formula(sim$model, pars =
+#' sim$pars)`, which writes the same member.
+#'
 #' **Correlated draws.** Subject values and covariates are one
 #' multivariate normal draw, `Z %*% chol(cors)`, over the varying
 #' parameters in `pars` order and then the covariates, scaled by the SDs
@@ -1289,6 +1484,12 @@ simulate_recovery <- function(model,
     sds <- check_sds(sds, pars, model)
     cors <- resolve_truth_arg(cors, "cors", want = "matrix")
     check_task_cors(cors, model, tasks, task_col)
+    if (is.matrix(cors)) {
+      check_unchosen(
+        unique(c(rownames(cors), colnames(cors))), names(pars), model,
+        "{.arg cors}"
+      )
+    }
     cors <- check_cors(cors, pars, sds, covariates)
     parts <- NULL
     values <- if (is.null(subject_pars)) {
@@ -1461,6 +1662,21 @@ print.bmmtools_simulation <- function(x, ...) {
 #'   itself is carried by the data, not by the formula: give it to
 #'   [simulate_recovery()] or [recovery_grid()] as `contrasts`, which
 #'   attaches it to the task column so brms builds the matching design.
+#' @param pars `NULL`, or the population values the data were simulated
+#'   with, usually a simulation's `pars`. Only the names are read: they
+#'   choose which member of an alternative parameterization the formula
+#'   estimates (see the section below). `NULL` writes bmm's default member.
+#'
+#' @section Alternative parameterizations:
+#' Some bmm models offer two parameters for one quantity and estimate
+#' only one of them: from bmm 1.4.1, `sdt_yn()` and `sdt_rating()` have
+#' `criterion` (measured from the noise mean) and `bias` (measured from
+#' the midpoint between the noise and signal means). The formula writes
+#' the member `pars` names, and bmm's default, the first of the group,
+#' when `pars` is `NULL` or names neither. Naming both is an error, as it
+#' is in bmm. [simulate_recovery()] and [recovery_grid()] choose the
+#' member the same way, so `recovery_formula(sim$model, pars = sim$pars)`
+#' fits what `sim` simulated.
 #'
 #' @return A `bmmformula`.
 #'
@@ -1479,8 +1695,16 @@ recovery_formula <- function(model,
                              group = "id",
                              re_cor = c("none", "within", "all"),
                              task_col = NULL,
-                             coding = c("cell", "contrast")) {
+                             coding = c("cell", "contrast"),
+                             pars = NULL) {
   check_model(model)
+  if (!is.null(pars) && (is.null(names(pars)) || anyNA(names(pars)))) {
+    cli::cli_abort(
+      "{.arg pars} must be {.code NULL} or a named vector, such as the \
+       {.code pars} of a simulation; only its names are read."
+    )
+  }
+  check_alternatives(model, names(pars), "pars")
   re_cor <- rlang::arg_match(re_cor)
   coding <- rlang::arg_match(coding)
   valid_col <- is.character(task_col) && length(task_col) == 1L &&
@@ -1500,7 +1724,7 @@ recovery_formula <- function(model,
     ))
   }
   rlang::check_installed("bmm", "to build a bmm formula.")
-  free <- model_parameters(model)$free
+  free <- model_parameters(model, names(pars))$free
   if (identical(re_cor, "within") && is.null(task_col)) {
     cli::cli_inform(
       "Without {.arg task_col} each parameter has a single random intercept, \\

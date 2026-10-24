@@ -1,5 +1,29 @@
 # bmmtools (development version)
 
+* bmmtools works with bmm 1.4.1, which offers `criterion` and `bias` of
+  `sdt_yn()` and `sdt_rating()` as alternative parameterizations, of
+  which a fit estimates one. It read both as free parameters, so
+  `simulate_recovery()` demanded a value for `bias` and
+  `recovery_formula()` wrote a formula bmm rejects. Now one member of
+  each alternative group is free: the one `pars` names, or bmm's
+  default, `criterion`. Naming both is an error, and the other member
+  appears in no truth table, formula or score. `recovery_formula()`
+  gains `pars`, whose names choose the member
+  (`recovery_formula(sim$model, pars = sim$pars)`); `recovery_grid()`,
+  the components and `fit_ml()` in a grid follow each cell's `pars`,
+  `sbc()` and `fit_ml()` follow their formula (or `fit_ml()`'s `start`),
+  and a formula that estimates the other member is refused before
+  anything is fitted. The `sdt_yn` adapter and density pass `bias` to
+  bmm when it is the chosen member (#30).
+* bmmtools now declares `bmm (>= 1.4.1)` in Suggests, the first CRAN
+  release with the signal-detection models. Note what bmm 1.4.1 changed
+  for `sdt_yn`: `criterion` is measured from the noise mean, and the
+  criterion measured from the midpoint between the noise and signal
+  means, which development builds of bmm called `criterion`, is now
+  `bias`. A script written against such a build that simulates
+  `c(d = , criterion = )` keeps running and simulates a different
+  quantity; write `bias` to keep the old meaning (#30).
+
 * A benchmark module compares implementations of a model on the same
   data: `benchmark()` runs them interleaved (A, B, A, B) and returns one
   row per run, `benchmark_metrics()` measures a single fit, and

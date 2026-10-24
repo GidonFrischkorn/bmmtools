@@ -214,9 +214,12 @@ override_cors <- function(cors, row) {
 #' @noRd
 check_cor_columns <- function(grid, model, covariates, tasks = NULL,
                               task_col = NULL, call = rlang::caller_env()) {
+  # every member of an alternative group: which one `pars` chose is
+  # checked when the cell is simulated
   info <- model_parameters(model)
   known <- c(
-    task_terms(info$free, tasks, task_col), info$fixed, names(covariates)
+    task_terms(info$candidates, tasks, task_col), info$fixed,
+    names(covariates)
   )
   for (col in grep("^cor_", names(grid), value = TRUE)) {
     ab <- cor_column_terms(col)
@@ -867,6 +870,19 @@ threads_key <- function(threads) {
 #'   or `NULL`) and `elapsed`.
 #' @noRd
 run_cell_ml <- function(sim, model, path, seed, ml) {
+  # the member of an alternative group the cell simulated (D91): fit_ml()
+  # reads it from its formula or its start values, so the grid gives the
+  # one its route reads unless `ml` already does; both equal fit_ml()'s
+  # own defaults, so a model without alternatives is called as before
+  if (length(alternative_groups(model)) > 0L &&
+        is.null(ml$formula) && is.null(ml$start)) {
+    if (identical(ml$method, "optim")) {
+      free <- model_parameters(model, names(sim$pars))$free
+      ml$start <- stats::setNames(rep(0, length(free)), free)
+    } else {
+      ml$formula <- no_pooling_formula(model, named = names(sim$pars))
+    }
+  }
   args <- c(
     list(model = model, data = sim$data, file = path, refit = "on_change"),
     if (!is.na(seed)) list(seed = seed),
@@ -1378,11 +1394,12 @@ is_component_list <- function(x) {
 #'
 #' @noRd
 grid_formula <- function(formula, row, i, model, re_cor, task_col,
-                         coding = "cell", call = rlang::caller_env()) {
+                         coding = "cell", pars = NULL,
+                         call = rlang::caller_env()) {
   if (is.null(formula)) {
     return(recovery_formula(
       model,
-      re_cor = re_cor, task_col = task_col, coding = coding
+      re_cor = re_cor, task_col = task_col, coding = coding, pars = pars
     ))
   }
   if (!is.function(formula)) {
@@ -1450,6 +1467,18 @@ grid_formula <- function(formula, row, i, model, re_cor, task_col,
 #'   generator the formula also holds the activations, so it reaches the
 #'   generator too (see [simulate_recovery()]) and is written to the grid
 #'   record.
+#'
+#'   For a model with alternative parameterizations (from bmm 1.4.1,
+#'   `criterion` and `bias` of `sdt_yn` and `sdt_rating`), `pars` chooses
+#'   the member that is simulated and recovered, and the default formula
+#'   of each cell writes that member, as `recovery_formula(pars = )` does.
+#'   A given formula, or a `formula` or `start` in `ml`, must estimate the
+#'   same member; one that names the other, or names neither while `pars`
+#'   chose the non-default member, is refused before any cell is fitted.
+#'   A function `pars` is checked as each row's first cell is simulated,
+#'   so a mismatch in a later row stops the grid after the earlier rows'
+#'   fits. With
+#'   `ml`, each cell's ML fit estimates the cell's member.
 #' @param prior Passed to [fit_cached()]; with components, `NULL` or a list
 #'   with a prior per component.
 #' @param prior_sd The prior SD each posterior is contracted against
@@ -1805,15 +1834,47 @@ recovery_grid <- function(model,
     models[[i]]
   }
   formulas <- vector("list", nrow(grid))
+  sims <- list()
+  cells <- NULL
+  # the realised `pars` of row r's first simulated cell, which choose the
+  # member of an alternative group (D91); before any cell is simulated,
+  # `pars` itself when it is not a function
+  row_pars <- function(r) {
+    for (i in which(cells$row == r)) {
+      if (i <= length(sims) && !is.null(sims[[i]])) {
+        return(sims[[i]]$pars)
+      }
+    }
+    if (is.function(pars)) NULL else pars
+  }
   formula_for <- function(i) {
-    if (is.null(formulas[[i]])) {
+    # a default formula of a model with alternatives follows the cell's
+    # member, so it is built when asked rather than kept
+    chooses <- is.null(formula) &&
+      length(alternative_groups(model_for(i))) > 0L
+    if (is.null(formulas[[i]]) || chooses) {
       formulas[[i]] <<- grid_formula(
         formula, grid[i, , drop = FALSE], i, model_for(i), re_cor,
         if (is.null(tasks)) NULL else task_col,
-        coding = coding
+        coding = coding, pars = if (chooses) row_pars(i)
       )
     }
     formulas[[i]]
+  }
+  # a formula given for the fit, or the ML fit's, must estimate the member
+  # `pars` chose (D92)
+  check_member <- function(i, sim_pars) {
+    where <- paste0("Grid row ", i, ": ")
+    if (!is.null(formula)) {
+      check_formula_member(formula_for(i), sim_pars, model_for(i), where)
+    }
+    for (arg in intersect(c("formula", "start"), names(ml_args))) {
+      check_formula_member(
+        ml_args[[arg]], sim_pars, model_for(i),
+        paste0(where, "{.arg ml}'s "),
+        arg = arg
+      )
+    }
   }
 
   design <- check_tasks(tasks, task_col, model_for(1L), covariates)
@@ -1851,6 +1912,23 @@ recovery_grid <- function(model,
     }
   }
 
+  # only for a `pars` simulate_recovery() would accept, so that a bad one
+  # gets its own error rather than one about the member it fails to name
+  if (is.numeric(pars) && !is.null(names(pars))) {
+    for (i in seq_len(nrow(grid))) check_member(i, pars)
+    # a grid column replaces an entry of `pars` and adds none, so one
+    # naming the member `pars` did not choose would be ignored in silence
+    sd_cols <- grep("^sd_", names(grid), value = TRUE)
+    cor_cols <- grep("^cor_", names(grid), value = TRUE)
+    check_unchosen(
+      c(
+        setdiff(names(grid), c(sd_cols, cor_cols)), sub("^sd_", "", sd_cols),
+        unlist(lapply(cor_cols, cor_column_terms))
+      ),
+      names(pars), model_for(1L), "The grid"
+    )
+  }
+
   cells <- grid_cell_table(nrow(grid), reps, seed)
   sims <- vector("list", nrow(cells))
   runs <- vector("list", nrow(cells))
@@ -1869,6 +1947,7 @@ recovery_grid <- function(model,
       }
     )
     if (cells$rep[[i]] == 1L) first_rep[[cells$row[[i]]]] <<- sim
+    check_member(cells$row[[i]], sim$pars)
     sim
   }
 

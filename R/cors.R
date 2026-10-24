@@ -268,7 +268,9 @@ check_covariates <- function(covariates, model, call = rlang::caller_env()) {
 
   info <- model_parameters(model)
   columns <- Filter(is.character, c(model$resp_vars, model$other_vars))
-  taken <- c("id", info$free, info$fixed, unlist(columns, use.names = FALSE))
+  taken <- c(
+    "id", info$candidates, info$fixed, unlist(columns, use.names = FALSE)
+  )
   bad_name <- nms[
     make.names(nms) != nms | grepl("_", nms, fixed = TRUE) | nms %in% taken |
       duplicated(nms)

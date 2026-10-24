@@ -171,6 +171,14 @@ The truth for the subjects and for the SDs lists only the parameters
 that vary, because a parameter that does not vary has nothing
 person-level to recover.
 
+\strong{Alternative parameterizations.} Where bmm offers two parameters for
+one quantity and estimates only one of them (from bmm 1.4.1,
+\code{criterion} and \code{bias} of \code{sdt_yn} and \code{sdt_rating}), \code{pars} names the
+one to simulate and recover, and naming both is an error. The other
+appears nowhere: not in \code{truth}, and not in \code{sds} or \code{cors}, which may
+not name it. Without either, the error asks for bmm's default, the
+first of the group. Fit with \code{recovery_formula(sim$model, pars = sim$pars)}, which writes the same member.
+
 \strong{Correlated draws.} Subject values and covariates are one
 multivariate normal draw, \code{Z \%*\% chol(cors)}, over the varying
 parameters in \code{pars} order and then the covariates, scaled by the SDs

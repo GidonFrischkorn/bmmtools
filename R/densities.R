@@ -20,9 +20,10 @@
 #    dddm(), dezdm() and (added 2026-09-17) dcswald() default to TRUE. Every
 #    adapter passes log = TRUE explicitly; relying on the default would
 #    silently sum probabilities for four of the seven.
-# 2. sdt_yn and sdt_mafc are missing from CRAN bmm 1.3.2 entirely, and their
-#    densities land on bmm's develop branch on their own schedule, one model
-#    at a time. Their tests guard per model with skip_if_no_bmm_model().
+# 2. sdt_yn and sdt_mafc were missing from CRAN bmm 1.3.2 and arrived on
+#    bmm's develop branch one model at a time. CRAN 1.4.1, the minimum since
+#    bmmtools 0.3.0, exports both densities; their tests still guard per
+#    model with skip_if_no_bmm_model(), because a develop build can lag.
 
 #' The models `fit_ml(method = "optim")` has a density for
 #'
@@ -66,11 +67,12 @@ density_for <- function(model) {
 #' Yes/no signal detection: one row per stimulus class
 #' @noRd
 density_sdt_yn <- function(pars, data, model) {
-  bmm_fun("dsdt_yn")(
+  rlang::exec(
+    bmm_fun("dsdt_yn"),
     data[[model$resp_vars$response]],
     data[[model$other_vars$n_trials]],
     data[[model$other_vars$stimulus]],
-    d = pars$d, criterion = pars$criterion, sdratio = pars$sdratio,
+    d = pars$d, !!!sdt_location(pars), sdratio = pars$sdratio,
     dist = model$other_vars$dist, log = TRUE
   )
 }

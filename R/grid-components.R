@@ -171,9 +171,9 @@ check_component_model_cors <- function(correlations, rows,
 #' @noRd
 component_known_terms <- function(spec) {
   info <- model_parameters(spec$model)
-  full <- task_terms(info$free, spec$tasks, spec$task_col)
+  full <- task_terms(info$candidates, spec$tasks, spec$task_col)
   list(
-    values = unique(c(info$free, full, info$fixed)),
+    values = unique(c(info$candidates, full, info$fixed)),
     cor = c(full, info$fixed)
   )
 }
@@ -646,12 +646,14 @@ recovery_grid_components <- function(model, first, grid, dir, reps, cors,
     links = links
   )
 
-  formulas <- vector("list", nrow(grid))
-  formulas_for <- function(r) {
-    if (is.null(formulas[[r]])) {
-      formulas[[r]] <<- lapply(rows[[r]], component_formula)
-    }
-    formulas[[r]]
+  # built from the simulated cell, whose realised `pars` choose the member
+  # of an alternative group a default formula writes (D91); cheap, so not
+  # cached
+  formulas_for <- function(r, sim) {
+    specs <- rows[[r]]
+    lapply(stats::setNames(nm = names(specs)), function(nm) {
+      component_formula(specs[[nm]], sim$components[[nm]])
+    })
   }
   cells <- grid_cell_table(nrow(grid), setup$reps, seed)
   sims <- vector("list", nrow(cells))
@@ -669,7 +671,7 @@ recovery_grid_components <- function(model, first, grid, dir, reps, cors,
   if (isTRUE(preflight)) {
     # `[<-` with list(): the preflight returns NULL when it simulated nothing
     sims[1L] <- list(component_preflight(
-      sims[[1L]], simulate_cell, formulas_for(1L), prior,
+      sims[[1L]], simulate_cell, function(sim) formulas_for(1L, sim), prior,
       component_cell_paths(dir, 1L, 1L, comps), cells$seed[[1L]], request,
       dir, dots, fitter,
       n_cells = nrow(cells), call = call
@@ -680,7 +682,7 @@ recovery_grid_components <- function(model, first, grid, dir, reps, cors,
   for (i in seq_len(nrow(cells))) {
     if (is.null(sims[[i]])) sims[[i]] <- simulate_cell(i)
     runs[[i]] <- run_component_cell(
-      sims[[i]], formulas_for(cells$row[[i]]), prior,
+      sims[[i]], formulas_for(cells$row[[i]], sims[[i]]), prior,
       component_cell_paths(dir, cells$row[[i]], cells$rep[[i]], comps),
       cells$seed[[i]], dots, fitter, request
     )
@@ -722,18 +724,21 @@ recovery_grid_components <- function(model, first, grid, dir, reps, cors,
 #' Skipped when every component of the first cell has a cached fit or a
 #' sidecar that can be used.
 #'
+#' @param formulas_of A function of the first cell's set returning its
+#'   formulas, one per component.
 #' @return The first cell's set when it had to be simulated, else `sim`.
 #' @noRd
-component_preflight <- function(sim, simulate_cell, formulas, prior, paths,
-                                seed, request, dir, dots, fitter, n_cells,
-                                call) {
-  comps <- names(formulas)
+component_preflight <- function(sim, simulate_cell, formulas_of, prior,
+                                paths, seed, request, dir, dots, fitter,
+                                n_cells, call) {
   has_fit <- file.exists(paste0(paths$fit, ".rds"))
   if (all(has_fit)) {
     return(sim)
   }
   if (any(file.exists(paths$est[!has_fit]))) {
     sim <- sim %||% simulate_cell(1L)
+    formulas <- formulas_of(sim)
+    comps <- names(formulas)
     fit_dots <- c(if (!is.na(seed)) list(seed = seed), dots)
     usable <- vapply(comps[!has_fit], function(nm) {
       key <- component_key(sim, nm, formulas, prior, fit_dots)
@@ -747,8 +752,9 @@ component_preflight <- function(sim, simulate_cell, formulas, prior, paths,
     }
   }
   sim <- sim %||% simulate_cell(1L)
+  formulas <- formulas_of(sim)
   elapsed <- 0
-  for (nm in comps) {
+  for (nm in names(formulas)) {
     part <- sim$components[[nm]]
     elapsed <- elapsed + in_component(nm,
       {
