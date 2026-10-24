@@ -370,24 +370,53 @@ test_that("n_draws above what the fit holds is reported, not refused", {
   expect_s3_class(out, "bmmtools_prior_check")
 })
 
+#' The class `b` rows bmm's `default_prior()` returns for `kappa ~ 1 +
+#' cond`, with the class-level `kappa` row left empty, so that `condb` is
+#' flat by construction
+#'
+#' bmm 1.4.1 gives slopes a proper class-level prior (measured 2026-10-24:
+#' `normal(0, 1)`, from `mixture2p`'s `kappa` effects) and refills an
+#' empty user prior with it, so no real prior set leaves a slope flat.
+flat_slope_table <- function(...) {
+  data.frame(
+    prior = c("", "", "", "normal(2, 1)", "logistic(0, 1)"),
+    class = "b",
+    coef = c("condb", "", "", "Intercept", "Intercept"),
+    group = "",
+    nlpar = c("kappa", "thetat", "kappa", "kappa", "thetat"),
+    dpar = ""
+  )
+}
+
+slope_data <- function() {
+  data.frame(
+    id = factor(rep(1:3, each = 4L)),
+    cond = factor(rep(c("a", "b"), 6L)),
+    y = rep(c(-0.5, 0.1, 0.4, -0.2), times = 3L)
+  )
+}
+
 test_that("a flat population-level slope is warned about", {
   skip_if_not_installed("bmm")
   mock <- prior_mock_fitter()
   model <- bmm::mixture2p(resp_error = "y")
-  data <- data.frame(
-    id = factor(rep(1:3, each = 4L)),
-    cond = factor(rep(c("a", "b"), 6L)),
-    y = stats::runif(12L, -pi, pi)
-  )
+  data <- slope_data()
 
-  expect_warning(
-    suppressMessages(prior_check(
-      model, bmm::bmf(kappa ~ 1 + cond + (1 | id), thetat ~ 1 + (1 | id)),
-      data,
-      .fitter = mock$fitter
-    )),
-    "condb"
-  )
+  # the flat row comes from a table built by hand, handed to prior_check()
+  # where bmm's would be
+  local({
+    testthat::local_mocked_bindings(
+      default_prior = flat_slope_table, .package = "bmm"
+    )
+    expect_warning(
+      suppressMessages(prior_check(
+        model, bmm::bmf(kappa ~ 1 + cond + (1 | id), thetat ~ 1 + (1 | id)),
+        data,
+        .fitter = mock$fitter
+      )),
+      "condb"
+    )
+  })
   expect_no_warning(
     suppressMessages(prior_check(
       model, bmm::bmf(kappa ~ 1 + (1 | id), thetat ~ 1 + (1 | id)),
@@ -577,35 +606,83 @@ test_that("a class-level prior covers its coefficient rows", {
   )
 })
 
-test_that("a coefficient with no prior at either level is still flat", {
+test_that("bmm's own defaults leave no slope flat", {
+  # the premise of the tests above changed with bmm 1.4.1: every slope now
+  # has a proper class-level default, so the check's silence is asserted
   skip_if_not_installed("bmm")
-
-  expect_warning(
+  model <- bmm::mixture2p(resp_error = "y")
+  skip_if(
+    is.null(model$default_priors$kappa$effects),
+    "installed bmm gives slopes no default prior"
+  )
+  mock <- prior_mock_fitter()
+  expect_no_warning(
     check_improper_priors(
-      bmm::bmf(kappa ~ 0 + task + (1 | id), thetat ~ 1 + (1 | id)),
-      task_prior_data(),
-      bmm::mixture2p(resp_error = "y"),
-      list(none = NULL)
-    ),
-    "tasktask1"
+      bmm::bmf(kappa ~ 1 + cond + (1 | id), thetat ~ 1 + (1 | id)),
+      slope_data(), model, list(default = NULL)
+    )
+  )
+  expect_no_warning(
+    suppressMessages(prior_check(
+      model, bmm::bmf(kappa ~ 1 + cond + (1 | id), thetat ~ 1 + (1 | id)),
+      slope_data(),
+      .fitter = mock$fitter
+    ))
   )
 })
 
-test_that("a class-level prior covers its own parameter only", {
-  skip_if_not_installed("bmm")
-
-  expect_warning(
-    check_improper_priors(
-      bmm::bmf(kappa ~ 0 + task + (1 | id), thetat ~ 0 + task + (1 | id)),
-      task_prior_data(),
-      bmm::mixture2p(resp_error = "y"),
-      list(half = brms::set_prior(
-        "normal(0, 1)",
-        class = "b", nlpar = "kappa"
-      ))
-    ),
-    "thetat"
+#' A prior table of cell-means coefficients for `kappa` and `thetat`, with
+#' the class-level rows given
+task_prior_table <- function(kappa = "", thetat = "") {
+  data.frame(
+    prior = c("", "", "", "", kappa, thetat),
+    class = "b",
+    coef = c("tasktask1", "tasktask2", "tasktask1", "tasktask2", "", ""),
+    group = "",
+    nlpar = rep(c("kappa", "thetat", "kappa", "thetat"), c(2, 2, 1, 1)),
+    dpar = ""
   )
+}
+
+test_that("a coefficient with no prior at either level is still flat", {
+  expect_identical(
+    improper_prior_slopes(task_prior_table()),
+    c(
+      "tasktask1 (kappa)", "tasktask2 (kappa)",
+      "tasktask1 (thetat)", "tasktask2 (thetat)"
+    )
+  )
+  # "(flat)" is what brms prints for an empty prior in some tables
+  table <- task_prior_table()
+  table$prior[1L] <- "(flat)"
+  expect_true("tasktask1 (kappa)" %in% improper_prior_slopes(table))
+})
+
+test_that("a class-level prior covers its own parameter only", {
+  expect_identical(
+    improper_prior_slopes(task_prior_table(kappa = "normal(0, 1)")),
+    c("tasktask1 (thetat)", "tasktask2 (thetat)")
+  )
+  expect_identical(
+    improper_prior_slopes(
+      task_prior_table(kappa = "normal(0, 1)", thetat = "normal(0, 2)")
+    ),
+    character()
+  )
+})
+
+test_that("the slope check reads nothing from a table it cannot use", {
+  expect_identical(improper_prior_slopes(NULL), character())
+  expect_identical(
+    improper_prior_slopes(data.frame(class = "b", prior = "")),
+    character()
+  )
+  # intercepts and non-b classes are never slopes
+  table <- data.frame(
+    prior = "", class = c("b", "sd"), coef = c("Intercept", "Intercept"),
+    group = c("", "id"), nlpar = "kappa", dpar = ""
+  )
+  expect_identical(improper_prior_slopes(table), character())
 })
 
 test_that("per-coefficient priors are covered as before", {

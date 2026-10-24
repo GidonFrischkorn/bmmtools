@@ -263,6 +263,42 @@ prior_class_key <- function(priors) {
   do.call(paste, c(parts, list(sep = "\r")))
 }
 
+#' The population-level coefficients of a prior table with no proper prior
+#'
+#' The row logic of `check_improper_priors()`, apart from bmm, so that it
+#' can be tested on a table built by hand: from bmm 1.4.1 every model's
+#' default priors give slopes a proper class-level prior (measured
+#' 2026-10-24: `mixture2p`'s `kappa` effects `normal(0, 1)`), and
+#' `default_prior()` refills an empty user prior, so no real model yields
+#' a flat coefficient any more.
+#'
+#' @param priors A prior table as `bmm::default_prior()` returns it, as a
+#'   data frame; `NULL` or one without `class`, `coef` and `prior` gives
+#'   none.
+#' @return The flat coefficients, each as `"<coef> (<nlpar>)"` when it
+#'   belongs to a non-linear parameter.
+#' @noRd
+improper_prior_slopes <- function(priors) {
+  needed <- c("class", "coef", "prior")
+  if (is.null(priors) || !all(needed %in% names(priors))) {
+    return(character())
+  }
+  proper <- nzchar(priors$prior) & priors$prior != "(flat)"
+  key <- prior_class_key(priors)
+  covered <- key %in% key[proper & !nzchar(priors$coef)]
+  flat <- priors$class == "b" & nzchar(priors$coef) &
+    priors$coef != "Intercept" & !proper & !covered
+  if (!any(flat)) {
+    return(character())
+  }
+  parameter <- priors$nlpar[flat] %||% rep("", sum(flat))
+  ifelse(
+    nzchar(parameter),
+    paste0(priors$coef[flat], " (", parameter, ")"),
+    priors$coef[flat]
+  )
+}
+
 #' Warn about population-level slopes with no proper prior
 #'
 #' `sample_prior = "only"` samples every parameter, so a flat slope has
@@ -287,21 +323,7 @@ check_improper_priors <- function(formula, data, model, sets) {
       ),
       error = function(e) NULL
     )
-    needed <- c("class", "coef", "prior")
-    if (is.null(priors) || !all(needed %in% names(priors))) {
-      next
-    }
-    proper <- nzchar(priors$prior) & priors$prior != "(flat)"
-    key <- prior_class_key(priors)
-    covered <- key %in% key[proper & !nzchar(priors$coef)]
-    flat <- priors$class == "b" & nzchar(priors$coef) &
-      priors$coef != "Intercept" & !proper & !covered
-    parameter <- priors$nlpar[flat] %||% rep("", sum(flat))
-    slopes <- ifelse(
-      nzchar(parameter),
-      paste0(priors$coef[flat], " (", parameter, ")"),
-      priors$coef[flat]
-    )
+    slopes <- improper_prior_slopes(priors)
     if (length(slopes) > 0L) {
       cli::cli_warn(c(
         "The prior set {.val {set}} leaves {.val {slopes}} without a \\
