@@ -52,11 +52,10 @@ planning_columns <- c(
   "coverage_mcse", "coverage_50_mcse", "detected_mcse", "sign_recovery_mcse"
 )
 
-test_that("the summary contract ends with the reliability and rate MCSEs", {
+test_that("the reliability and rate MCSEs follow z_sd_mcse in the contract", {
   columns <- recovery_summary_columns()
   at <- match("z_sd_mcse", columns)
   expect_identical(columns[at + seq_along(planning_columns)], planning_columns)
-  expect_length(columns, at + length(planning_columns))
 })
 
 test_that("an empty summary carries the new columns as doubles", {

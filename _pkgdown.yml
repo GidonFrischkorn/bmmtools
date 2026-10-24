@@ -49,6 +49,8 @@ reference:
   contents:
   - recover
   - summary.bmmtools_recovery
+  - smallest_design
+  - format.bmmtools_smallest_design
   - recovery_ccc
   - prior_sd_table
   - extract_estimates

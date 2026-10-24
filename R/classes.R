@@ -78,7 +78,8 @@ fill_optional_columns <- function(x) {
 #' posterior z-score and contraction columns with their Monte Carlo
 #' standard errors (Milestone 22, D61 and D90), then the two reliabilities
 #' of subject estimates with their paired gap and the MCSEs of the rates
-#' (Milestone 24, D96 and D98). A single
+#' (Milestone 24, D96 and D98), and the `ci_level` the coverages are
+#' nominal against (2026-10-24 amendment to D98). A single
 #' shape serves both [recover()] and [recover_subjects()] so that
 #' downstream code reads one contract. At population level `n` and
 #' `n_replications` differ only when a replication contributed no
@@ -97,7 +98,8 @@ recovery_summary_columns <- function() {
     "truth_sd", "z_mean", "z_sd", "contraction", "z_mean_mcse", "z_sd_mcse",
     "reliability_true", "reliability_true_mcse", "reliability_model",
     "reliability_model_mcse", "reliability_gap", "reliability_gap_mcse",
-    "coverage_mcse", "coverage_50_mcse", "detected_mcse", "sign_recovery_mcse"
+    "coverage_mcse", "coverage_50_mcse", "detected_mcse", "sign_recovery_mcse",
+    "ci_level"
   )
 }
 
@@ -187,10 +189,11 @@ precision_summary_columns <- function() {
   c("precision_target", "precision_met", "precision_met_mcse")
 }
 
+#' @param design The grid's design columns, which follow `condition`.
 #' @noRd
-new_bmmtools_recovery_summary <- function(x) {
+new_bmmtools_recovery_summary <- function(x, design = character()) {
   columns <- recovery_summary_columns()
-  if ("condition" %in% names(x)) columns <- c("condition", columns)
+  if ("condition" %in% names(x)) columns <- c("condition", design, columns)
   # present only when asked for, as `condition` is only on a grid
   if ("precision_target" %in% names(x)) {
     columns <- c(columns, precision_summary_columns())
@@ -883,9 +886,16 @@ summarise_subject <- function(rows) {
 #'   `z_sd_mcse`, `reliability_true`, `reliability_true_mcse`,
 #'   `reliability_model`, `reliability_model_mcse`, `reliability_gap`,
 #'   `reliability_gap_mcse`, `coverage_mcse`, `coverage_50_mcse`,
-#'   `detected_mcse` and `sign_recovery_mcse`, followed, when
-#'   `precision` is given, by `precision_target`, `precision_met` and
-#'   `precision_met_mcse`. `truth_sd` is the
+#'   `detected_mcse`, `sign_recovery_mcse` and `ci_level` (the mass the
+#'   coverages are nominal against, `NA` for a group that mixes masses),
+#'   followed, when `precision` is given, by `precision_target`,
+#'   `precision_met` and `precision_met_mcse`. A grid summary also has
+#'   `condition` first, followed by the grid's own columns (`n_subjects`,
+#'   `n_trials` or `n_trials_<component>`, and any other column of the
+#'   grid), so that each row says which design it describes; a grid
+#'   column whose name is already a summary column, such as a parameter
+#'   called `bias`, is renamed `grid_<name>`. [smallest_design()] reads
+#'   them. `truth_sd` is the
 #'   standard deviation of the generating values. `r` and `ccc` both grow
 #'   with `truth_sd` at a fixed measurement error, so compare them only
 #'   at a similar spread.
@@ -1007,7 +1017,8 @@ summarise_subject <- function(rows) {
 #' as with a hand-built tibble that has no `ci_low_50`/`ci_high_50`.
 #'
 #' **The print.** Printing the summary shows a core set of columns ---
-#' the condition, the term, the estimator when there is more than one,
+#' the condition and, on a grid, the design columns after it, the term,
+#' the estimator when there is more than one,
 #' the level, the scale, `n`, `bias`, `rmse`, `coverage`, `coverage_50`,
 #' `z_mean`, `z_sd`, `contraction`, `r`, `ccc`, `reliability_true` and
 #' `reliability_model` when there are subject rows, the calibration
@@ -1095,11 +1106,58 @@ summary.bmmtools_recovery <- function(object, precision = NULL, ...) {
         scale = rows$scale[[1L]]
       ),
       body,
-      list(n_converged = count_converged(rows))
+      list(
+        n_converged = count_converged(rows),
+        # rows bound from objects of two masses have no one nominal mass
+        ci_level = if (length(unique(rows$ci_level)) == 1L) {
+          rows$ci_level[[1L]]
+        } else {
+          NA_real_
+        }
+      )
     ))
   })
 
-  new_bmmtools_recovery_summary(dplyr::bind_rows(pieces))
+  out <- dplyr::bind_rows(pieces)
+  grid <- if (by_condition) grid_design_columns(object)
+  if (is.null(grid)) {
+    return(new_bmmtools_recovery_summary(out))
+  }
+  at <- match(out$condition, grid$condition)
+  design <- setdiff(names(grid), "condition")
+  for (column in design) out[[column]] <- grid[[column]][at]
+  new_bmmtools_recovery_summary(out, design)
+}
+
+#' The design columns a grid summary carries (D98)
+#'
+#' The grid's own columns, one row per `condition` (`"row-<i>"` is grid
+#' row i), so that a planner reads "50 subjects, 100 trials" and the
+#' design survives `dplyr::filter()` and `dplyr::bind_rows()`, where an
+#' attribute does not. A grid column named like a summary column, such
+#' as a parameter called `bias`, becomes `grid_<name>` (amended
+#' 2026-10-24). `NULL` when the recovery carries no grid.
+#'
+#' @noRd
+grid_design_columns <- function(object) {
+  grid <- attr(object, "grid")
+  if (is.null(grid) || nrow(grid) == 0L) {
+    return(NULL)
+  }
+  # as.list() leaves expand.grid()'s out.attrs behind
+  grid <- tibble::as_tibble(as.list(grid))
+  taken <- c(
+    "condition", recovery_summary_columns(), precision_summary_columns()
+  )
+  # prefixed until free, so a grid with both `bias` and `grid_bias` keeps
+  # both
+  for (k in seq_along(grid)) {
+    while (names(grid)[[k]] %in% c(taken, names(grid)[-k])) {
+      names(grid)[[k]] <- paste0("grid_", names(grid)[[k]])
+    }
+  }
+  grid$condition <- sprintf("row-%d", seq_len(nrow(grid)))
+  grid
 }
 
 #' @noRd
@@ -1122,7 +1180,8 @@ empty_recovery_summary <- function() {
     reliability_model = "double", reliability_model_mcse = "double",
     reliability_gap = "double", reliability_gap_mcse = "double",
     coverage_mcse = "double", coverage_50_mcse = "double",
-    detected_mcse = "double", sign_recovery_mcse = "double"
+    detected_mcse = "double", sign_recovery_mcse = "double",
+    ci_level = "double"
   )
   tibble::as_tibble(lapply(types, function(type) vector(type, 0L)))
 }
@@ -1218,7 +1277,10 @@ print.bmmtools_recovery <- function(x, ...) {
 #' comparison to make; the calibration columns only when present; the
 #' two reliabilities only when a subject level is there to have them
 #' (Milestone 24, D98); the precision target and its share only when
-#' `precision` asked for them. Every MCSE stays hidden (D66).
+#' `precision` asked for them. A grid summary's design columns, which
+#' sit between `condition` and `term`, follow `condition`, so a row reads
+#' "50 subjects, 100 trials" rather than "row-4" (Gidon, 2026-10-24).
+#' Every MCSE stays hidden (D66).
 #'
 #' @noRd
 summary_print_columns <- function(x) {
@@ -1236,6 +1298,12 @@ summary_print_columns <- function(x) {
   }
   if (!"subject" %in% x[["level"]]) {
     core <- setdiff(core, c("reliability_true", "reliability_model"))
+  }
+  columns <- names(x)
+  first <- match("condition", columns)
+  last <- match("term", columns)
+  if (!is.na(first) && !is.na(last) && last > first + 1L) {
+    core <- append(core, columns[seq(first + 1L, last - 1L)], after = 1L)
   }
   intersect(core, names(x))
 }

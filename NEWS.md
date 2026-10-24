@@ -96,6 +96,22 @@
   interval -- the chance that one participant's interval is that narrow
   -- with an MCSE between replications. `summary()` now refuses an
   argument it does not know instead of ignoring it (#17).
+* `smallest_design()` reads the smallest design of a grid that meets a
+  target, such as `c(r_low = 0.8)` or `c(reliability_model = 0.8,
+  precision_met = 0.8)`: the fewest trials (or any other grid column)
+  at which the target is met, per number of subjects, and met at every
+  larger value in the grid too, so noise that lets 30 trials pass and
+  100 fail does not answer 30. A design meets a target when the lower
+  end of its 95 % Monte Carlo interval clears it -- the Wilson bound
+  for rates, so a perfect rate certifies 0.80 only from 16 replications
+  on -- and the answer says when the grid's smallest design already
+  met it, when the target was not reached, and when the point estimate
+  meets it but the replications do not, with the number of replications
+  a perfect rate would need. `coverage_check = TRUE` also requires
+  population coverage within one MCSE of nominal. To support it, a
+  grid summary now carries the grid's design columns after `condition`
+  (`n_subjects`, `n_trials`, ...), and shows them in its print, and
+  every summary a `ci_level` column (#17).
 * The README and DESCRIPTION name both groups bmmtools serves: model
   developers and methodologists, and researchers planning a study. A new
   README section, "Planning a study", shows how `recovery_grid()` and

@@ -34,9 +34,16 @@ A \code{bmmtools_recovery_summary} tibble with the columns \code{term},
 \code{z_sd_mcse}, \code{reliability_true}, \code{reliability_true_mcse},
 \code{reliability_model}, \code{reliability_model_mcse}, \code{reliability_gap},
 \code{reliability_gap_mcse}, \code{coverage_mcse}, \code{coverage_50_mcse},
-\code{detected_mcse} and \code{sign_recovery_mcse}, followed, when
-\code{precision} is given, by \code{precision_target}, \code{precision_met} and
-\code{precision_met_mcse}. \code{truth_sd} is the
+\code{detected_mcse}, \code{sign_recovery_mcse} and \code{ci_level} (the mass the
+coverages are nominal against, \code{NA} for a group that mixes masses),
+followed, when \code{precision} is given, by \code{precision_target},
+\code{precision_met} and \code{precision_met_mcse}. A grid summary also has
+\code{condition} first, followed by the grid's own columns (\code{n_subjects},
+\code{n_trials} or \verb{n_trials_<component>}, and any other column of the
+grid), so that each row says which design it describes; a grid
+column whose name is already a summary column, such as a parameter
+called \code{bias}, is renamed \verb{grid_<name>}. \code{\link[=smallest_design]{smallest_design()}} reads
+them. \code{truth_sd} is the
 standard deviation of the generating values. \code{r} and \code{ccc} both grow
 with \code{truth_sd} at a fixed measurement error, so compare them only
 at a similar spread.
@@ -188,7 +195,8 @@ other. \code{coverage_50} is \code{NA} when the estimates carry no 50 \% interva
 as with a hand-built tibble that has no \code{ci_low_50}/\code{ci_high_50}.
 
 \strong{The print.} Printing the summary shows a core set of columns ---
-the condition, the term, the estimator when there is more than one,
+the condition and, on a grid, the design columns after it, the term,
+the estimator when there is more than one,
 the level, the scale, \code{n}, \code{bias}, \code{rmse}, \code{coverage}, \code{coverage_50},
 \code{z_mean}, \code{z_sd}, \code{contraction}, \code{r}, \code{ccc}, \code{reliability_true} and
 \code{reliability_model} when there are subject rows, the calibration

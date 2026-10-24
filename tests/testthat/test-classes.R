@@ -154,6 +154,22 @@ test_that("the print leads with the condition of a grid", {
   expect_equal(summary_print_columns(s)[[1L]], "condition")
 })
 
+test_that("the print of a grid summary shows its design columns", {
+  s <- summary(recovery_mixture2p)
+  shown <- summary_print_columns(s)
+  expect_identical(shown[1:4], c("condition", "n_subjects", "n_trials", "term"))
+  out <- utils::capture.output(print(s))
+  expect_true(any(grepl("condition +n_subjects +n_trials +term", out)))
+  # a component grid's trials column, or any other grid column, likewise
+  x <- recovery_mixture2p
+  grid <- attr(x, "grid")
+  names(grid)[2] <- "n_trials_a"
+  grid$kappa <- 2
+  attr(x, "grid") <- grid
+  shown <- summary_print_columns(summary(x))
+  expect_identical(shown[1:4], c("condition", "n_subjects", "n_trials_a", "kappa"))
+})
+
 test_that("a summary cut to a few columns prints them without a warning", {
   s <- summary(recovery_example())
   for (cut in list(
