@@ -15,6 +15,15 @@
   and a formula that estimates the other member is refused before
   anything is fitted. The `sdt_yn` adapter and density pass `bias` to
   bmm when it is the chosen member (#30).
+* bmmtools now declares `bmm (>= 1.4.1)` in Suggests, the first CRAN
+  release with the signal-detection models. Note what bmm 1.4.1 changed
+  for `sdt_yn`: `criterion` is measured from the noise mean, and the
+  criterion measured from the midpoint between the noise and signal
+  means, which development builds of bmm called `criterion`, is now
+  `bias`. A script written against such a build that simulates
+  `c(d = , criterion = )` keeps running and simulates a different
+  quantity; write `bias` to keep the old meaning (#30).
+
 * A benchmark module compares implementations of a model on the same
   data: `benchmark()` runs them interleaved (A, B, A, B) and returns one
   row per run, `benchmark_metrics()` measures a single fit, and

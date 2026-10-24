@@ -12,18 +12,18 @@
 
 #' Resolve a bmm function by name, at call time
 #'
-#' The signal-detection stack (`sdt_yn`, `sdt_mafc` and their `r*()` and
-#' `d*()` functions) is in no released bmm, so a literal `bmm::rsdt_yn()`
-#' makes `R CMD check`'s "checking dependencies in R code" report a
-#' missing object on any machine with a released bmm installed. That is a
-#' WARNING, and `r-lib/actions` checks with `error-on = "warning"`, so it
-#' fails the workflow. Resolving the name here keeps the check quiet and
-#' turns an absent symbol into a named error rather than R's bare "not an
-#' exported object".
+#' Written when the signal-detection stack (`sdt_yn`, `sdt_mafc` and their
+#' `r*()` and `d*()` functions) was in no released bmm: a literal
+#' `bmm::rsdt_yn()` then made `R CMD check`'s "checking dependencies in R
+#' code" report a missing object, a WARNING that fails the workflow. CRAN
+#' bmm 1.4.1, the minimum bmmtools declares since 0.3.0 (D93), exports the
+#' whole SDT stack and `rmpt()`. The lookup is kept (D94) because it costs
+#' nothing and turns a function a `develop` build lacks into a named error
+#' rather than R's bare "not an exported object".
 #'
-#' Used only for the four fork-only names; every other bmm call in the
-#' package stays a literal `bmm::` call, which is what documents the
-#' dependency.
+#' Used only for the four SDT names it was written for; every other bmm
+#' call in the package stays a literal `bmm::` call, which is what
+#' documents the dependency.
 #'
 #' @param name The name of an exported bmm function.
 #'
@@ -37,7 +37,7 @@ bmm_fun <- function(name) {
     cli::cli_abort(c(
       "The installed {.pkg bmm} ({packageVersion('bmm')}) does not export \\
        {.fun {name}}.",
-      i = "The signal-detection models are not in a released {.pkg bmm} yet."
+      i = "bmmtools needs {.pkg bmm} 1.4.1 or later, which exports it."
     ))
   }
   getExportedValue("bmm", name)

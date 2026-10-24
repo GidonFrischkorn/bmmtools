@@ -20,9 +20,10 @@
 #    dddm(), dezdm() and (added 2026-09-17) dcswald() default to TRUE. Every
 #    adapter passes log = TRUE explicitly; relying on the default would
 #    silently sum probabilities for four of the seven.
-# 2. sdt_yn and sdt_mafc are missing from CRAN bmm 1.3.2 entirely, and their
-#    densities land on bmm's develop branch on their own schedule, one model
-#    at a time. Their tests guard per model with skip_if_no_bmm_model().
+# 2. sdt_yn and sdt_mafc were missing from CRAN bmm 1.3.2 and arrived on
+#    bmm's develop branch one model at a time. CRAN 1.4.1, the minimum since
+#    bmmtools 0.3.0, exports both densities; their tests still guard per
+#    model with skip_if_no_bmm_model(), because a develop build can lag.
 
 #' The models `fit_ml(method = "optim")` has a density for
 #'
