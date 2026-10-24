@@ -76,7 +76,9 @@ fill_optional_columns <- function(x) {
 #'
 #' The apabayes request A1 columns, plus `n_replications`, then the
 #' posterior z-score and contraction columns with their Monte Carlo
-#' standard errors (Milestone 22, D61 and D90). A single
+#' standard errors (Milestone 22, D61 and D90), then the two reliabilities
+#' of subject estimates with their paired gap and the MCSEs of the rates
+#' (Milestone 24, D96 and D98). A single
 #' shape serves both [recover()] and [recover_subjects()] so that
 #' downstream code reads one contract. At population level `n` and
 #' `n_replications` differ only when a replication contributed no
@@ -92,7 +94,10 @@ recovery_summary_columns <- function() {
     "r", "r_low", "r_high", "rank_r",
     "ccc", "ccc_low", "ccc_high", "ccc_accuracy", "ccc_scale_shift",
     "ccc_location_shift", "calibration_slope", "calibration_intercept",
-    "truth_sd", "z_mean", "z_sd", "contraction", "z_mean_mcse", "z_sd_mcse"
+    "truth_sd", "z_mean", "z_sd", "contraction", "z_mean_mcse", "z_sd_mcse",
+    "reliability_true", "reliability_true_mcse", "reliability_model",
+    "reliability_model_mcse", "reliability_gap", "reliability_gap_mcse",
+    "coverage_mcse", "coverage_50_mcse", "detected_mcse", "sign_recovery_mcse"
   )
 }
 
@@ -437,11 +442,99 @@ summarise_z <- function(rows) {
   )
 }
 
+#' Monte Carlo standard errors of the rates of population rows (D98)
+#'
+#' One interval per replication, so binomial (Morris et al., 2019,
+#' Table 6). The two coverages at their nominal mass, so that a perfect
+#' coverage still has an MCSE to compare against; `detected` and
+#' `sign_recovery` at the observed rate, which gives 0 at 0 and 1. `n` is
+#' the rows that entered each rate.
+#'
+#' @noRd
+population_rate_mcse <- function(rows, detected, sign_recovery) {
+  truth <- !is.na(rows$true_value)
+  interval <- !is.na(rows$ci_low) & !is.na(rows$ci_high)
+  interval_50 <- !is.na(rows$ci_low_50) & !is.na(rows$ci_high_50)
+  signed <- truth & !is.na(rows$estimate) & !rows$true_value %in% 0
+  # rows bound from objects of two levels have no one nominal mass
+  nominal <- unique(rows$ci_level)
+  if (length(nominal) != 1L) nominal <- NA_real_
+  list(
+    coverage_mcse = metric_rate_mcse(nominal, sum(truth & interval)),
+    coverage_50_mcse = metric_rate_mcse(0.5, sum(truth & interval_50)),
+    detected_mcse = metric_rate_mcse(detected, sum(interval)),
+    sign_recovery_mcse = metric_rate_mcse(sign_recovery, sum(signed))
+  )
+}
+
+#' The mean of per-replication values and its Monte Carlo SE
+#'
+#' `SD / sqrt(R)` over the replications that gave a value; `NA` with fewer
+#' than two.
+#'
+#' @noRd
+replication_mean <- function(x) {
+  x <- x[!is.na(x)]
+  list(
+    mean = mean_or_na(x),
+    mcse = if (length(x) >= 2L) stats::sd(x) / sqrt(length(x)) else NA_real_
+  )
+}
+
+#' The generating value on the link scale
+#'
+#' A link-scale row carries it; a natural-scale row is undone through its
+#' z-score, `post_mean_link - z * post_sd_link`, which is exact because z
+#' was computed on the link scale (D60). Without z it is `NA`.
+#'
+#' @noRd
+truth_on_link <- function(rows) {
+  ifelse(
+    rows$scale == "link",
+    rows$true_value,
+    rows$post_mean_link - rows$z * rows$post_sd_link
+  )
+}
+
+#' Reliabilities of the subject rows of one group (D96)
+#'
+#' Per replication on the link scale and from the posterior mean, then
+#' averaged; the gap is the mean of the paired difference, model minus
+#' truth, so its MCSE carries the pairing the two marginal MCSEs lose.
+#'
+#' @noRd
+summarise_reliability <- function(per) {
+  pull <- function(name) vapply(per, function(p) p[[name]], 0)
+  true <- replication_mean(pull("reliability_true"))
+  model <- replication_mean(pull("reliability_model"))
+  gap <- replication_mean(pull("reliability_model") - pull("reliability_true"))
+  list(
+    reliability_true = true$mean,
+    reliability_true_mcse = true$mcse,
+    reliability_model = model$mean,
+    reliability_model_mcse = model$mcse,
+    reliability_gap = gap$mean,
+    reliability_gap_mcse = gap$mcse
+  )
+}
+
+#' The six reliability columns, which a population row leaves NA
+#' @noRd
+no_reliability <- function() {
+  columns <- c(
+    "reliability_true", "reliability_true_mcse", "reliability_model",
+    "reliability_model_mcse", "reliability_gap", "reliability_gap_mcse"
+  )
+  stats::setNames(as.list(rep(NA_real_, length(columns))), columns)
+}
+
 #' Population-level summary: one correlation across replications
 #' @noRd
 summarise_population <- function(rows) {
   r <- metric_r(rows$estimate, rows$true_value)
   ccc <- metric_ccc(rows$estimate, rows$true_value)
+  detected <- metric_detected(rows$ci_low, rows$ci_high)
+  sign_recovery <- metric_sign_recovery(rows$estimate, rows$true_value)
   c(
     list(
       n = as.double(r$n),
@@ -449,8 +542,8 @@ summarise_population <- function(rows) {
     ),
     summarise_errors(rows),
     list(
-      detected = metric_detected(rows$ci_low, rows$ci_high),
-      sign_recovery = metric_sign_recovery(rows$estimate, rows$true_value),
+      detected = detected,
+      sign_recovery = sign_recovery,
       r = r$r,
       r_low = r$r_low,
       r_high = r$r_high,
@@ -465,7 +558,9 @@ summarise_population <- function(rows) {
       calibration_intercept = ccc$calibration_intercept,
       truth_sd = ccc$truth_sd
     ),
-    summarise_z(rows)
+    summarise_z(rows),
+    no_reliability(),
+    population_rate_mcse(rows, detected, sign_recovery)
   )
 }
 
@@ -476,6 +571,16 @@ summarise_subject <- function(rows) {
     r <- metric_r(sub$estimate, sub$true_value)
     ccc <- metric_ccc(sub$estimate, sub$true_value)
     list(
+      reliability_true = metric_reliability_true(
+        sub$post_mean_link, truth_on_link(sub)
+      ),
+      reliability_model = metric_reliability_model(
+        sub$post_mean_link, sub$post_sd_link, sub$estimator[[1L]]
+      ),
+      coverage = metric_coverage(sub$true_value, sub$ci_low, sub$ci_high),
+      coverage_50 = metric_coverage(
+        sub$true_value, sub$ci_low_50, sub$ci_high_50
+      ),
       r = r$r,
       n = r$n,
       rank_r = metric_rank_r(sub$estimate, sub$true_value),
@@ -529,7 +634,18 @@ summarise_subject <- function(rows) {
       calibration_intercept = mean_or_na(pull("calibration_intercept")),
       truth_sd = sqrt(mean_or_na(pull("truth_sd")^2))
     ),
-    summarise_z(rows)
+    summarise_z(rows),
+    summarise_reliability(per),
+    list(
+      # the subjects of one fit share its population posterior, so their
+      # intervals are not independent draws: the between-replication SD of
+      # the shares, not a binomial over subjects x replications (D98, as
+      # ruled 2026-10-24)
+      coverage_mcse = replication_mean(pull("coverage"))$mcse,
+      coverage_50_mcse = replication_mean(pull("coverage_50"))$mcse,
+      detected_mcse = NA_real_,
+      sign_recovery_mcse = NA_real_
+    )
   )
 }
 
@@ -576,8 +692,11 @@ summarise_subject <- function(rows) {
 #'   `r_low`, `r_high`, `rank_r`,
 #'   `ccc`, `ccc_low`, `ccc_high`, `ccc_accuracy`, `ccc_scale_shift`,
 #'   `ccc_location_shift`, `calibration_slope`, `calibration_intercept`,
-#'   `truth_sd`, `z_mean`, `z_sd`, `contraction`, `z_mean_mcse` and
-#'   `z_sd_mcse`. `truth_sd` is the
+#'   `truth_sd`, `z_mean`, `z_sd`, `contraction`, `z_mean_mcse`,
+#'   `z_sd_mcse`, `reliability_true`, `reliability_true_mcse`,
+#'   `reliability_model`, `reliability_model_mcse`, `reliability_gap`,
+#'   `reliability_gap_mcse`, `coverage_mcse`, `coverage_50_mcse`,
+#'   `detected_mcse` and `sign_recovery_mcse`. `truth_sd` is the
 #'   standard deviation of the generating values. `r` and `ccc` both grow
 #'   with `truth_sd` at a fixed measurement error, so compare them only
 #'   at a similar spread.
@@ -605,6 +724,51 @@ summarise_subject <- function(rows) {
 #' and understate when subject rows of one replication share a population
 #' posterior or when z has heavy tails. With fewer than two z, `z_sd`
 #' and both MCSEs are `NA`.
+#'
+#' **Reliability of subject estimates.** Two estimates of how reliably a
+#' design measures individual differences, on subject rows only (`NA`
+#' elsewhere). Both are computed per replication on the link scale from
+#' the posterior mean, whatever `scale` says, and then averaged over
+#' replications. `reliability_true` is the squared correlation of the
+#' posterior means with the generating values: with no change between
+#' sessions, the test-retest correlation a second session would show
+#' (Katahira et al., 2024). `reliability_model` needs no truth, so it is
+#' the one real data can report: for posterior means
+#' `var(mean) / (var(mean) + mean(sd^2))`, for an `"ml"` row the
+#' separation form `1 - mean(se^2) / var(estimate)` (Adams, 2005), which
+#' is not clamped at 0. Only the estimator `"ml"` gets the separation
+#' form; any other label is read as a posterior mean. `reliability_gap`
+#' is the mean of the paired difference, model minus truth, and says
+#' whether the model's own number can be trusted for this design. Read
+#' it with `reliability_gap_mcse`, not with the two marginal MCSEs: it is
+#' a paired difference, so its MCSE is small where the two move together
+#' across replications and can exceed theirs where they do not, and a
+#' gap smaller than its MCSE is no evidence against the model's own
+#' number. A replication with fewer than three complete subjects or no
+#' spread contributes nothing, and each column uses the replications it
+#' can: one whose generating values have no spread enters
+#' `reliability_model` but neither `reliability_true` nor the gap, so the
+#' gap need not equal the difference of the two columns. Likewise a
+#' natural-scale subject whose z is `NA` (a zero posterior SD) has no
+#' link-scale truth and drops out of `reliability_true` only. When subjects
+#' differ in how much data they have, both weight the well-measured
+#' subjects more. Every `_mcse` here is the SD across replications over
+#' the square root of their number, `NA` with fewer than two.
+#'
+#' **Monte Carlo error of the rates.** `coverage_mcse` and
+#' `coverage_50_mcse` are binomial at the nominal mass, `sqrt(p (1 - p) /
+#' R)` with `p` the `ci_level` or 0.5, so that a coverage of 100 % still
+#' has an error to compare against. `detected_mcse` and
+#' `sign_recovery_mcse` are binomial at the observed rate (Morris et al.,
+#' 2019), which is 0 at a rate of 0 or 1: ten successes in ten still
+#' leave a 95 % interval reaching down to 0.72. At the subject level the
+#' coverage MCSEs are the SD of the per-replication coverages over the
+#' square root of their number, because the subjects of one fit share a
+#' population posterior and are not independent intervals; that is the
+#' error of the pooled coverage when every replication has the same
+#' number of subjects, as a grid has. `detected_mcse` and
+#' `sign_recovery_mcse` are `NA` there, with their rates. A group whose
+#' rows mix `ci_level`s has no nominal mass, and `coverage_mcse` is `NA`.
 #'
 #' @details
 #' Rows are grouped by `estimator` as well as by term and level, so two
@@ -635,8 +799,9 @@ summarise_subject <- function(rows) {
 #' **The print.** Printing the summary shows a core set of columns ---
 #' the condition, the term, the estimator when there is more than one,
 #' the level, the scale, `n`, `bias`, `rmse`, `coverage`, `coverage_50`,
-#' `z_mean`, `z_sd`, `contraction`, `r`, `ccc` and the calibration columns
-#' --- and says how many it hides.
+#' `z_mean`, `z_sd`, `contraction`, `r`, `ccc`, `reliability_true` and
+#' `reliability_model` when there are subject rows, and the calibration
+#' columns --- and says how many it hides.
 #' The object itself keeps all of them; `tibble::as_tibble()` prints
 #' every one.
 #'
@@ -645,6 +810,21 @@ summarise_subject <- function(rows) {
 #' [extract_estimates()] fills. It is `NA` when no fit carried a
 #' verdict, as with a hand-built estimates tibble: reporting it as equal
 #' to `n` there would assert something that was never measured.
+#'
+#' @references
+#' Adams, R. J. (2005). Reliability as a measurement design effect.
+#' *Studies in Educational Evaluation, 31*(2--3), 162--172.
+#' \doi{10.1016/j.stueduc.2005.05.008}
+#'
+#' Katahira, K., Oba, T., & Toyama, A. (2024). Does the reliability of
+#' computational models truly improve with hierarchical modeling? Some
+#' recommendations and considerations for the assessment of model
+#' parameter reliability. *Psychonomic Bulletin & Review, 31*(6),
+#' 2465--2486. \doi{10.3758/s13423-024-02490-8}
+#'
+#' Morris, T. P., White, I. R., & Crowther, M. J. (2019). Using simulation
+#' studies to evaluate statistical methods. *Statistics in Medicine,
+#' 38*(11), 2074--2102. \doi{10.1002/sim.8086}
 #'
 #' @examples
 #' summary(recovery_mixture2p)
@@ -711,7 +891,12 @@ empty_recovery_summary <- function() {
     ccc_scale_shift = "double", ccc_location_shift = "double",
     calibration_slope = "double", calibration_intercept = "double",
     truth_sd = "double", z_mean = "double", z_sd = "double",
-    contraction = "double", z_mean_mcse = "double", z_sd_mcse = "double"
+    contraction = "double", z_mean_mcse = "double", z_sd_mcse = "double",
+    reliability_true = "double", reliability_true_mcse = "double",
+    reliability_model = "double", reliability_model_mcse = "double",
+    reliability_gap = "double", reliability_gap_mcse = "double",
+    coverage_mcse = "double", coverage_50_mcse = "double",
+    detected_mcse = "double", sign_recovery_mcse = "double"
   )
   tibble::as_tibble(lapply(types, function(type) vector(type, 0L)))
 }
@@ -802,19 +987,25 @@ print.bmmtools_recovery <- function(x, ...) {
 #' The ones a reader scans first, in contract order: which row, how far
 #' off, whether the intervals hold, and how well subjects are ordered.
 #' `condition` only for a grid and `estimator` only when there is a
-#' comparison to make; the calibration columns only when present.
+#' comparison to make; the calibration columns only when present; the
+#' two reliabilities only when a subject level is there to have them
+#' (Milestone 24, D98). Every MCSE stays hidden (D66).
 #'
 #' @noRd
 summary_print_columns <- function(x) {
   core <- c(
     "condition", "term", "estimator", "level", "scale", "n", "bias",
     "rmse", "coverage", "coverage_50", "z_mean", "z_sd", "contraction",
-    "r", "ccc", "calibration_slope", "calibration_intercept"
+    "r", "ccc", "reliability_true", "reliability_model",
+    "calibration_slope", "calibration_intercept"
   )
   # `[[` rather than `$`: a column subset keeps the class, and a tibble
   # warns on `$` of a column it does not have
   if (length(unique(x[["estimator"]])) <= 1L) {
     core <- setdiff(core, "estimator")
+  }
+  if (!"subject" %in% x[["level"]]) {
+    core <- setdiff(core, c("reliability_true", "reliability_model"))
   }
   intersect(core, names(x))
 }

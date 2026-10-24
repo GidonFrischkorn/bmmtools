@@ -71,6 +71,21 @@
   summary columns" defines them and shows, on a grid with one to 100
   trials per subject, intervals that cover the truth while the
   posterior is still mostly the prior (#16).
+* `summary()` of a recovery reports how reliably a design measures
+  individual differences, on subject rows: `reliability_true`, the
+  squared correlation of the posterior means with the generating
+  values, and `reliability_model`, which needs no truth and so is the
+  number real data can report -- `var(mean) / (var(mean) + mean(sd^2))`
+  for posterior means and `1 - mean(se^2) / var(estimate)` for
+  maximum-likelihood rows. Both are computed per replication on the
+  link scale and averaged; `reliability_gap` is their paired
+  difference, which shows whether the model's own reliability can be
+  trusted for that design. Each comes with a Monte Carlo standard error,
+  and so now do the rates: `coverage_mcse` and `coverage_50_mcse`
+  (binomial at the nominal mass, so a coverage of 100 % still has one;
+  between replications on subject rows), `detected_mcse` and
+  `sign_recovery_mcse`. The print shows both reliabilities when there
+  are subject rows (#17).
 * The README and DESCRIPTION name both groups bmmtools serves: model
   developers and methodologists, and researchers planning a study. A new
   README section, "Planning a study", shows how `recovery_grid()` and

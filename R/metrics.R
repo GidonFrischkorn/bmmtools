@@ -164,6 +164,61 @@ metric_r <- function(estimate, truth, ci_level = 0.95) {
   out
 }
 
+#' Reliability from the truth: the squared correlation of estimate and truth
+#'
+#' One replication's subject estimates against their generating values
+#' (Milestone 24, D96). With no change between sessions it is the
+#' test-retest correlation a second session would show (Katahira et al.,
+#' 2024, Eq. 7). `NA` under the rule of [metric_r()].
+#'
+#' @noRd
+metric_reliability_true <- function(estimate, truth) {
+  metric_r(estimate, truth)$r^2
+}
+
+#' Reliability from the model: what real data can report (D96)
+#'
+#' For posterior means (`estimator = "bayes"`) the EAP form,
+#' `var(mean) / (var(mean) + mean(sd^2))`, which writes the population
+#' variance by the law of total variance; for unshrunk point estimates
+#' (`"ml"`) the separation form, `1 - mean(se^2) / var(estimate)` (Adams,
+#' 2005, Eqs. 9--11 and 4--6). The EAP form applied to unshrunk estimates
+#' overstates: 0.66 where the truth is 0.50 (spec 24, section 1b). The
+#' separation form is taken only for the label `"ml"`; any other is read
+#' as a posterior mean. It is not clamped at 0; a negative value says the
+#' standard errors exceed the spread. `NA` with fewer than three complete
+#' pairs or no spread among the estimates.
+#'
+#' @param estimate Link-scale posterior means, or point estimates.
+#' @param sd Their posterior SDs, or standard errors.
+#' @noRd
+metric_reliability_model <- function(estimate, sd, estimator = "bayes") {
+  p <- complete_pairs(estimate, sd, "estimate", "sd")
+  if (p$n < 3L || !stats::var(p$x) > 0) {
+    return(NA_real_)
+  }
+  spread <- stats::var(p$x)
+  error <- mean(p$y^2)
+  if (identical(estimator, "ml")) {
+    1 - error / spread
+  } else {
+    spread / (spread + error)
+  }
+}
+
+#' Binomial Monte Carlo standard error of a rate
+#'
+#' `sqrt(p (1 - p) / n)` (Morris et al., 2019, Table 6). `NA` when the rate
+#' is missing or nothing was counted.
+#'
+#' @noRd
+metric_rate_mcse <- function(p, n) {
+  if (is.na(p) || n == 0L) {
+    return(NA_real_)
+  }
+  sqrt(p * (1 - p) / n)
+}
+
 #' Spearman rank correlation
 #'
 #' Reported alongside `metric_r()` because a model can order subjects
