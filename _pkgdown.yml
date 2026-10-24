@@ -114,6 +114,7 @@ articles:
   navbar: Running studies
   contents:
   - articles/recovery-grid
+  - articles/recovery-ezdm
   - articles/correlation-recovery
   - articles/prior-check
   - articles/hierarchical-vs-ml
