@@ -118,11 +118,10 @@ grid_link <- recovery_grid(
 
 ## ---- grid-summary
 cells <- attr(grid, "cells")
-design_cols <- unique(cells[c("condition", "n_subjects", "n_trials")])
 
+# a grid summary carries n_subjects and n_trials itself (Milestone 24)
 by_trials <- summary(grid_link) |>
-  dplyr::filter(level == "subject") |>
-  dplyr::left_join(design_cols, by = "condition")
+  dplyr::filter(level == "subject")
 
 by_trials[c("term", "estimator", "n_trials", "n", "n_converged",
             "bias", "rmse", "r", "coverage", "calibration_slope")]

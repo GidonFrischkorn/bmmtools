@@ -363,10 +363,8 @@ contraction with large $|z|$ is a prior in conflict with the likelihood.
 ct <- readRDS(from_root("vignettes/articles/assets/metrics-contraction.rds"))
 rows <- tibble::as_tibble(ct$out)
 rows$n_trials <- ct$cells$n_trials[match(rows$condition, ct$cells$condition)]
+# a grid summary carries n_trials itself (Milestone 24)
 ct_summary <- tibble::as_tibble(ct$summary)
-ct_summary$n_trials <- ct$cells$n_trials[
-  match(ct_summary$condition, ct$cells$condition)
-]
 pick <- function(x, trials, term, level) {
   x[x$n_trials == trials & x$term == term & x$level == level, ]
 }

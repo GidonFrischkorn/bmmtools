@@ -49,6 +49,8 @@ reference:
   contents:
   - recover
   - summary.bmmtools_recovery
+  - smallest_design
+  - format.bmmtools_smallest_design
   - recovery_ccc
   - prior_sd_table
   - extract_estimates
@@ -71,6 +73,19 @@ reference:
   - cross_check
   - summary.bmmtools_cross_check
   - sbc
+
+- title: Validate a model
+  desc: >
+    One plan per model, run stage by stage into a directory, judged
+    against criteria printed beside every verdict.
+  contents:
+  - validation_plan
+  - validation_defaults
+  - write_plan
+  - run_validation
+  - card_numbers
+  - verdict_table
+  - compare_validations
 
 - title: Benchmark
   desc: What an implementation costs, in units that name their phase.

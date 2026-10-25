@@ -9,6 +9,29 @@
   Monte Carlo standard errors, reliabilities and that read-off are
   computed by hand in the article until `summary()` reports them (#17),
   and a validation card will replace the article (#21).
+* A validation of a bmm model is now one plan and one run.
+  `validation_plan()` resolves everything a validation needs before
+  anything is fitted: the generating values, a grid of designs with its
+  replications, the sampler budget, the design point and prior of the
+  simulation-based calibration, the prior-check layout, an optional
+  reference implementation, the criteria, the seed, the owner and a
+  version, with a content hash that changes only when what is planned
+  changes. `validation_defaults()` holds the values a plan fills from;
+  entries ship for `mixture2p` and `ezdm`, and a model without one needs
+  `pars`. `run_validation()` runs the stages in order (run record, prior
+  predictive check, SBC, recovery grid, computation, identifiability,
+  individual differences, agreement) into one directory, each cached
+  under its own folder. A rerun reads every stage whose inputs did not
+  change, a stage that fails is recorded with its message while the
+  others run, and stages that do not exist yet (data requirements,
+  model recovery, posterior checks) are listed as not run with their
+  issue. The result keeps every stage's own object and adds
+  `card_numbers()`, every number a card prints with its Monte Carlo
+  standard error, `verdict_table()`, each criterion in words with its
+  value and verdict, and a headline that says "validated" only with the
+  plan version beside it. `compare_validations()` flags the numbers that
+  moved between two runs by more than their Monte Carlo error (#21, #9).
+
 * bmmtools works with bmm 1.4.1, which offers `criterion` and `bias` of
   `sdt_yn()` and `sdt_rating()` as alternative parameterizations, of
   which a fit estimates one. It read both as free parameters, so
@@ -80,6 +103,47 @@
   summary columns" defines them and shows, on a grid with one to 100
   trials per subject, intervals that cover the truth while the
   posterior is still mostly the prior (#16).
+* `summary()` of a recovery reports how reliably a design measures
+  individual differences, on subject rows: `reliability_true`, the
+  squared correlation of the posterior means with the generating
+  values, and `reliability_model`, which needs no truth and so is the
+  number real data can report -- `var(mean) / (var(mean) + mean(sd^2))`
+  for posterior means and `1 - mean(se^2) / var(estimate)` for
+  maximum-likelihood rows. Both are computed per replication on the
+  link scale and averaged; `reliability_gap` is their paired
+  difference, which shows whether the model's own reliability can be
+  trusted for that design. Each comes with a Monte Carlo standard error,
+  and so now do the rates: `coverage_mcse` and `coverage_50_mcse`
+  (binomial at the nominal mass, so a coverage of 100 % still has one;
+  between replications on subject rows), `detected_mcse` and
+  `sign_recovery_mcse`. The print shows both reliabilities when there
+  are subject rows (#17).
+* `summary()` of a recovery takes `precision`, a target width for the
+  `ci_level` interval, and reports `precision_target`, the share of
+  intervals no wider than it (`precision_met`) and that share's Monte
+  Carlo standard error. Targets are a table of `term`, `level` and
+  `width` (optionally per `condition`), or a named vector for
+  population rows (`precision = c(kappa = 1)`), and are read on each
+  row's own scale. On subject rows the share is over every subject
+  interval -- the chance that one participant's interval is that narrow
+  -- with an MCSE between replications. `summary()` now refuses an
+  argument it does not know instead of ignoring it (#17).
+* `smallest_design()` reads the smallest design of a grid that meets a
+  target, such as `c(r_low = 0.8)` or `c(reliability_model = 0.8,
+  precision_met = 0.8)`: the fewest trials (or any other grid column)
+  at which the target is met, per number of subjects, and met at every
+  larger value in the grid too, so noise that lets 30 trials pass and
+  100 fail does not answer 30. A design meets a target when the lower
+  end of its 95 % Monte Carlo interval clears it -- the Wilson bound
+  for rates, so a perfect rate certifies 0.80 only from 16 replications
+  on -- and the answer says when the grid's smallest design already
+  met it, when the target was not reached, and when the point estimate
+  meets it but the replications do not, with the number of replications
+  a perfect rate would need. `coverage_check = TRUE` also requires
+  population coverage within one MCSE of nominal. To support it, a
+  grid summary now carries the grid's design columns after `condition`
+  (`n_subjects`, `n_trials`, ...), and shows them in its print, and
+  every summary a `ci_level` column (#17).
 * The README and DESCRIPTION name both groups bmmtools serves: model
   developers and methodologists, and researchers planning a study. A new
   README section, "Planning a study", shows how `recovery_grid()` and
