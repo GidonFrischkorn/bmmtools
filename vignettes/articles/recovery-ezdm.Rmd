@@ -141,11 +141,10 @@ used here
 ([issue #21](https://github.com/GidonFrischkorn/bmmtools/issues/21)).
 The card for `ezdm` will replace this page. Some numbers below,
 uncertainties of rates, the reliability of the subject estimates and the
-smallest design that meets a target, are not yet reported by `summary()`
-of a recovery result, so this page computes them by hand with the
-formula stated each time
-([issue #17](https://github.com/GidonFrischkorn/bmmtools/issues/17) adds
-them to the package).
+smallest design that meets a target, are computed by hand with the
+formula stated each time, because the page was written before
+`summary()` of a recovery result and `smallest_design()` reported them
+([issue #17](https://github.com/GidonFrischkorn/bmmtools/issues/17)).
 
 Two words recur. A *design* is one combination of subjects and trials;
 the grid has six. Each design was simulated and fitted
@@ -404,9 +403,9 @@ condition holds at 300 trials, so the answer is 300.
 The column *using r* applies the same rule to r instead of r_low. Where
 the two differ, the point estimate meets the bar but ten replications
 are too few to be sure that it does. This page applies the rule by hand
-([the code](`r script_url`), section `read-off`); a function for it
-comes with
-[issue #17](https://github.com/GidonFrischkorn/bmmtools/issues/17).
+([the code](`r script_url`), section `read-off`); in the package,
+`smallest_design()` reads a target off a grid summary
+([issue #17](https://github.com/GidonFrischkorn/bmmtools/issues/17)).
 
 ```{r readoff, echo = FALSE}
 in_grid <- function(x) ifelse(is.na(x), "not reached in this grid", x)

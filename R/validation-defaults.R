@@ -167,6 +167,8 @@ validation_entries <- function() {
 
 #' Validation defaults for a model
 #'
+#' `r lifecycle::badge("experimental")`
+#'
 #' The generating values, the standard grid and the budget a
 #' [validation_plan()] fills from when an argument is left `NULL`. An
 #' entry exists for a model once its validation card is made; a model
@@ -188,7 +190,7 @@ validation_entries <- function() {
 #'   `sections` (model-specific card sections).
 #'
 #' @details
-#' The standard grid (D81) is 20 and 50 subjects by 30, 100 and 300
+#' The standard grid is 20 and 50 subjects by 30, 100 and 300
 #' trials per subject, ten replications each, fitted with 4 chains of 2000
 #' iterations (1000 warmup) under cmdstanr; SBC runs 100 simulations at 20
 #' subjects by 50 trials with 2 chains of 500. Ten replications give a

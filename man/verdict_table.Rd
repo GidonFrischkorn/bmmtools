@@ -16,10 +16,12 @@ stage's), \code{criterion} (the bar in words), \code{value} (the number judged),
 criterion cannot be evaluated) and \code{note}.
 }
 \description{
-One row per criterion, with the bar written out, so a card can print
-the criterion next to its verdict rather than a bare pass or fail.
+\ifelse{html}{\href{https://lifecycle.r-lib.org/articles/stages.html#experimental}{\figure{lifecycle-experimental.svg}{options: alt='[Experimental]'}}}{\strong{[Experimental]}}
 }
 \details{
+One row per criterion, with the bar written out, so a card can print
+the criterion next to its verdict rather than a bare pass or fail.
+
 The criteria are the plan's (see \code{\link[=validation_plan]{validation_plan()}}, "Criteria"):
 \itemize{
 \item prior predictive: the largest floor or ceiling rate under the
