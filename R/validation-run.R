@@ -232,15 +232,16 @@ check_validation_dir <- function(dir, call = rlang::caller_env()) {
   normalizePath(dir, mustWork = TRUE)
 }
 
-#' Read the `previous` argument into a result
+#' Read the `previous` argument (or render_card()'s `result`) into a result
 #' @noRd
-read_previous_validation <- function(previous, call = rlang::caller_env()) {
+read_previous_validation <- function(previous, arg = "previous",
+                                     call = rlang::caller_env()) {
   if (is.null(previous) || inherits(previous, "bmmtools_validation")) {
     return(previous)
   }
   if (!is.character(previous) || length(previous) != 1L || is.na(previous)) {
     cli::cli_abort(
-      "{.arg previous} must be a validation result, a path to one, or \\
+      "{.arg {arg}} must be a validation result, a path to one, or \\
        {.code NULL}, not {.obj_type_friendly {previous}}.",
       call = call
     )
@@ -1125,14 +1126,15 @@ numbers_agreement <- function(x) {
 #'   diagnostics.
 #' * computation: the share of converged cells at least
 #'   `convergence_rate_min`.
-#' * recovery: the coverage of every population parameter in every design
-#'   at least `coverage_level` minus one Monte Carlo standard error at
-#'   nominal, `sqrt(level * (1 - level) / n_replications)`.
+#' * recovery: the coverage of every population parameter, pooled over the
+#'   designs, not below `coverage_level` by a one-sided binomial test at
+#'   `coverage_alpha` divided by the number of parameters. The coverage of
+#'   each design is reported, not judged.
 #' * identifiability: at the largest design, every population parameter's
 #'   mean contraction above `contraction_min` and its mean z-score within
 #'   `z_mean_max` of 0.
 #' * individual differences: the coverage of every generating correlation
-#'   held to the recovery bar.
+#'   held to the same pooled test, divided by the number of correlations.
 #' * agreement: reported, not judged.
 #'
 #' The ECDF band is simultaneous over the ranks of one variable; it is not
@@ -1190,6 +1192,18 @@ verdict_row <- function(criterion, value, pass, note = NA_character_) {
 #' @noRd
 fmt <- function(x) format(signif(x, 3), trim = TRUE)
 
+#' The pooled coverage test, in words
+#' @noRd
+pooled_test_text <- function(criteria, of = "parameters") {
+  sprintf(
+    paste(
+      "not below %s by a one-sided binomial test at %s divided by the",
+      "number of %s"
+    ),
+    fmt(criteria$coverage_level), fmt(criteria$coverage_alpha), of
+  )
+}
+
 #' The criterion of a stage that did not run, in words
 #' @noRd
 stage_criterion_text <- function(stage, result, criteria) {
@@ -1205,10 +1219,10 @@ stage_criterion_text <- function(stage, result, criteria) {
     ),
     recovery = sprintf(
       paste(
-        "%s%% interval coverage of every population parameter, in every",
-        "design, at least %s minus one MCSE"
+        "%s%% interval coverage of every population parameter, pooled",
+        "across designs, %s"
       ),
-      level, fmt(criteria$coverage_level)
+      level, pooled_test_text(criteria)
     ),
     computation = sprintf(
       "at least %s of the recovery cells pass check_convergence()",
@@ -1223,10 +1237,10 @@ stage_criterion_text <- function(stage, result, criteria) {
     ),
     individual_differences = sprintf(
       paste(
-        "%s%% interval coverage of every generating correlation, in every",
-        "design, at least %s minus one MCSE"
+        "%s%% interval coverage of every generating correlation, pooled",
+        "across designs, %s"
       ),
-      level, fmt(criteria$coverage_level)
+      level, pooled_test_text(criteria, "correlations")
     ),
     data_requirements = paste(
       "the smallest design with person-level r_low >= 0.80 at 50 subjects",
@@ -1335,24 +1349,40 @@ verdict_computation <- function(result, criteria) {
   )
 }
 
-#' Coverage held to nominal minus one MCSE at nominal
+#' Coverage pooled across designs, judged by a binomial test per term
+#'
+#' A term fails when `pbinom(covered, n, level)` is below `coverage_alpha`
+#' over the number of terms. The per-design bar of 26.1 failed a
+#' calibrated model's stage two times in three at 10 replications
+#' (ARCHITECTURE § 26.0, amendment 3). `label` names the design column,
+#' which pooling no longer needs; it is kept for the callers.
 #' @noRd
 coverage_verdict <- function(text, rows, label, criteria, empty_note) {
   if (is.null(rows) || nrow(rows) == 0L || all(is.na(rows$coverage))) {
     return(verdict_row(text, NA_real_, NA, empty_note))
   }
-  level <- criteria$coverage_level
-  bar <- level - sqrt(level * (1 - level) / rows$n_replications)
-  low <- !is.na(rows$coverage) & rows$coverage < bar
+  rows <- rows[!is.na(rows$coverage), ]
+  # coverage leaves out a replication without an interval while
+  # n_replications counts it; such a replication is a failed fit, which
+  # the runner retries and the computation stage judges
+  covered <- round(rows$coverage * rows$n_replications)
+  terms <- unique(rows$term)
+  k <- tapply(covered, factor(rows$term, terms), sum)
+  n <- tapply(rows$n_replications, factor(rows$term, terms), sum)
+  p <- stats::pbinom(k, n, criteria$coverage_level)
+  low <- p < criteria$coverage_alpha / length(terms)
   note <- if (any(low)) {
     paste(
-      sprintf("%s at %s", rows$term[low], rows[[label]][low]),
+      sprintf(
+        "%s: %d of %d covered, p = %s", terms[low], k[low], n[low],
+        fmt(p[low])
+      ),
       collapse = "; "
     )
   } else {
     NA_character_
   }
-  verdict_row(text, min(rows$coverage, na.rm = TRUE), !any(low), note)
+  verdict_row(text, unname(min(k / n)), !any(low), note)
 }
 
 #' @noRd

@@ -74,6 +74,7 @@ default_validation_criteria <- function() {
     sbc_ecdf_prob = 0.95,
     convergence_rate_min = 0.95,
     coverage_level = 0.95,
+    coverage_alpha = 0.05,
     contraction_min = 0,
     z_mean_max = 2,
     tolerance = c(default = 0, seconds = Inf, median_fit_seconds = Inf)
@@ -106,7 +107,7 @@ generic_validation_defaults <- function() {
     ),
     prior_check = list(
       n_subjects = 20L, n_trials = 50L, n_draws = 500L, range = NULL,
-      summary = NULL,
+      range_reason = NULL, summary = NULL,
       sampler = list(chains = 2L, iter = 1000L, backend = "cmdstanr")
     ),
     reference = NULL,
@@ -159,6 +160,14 @@ validation_entries <- function() {
   ezdm$cors <- diag(3L)
   dimnames(ezdm$cors) <- list(terms, terms)
   ezdm$cors["drift", "bound"] <- ezdm$cors["bound", "drift"] <- 0.4
+  # bmm 1.4.1's posterior_predict() gives mean RT only, and prior_check()
+  # knows no range for ezdm (ARCHITECTURE § 26.0, amendment 4)
+  ezdm$prior_check$range <- c(0.15, 5)
+  ezdm$prior_check$range_reason <- paste(
+    "Mean RT is judged against a plausibility range of 0.15 to 5 s, the",
+    "owner's convention and not a bound of the response: bmm's predictions",
+    "for ezdm give mean RT only, not accuracy."
+  )
   ezdm$owner <- "Gidon Frischkorn"
   ezdm$version <- "0.1.0"
 

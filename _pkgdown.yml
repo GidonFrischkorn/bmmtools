@@ -86,6 +86,7 @@ reference:
   - card_numbers
   - verdict_table
   - compare_validations
+  - render_card
 
 - title: Benchmark
   desc: What an implementation costs, in units that name their phase.

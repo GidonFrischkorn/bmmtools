@@ -1,0 +1,195 @@
+---
+title: "Validation card"
+format:
+  html:
+    embed-resources: true
+    toc: true
+execute:
+  echo: false
+  warning: false
+  message: false
+params:
+  result: ""
+---
+
+```{r setup}
+# The card reads the stored result only. It runs in a fresh R session,
+# which may load another bmmtools than the one that made the result, so
+# it calls no bmmtools function: everything it prints is a field of the
+# result, formatted here.
+result <- readRDS(params$result)
+plan <- result$plan
+info <- as.data.frame(result$run_info)
+start <- info[info$when == "start", , drop = FALSE]
+end <- info[info$when == "end", , drop = FALSE]
+stages <- as.data.frame(result$stages)
+verdicts <- as.data.frame(result$verdicts)
+numbers <- as.data.frame(result$numbers)
+changes <- if (!is.null(result$changes)) as.data.frame(result$changes)
+
+fmt <- function(x) {
+  vapply(x, function(v) {
+    if (is.na(v)) "–" else format(signif(v, 3), trim = TRUE)
+  }, character(1), USE.NAMES = FALSE)
+}
+text <- function(x) ifelse(is.na(x) | !nzchar(x), "–", as.character(x))
+md_table <- function(df) {
+  cat("", knitr::kable(df, format = "pipe", row.names = FALSE), "", sep = "\n")
+}
+# one row per condition, level and term, one column per metric; a value
+# with a Monte Carlo standard error carries it in brackets
+wide <- function(rows) {
+  rows <- rows[rows$metric != "seconds", , drop = FALSE]
+  if (nrow(rows) == 0L) {
+    return(NULL)
+  }
+  rows$cell <- ifelse(
+    is.na(rows$mcse), fmt(rows$value),
+    paste0(fmt(rows$value), " (", fmt(rows$mcse), ")")
+  )
+  key <- paste(rows$condition, rows$level, rows$term, sep = "\r")
+  first <- !duplicated(key)
+  out <- data.frame(
+    design = text(rows$condition[first]), level = text(rows$level[first]),
+    term = text(rows$term[first])
+  )
+  for (metric in unique(rows$metric)) {
+    at <- rows$metric == metric
+    out[[metric]] <- text(rows$cell[at][match(key[first], key[at])])
+  }
+  # a column with nothing in it is dropped, except the design's
+  keep <- vapply(out, function(col) any(col != "–"), logical(1))
+  keep[["design"]] <- TRUE
+  out[, keep, drop = FALSE]
+}
+verdict_word <- function(pass) {
+  ifelse(is.na(pass), "not judged", ifelse(pass, "met", "not met"))
+}
+```
+
+**`r plan$model_name`**: `r result$headline$text`.
+
+The word *validated* means every required stage below met the criterion
+printed beside it, under the plan whose version and hash are named here;
+it is not a claim about any other plan.
+
+## Run and plan
+
+```{r run}
+#| results: asis
+md_table(data.frame(
+  field = c(
+    "Model", "Plan version", "Plan hash", "Defaults", "Owner", "bmm",
+    "bmmtools", "brms", "cmdstanr", "CmdStan", "R", "Platform", "CPU",
+    "Started", "Seconds"
+  ),
+  value = text(c(
+    plan$model_name, plan$version, plan$hash, plan$defaults, plan$owner,
+    start$bmm_version, start$bmmtools_version, start$brms_version,
+    start$cmdstanr_version, start$cmdstan_version, start$r_version,
+    start$platform, start$cpu_model, format(start$timestamp),
+    fmt(end$seconds)
+  ))
+))
+```
+
+The plan's designs, each run `r fmt(plan$reps)` times under the seed
+`r fmt(plan$seed)`:
+
+```{r grid}
+#| results: asis
+md_table(data.frame(
+  subjects = fmt(plan$grid$n_subjects), trials = fmt(plan$grid$n_trials)
+))
+sampler <- plan$sampler
+md_table(data.frame(
+  setting = names(sampler),
+  value = vapply(sampler, function(v) {
+    if (is.numeric(v)) fmt(v) else text(paste(v, collapse = ", "))
+  }, character(1), USE.NAMES = FALSE)
+))
+```
+
+## Verdicts
+
+```{r verdicts}
+#| results: asis
+md_table(data.frame(
+  stage = verdicts$title,
+  required = ifelse(verdicts$required, "yes", "no"),
+  status = verdicts$status,
+  criterion = verdicts$criterion,
+  value = fmt(verdicts$value),
+  verdict = ifelse(verdicts$status == "ok", verdict_word(verdicts$pass), "–"),
+  note = text(verdicts$note)
+))
+```
+
+## Stages
+
+```{r stages}
+#| results: asis
+reasons <- list(
+  prior_predictive = plan$prior_check$range_reason,
+  sbc = plan$sbc$prior_reason
+)
+for (i in seq_len(nrow(stages))) {
+  stage <- stages$stage[[i]]
+  cat("\n### ", stages$title[[i]], "\n\n", sep = "")
+  status <- stages$status[[i]]
+  if (!identical(status, "ok")) {
+    why <- text(stages$reason[[i]])
+    if (identical(why, "–")) why <- text(stages$message[[i]])
+    cat("*", status, "*: ", why, "\n", sep = "")
+    next
+  }
+  cat("Ran in ", fmt(stages$seconds[[i]]), " seconds",
+    if (isTRUE(stages$resumed[[i]])) ", read from an earlier run",
+    ".\n",
+    sep = ""
+  )
+  if (!is.null(reasons[[stage]])) cat("\n", reasons[[stage]], "\n", sep = "")
+  table <- wide(numbers[numbers$stage == stage, , drop = FALSE])
+  if (!is.null(table)) md_table(table)
+}
+```
+
+```{r sections}
+#| results: asis
+if (length(plan$sections) > 0L) {
+  cat("\n## Model sections\n")
+  for (section in plan$sections) {
+    cat("\n### ", section$title, "\n", sep = "")
+    if (!is.null(section$numbers)) {
+      table <- wide(numbers[numbers$stage == section$numbers, , drop = FALSE])
+      if (!is.null(table)) md_table(table)
+    }
+  }
+}
+```
+
+```{r changes}
+#| results: asis
+if (is.null(changes)) {
+  cat("\n## Changes\n\nNo earlier result was given, so nothing is compared.\n")
+} else {
+  moved <- changes[!is.na(changes$moved) & changes$moved, , drop = FALSE]
+  cat("\n## Changes since bmm ", attr(result$changes, "old_bmm"), "\n\n",
+    sep = ""
+  )
+  cat(
+    nrow(moved), " of ", attr(result$changes, "n_compared"),
+    " numbers compared moved by more than twice their combined Monte Carlo",
+    " standard error, or by more than the plan's tolerance where they have",
+    " none.\n",
+    sep = ""
+  )
+  if (nrow(moved) > 0L) {
+    md_table(data.frame(
+      stage = moved$stage, design = text(moved$condition),
+      term = text(moved$term), metric = moved$metric, old = fmt(moved$old),
+      new = fmt(moved$new), change = fmt(moved$diff)
+    ))
+  }
+}
+```

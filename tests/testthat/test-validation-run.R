@@ -4,12 +4,6 @@
 # draws are sequences, so its SBC diagnostics always fail: a run against
 # it is "complete, not validated" unless a test edits the result.
 
-skip_validation_run <- function() {
-  skip_if_not_installed("bmm")
-  skip_if_not_installed("SBC")
-  skip_on_cran() # every run fits through SBC: about 0.5 s each, 40 runs
-}
-
 #' Which stage a mock call belongs to, by its design point
 #'
 #' small_validation_plan() gives the prior check 3 subjects, the
@@ -689,9 +683,10 @@ test_that("each criterion fails on a result that misses it", {
   rec$ci_high[out] <- rec$true_value[out] + 2
   low$recovery <- rec
   row <- verdict_table(low)[verdict_table(low)$stage == "recovery", ]
-  expect_identical(row$value, 0)
+  # 2 of the 4 kappa intervals (2 designs x 2 replications) cover
+  expect_identical(row$value, 0.5)
   expect_false(row$pass)
-  expect_identical(row$note, "kappa at 6 x 20")
+  expect_identical(row$note, "kappa: 2 of 4 covered, p = 0.014")
 
   flat <- result
   flat$identifiability$contraction <- -0.1
@@ -718,22 +713,69 @@ test_that("a criterion that cannot be evaluated is named, not failed", {
   expect_identical(headline$text, "complete, not judged (stages Prior predictive)")
 })
 
-test_that("the coverage bar is nominal minus one MCSE at nominal", {
+test_that("coverage is pooled across designs and judged by a binomial test", {
   criteria <- default_validation_criteria()
+  expect_identical(criteria$coverage_alpha, 0.05)
   rows <- tibble::tibble(
-    term = c("a", "b"), condition = "x",
-    coverage = c(0.9, 0.85), n_replications = 10L
+    term = rep(c("a", "b"), each = 3L), condition = rep(c("x", "y", "z"), 2L),
+    coverage = c(0.8, 0.9, 1, 1, 1, 1), n_replications = 10L
   )
-  # 0.95 - sqrt(0.95 * 0.05 / 10) = 0.881
+  # a: 27 of 30, pbinom(27, 30, 0.95) = 0.188 > 0.05 / 2; the per-cell
+  # bar of 0.881 would have failed design x
+  out <- coverage_verdict("text", rows, "condition", criteria, "none")
+  expect_true(out$pass)
+  expect_identical(out$value, 0.9)
+  expect_true(is.na(out$note))
+
+  rows$coverage[1:3] <- c(0.6, 0.7, 0.8)
   out <- coverage_verdict("text", rows, "condition", criteria, "none")
   expect_false(out$pass)
-  expect_identical(out$note, "b at x")
+  expect_identical(out$value, 0.7)
+  expect_identical(out$note, "a: 21 of 30 covered, p = 1.07e-05")
+
+  # the correction is over parameters: 25 of 30 (p = 0.0156) fails one
+  # parameter at 0.05 and passes among four at 0.05 / 4 = 0.0125
+  one <- tibble::tibble(
+    term = "a", condition = c("x", "y", "z"),
+    coverage = c(0.8, 0.8, 0.9), n_replications = 10L
+  )
+  passes <- function(rows) {
+    coverage_verdict("text", rows, "condition", criteria, "none")$pass
+  }
+  expect_false(passes(one))
+  four <- dplyr::bind_rows(one, tibble::tibble(
+    term = rep(c("b", "c", "d"), each = 3L), condition = "x", coverage = 1,
+    n_replications = 10L
+  ))
+  expect_true(passes(four))
+  criteria$coverage_alpha <- 0.2
+  expect_false(passes(four))
+
+  # a design without coverage leaves the pool
+  gap <- one
+  gap$coverage[[1L]] <- NA
+  out <- coverage_verdict("text", gap, "condition", criteria, "none")
   expect_identical(out$value, 0.85)
-  rows$coverage[[2L]] <- 0.89
-  expect_true(coverage_verdict("text", rows, "condition", criteria, "none")$pass)
   empty <- coverage_verdict("text", rows[0, ], "condition", criteria, "none")
   expect_true(is.na(empty$pass))
   expect_identical(empty$note, "none")
+})
+
+test_that("the coverage criterion is stated as the pooled test", {
+  criteria <- default_validation_criteria()
+  text <- stage_criterion_text("recovery", NULL, criteria)
+  expect_identical(
+    text,
+    paste(
+      "95% interval coverage of every population parameter, pooled across",
+      "designs, not below 0.95 by a one-sided binomial test at 0.05 divided",
+      "by the number of parameters"
+    )
+  )
+  expect_match(
+    stage_criterion_text("individual_differences", NULL, criteria),
+    "every generating correlation, pooled across designs"
+  )
 })
 
 # compare_validations ------------------------------------------------------

@@ -31,14 +31,15 @@ ECDF band, and no fit with a high Rhat, a low rank ESS or missing
 diagnostics.
 \item computation: the share of converged cells at least
 \code{convergence_rate_min}.
-\item recovery: the coverage of every population parameter in every design
-at least \code{coverage_level} minus one Monte Carlo standard error at
-nominal, \code{sqrt(level * (1 - level) / n_replications)}.
+\item recovery: the coverage of every population parameter, pooled over the
+designs, not below \code{coverage_level} by a one-sided binomial test at
+\code{coverage_alpha} divided by the number of parameters. The coverage of
+each design is reported, not judged.
 \item identifiability: at the largest design, every population parameter's
 mean contraction above \code{contraction_min} and its mean z-score within
 \code{z_mean_max} of 0.
 \item individual differences: the coverage of every generating correlation
-held to the recovery bar.
+held to the same pooled test, divided by the number of correlations.
 \item agreement: reported, not judged.
 }
 

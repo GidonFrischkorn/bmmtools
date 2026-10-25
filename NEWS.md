@@ -32,6 +32,19 @@
   plan version beside it. `compare_validations()` flags the numbers that
   moved between two runs by more than their Monte Carlo error (#21, #9).
 
+* `render_card()` renders the validation card of a `run_validation()`
+  result to one self-contained HTML file: the headline, the run record
+  and the plan, each stage's verdict beside its criterion, a section per
+  stage, and the numbers that moved since an earlier run. Every number
+  on the card is read off the stored result; the template types none.
+  It needs the quarto package and the Quarto CLI. The recovery and
+  individual-differences criteria pool each parameter's intervals over
+  the designs and fail it by a one-sided binomial test at
+  `coverage_alpha` (0.05) over the number of parameters; held design by
+  design, a calibrated model failed them most of the time at 10
+  replications. The `ezdm` entry checks prior predictive mean response
+  times against a plausibility range of 0.15 to 5 s (#21).
+
 * bmmtools works with bmm 1.4.1, which offers `criterion` and `bias` of
   `sdt_yn()` and `sdt_rating()` as alternative parameterizations, of
   which a fit estimates one. It read both as free parameters, so

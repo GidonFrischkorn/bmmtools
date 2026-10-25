@@ -67,6 +67,21 @@ test_that("the ezdm entry carries Milestone 31's generating values", {
   expect_null(entry$sbc$prior)
 })
 
+test_that("the ezdm prior check judges mean RT against a plausible range", {
+  # bmm 1.4.1's posterior_predict() gives mean RT only, and prior_check()
+  # knows no range for ezdm, so the entry gives one and says why
+  entry <- validation_defaults("ezdm")
+  expect_identical(entry$prior_check$range, c(0.15, 5))
+  expect_match(entry$prior_check$range_reason, "plausib")
+  expect_match(entry$prior_check$range_reason, "not a bound")
+  expect_null(validation_defaults("mixture2p")$prior_check$range_reason)
+  plan <- validation_plan("ezdm", seed = 1)
+  expect_identical(plan$prior_check$range, c(0.15, 5))
+  expect_identical(
+    plan$prior_check$range_reason, entry$prior_check$range_reason
+  )
+})
+
 test_that("validation_defaults takes a name or a model and is NULL without", {
   expect_identical(
     validation_defaults(plan_model()),

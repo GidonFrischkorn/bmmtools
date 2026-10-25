@@ -38,7 +38,8 @@
 #'   `sampler`, `generator`, `cores_per_fit` and `thin_ranks` (see
 #'   [sbc()]). Named entries replace the entry's, the rest are kept.
 #' @param prior_check A named list for the prior predictive check:
-#'   `n_subjects`, `n_trials`, `n_draws`, `range`, `summary` and `sampler`
+#'   `n_subjects`, `n_trials`, `n_draws`, `range`, `range_reason` (why the
+#'   range is what it is, printed on the card), `summary` and `sampler`
 #'   (see [prior_check()]). Merged as `sbc` is.
 #' @param reference `NULL`, or a reference implementation's estimates for
 #'   the agreement stage: a data frame with `term` and `estimate` (and
@@ -86,11 +87,13 @@
 #' uses them. `sbc_ecdf_prob` (0.95): the simultaneous band of SBC's
 #' ECDF-difference check no ranked variable may leave.
 #' `convergence_rate_min` (0.95): the share of recovery cells that pass
-#' [check_convergence()]. `coverage_level` (0.95): the nominal coverage
-#' every population parameter must reach within one Monte Carlo standard
-#' error, `sqrt(0.95 * 0.05 / n)`, in every design; the generating
-#' correlations are held to the same bar. `contraction_min` (0) and
-#' `z_mean_max` (2): the identifiability bars at the largest design.
+#' [check_convergence()]. `coverage_level` (0.95) and `coverage_alpha`
+#' (0.05): the coverage of every population parameter, its intervals
+#' pooled over the designs, must not fall below `coverage_level` by a
+#' one-sided binomial test at `coverage_alpha` divided by the number of
+#' parameters; the generating correlations are held to the same test.
+#' `contraction_min` (0) and `z_mean_max` (2): the identifiability bars at
+#' the largest design.
 #' `tolerance`: by metric, how far a number without a Monte Carlo
 #' standard error may move between two runs before
 #' [compare_validations()] flags it.

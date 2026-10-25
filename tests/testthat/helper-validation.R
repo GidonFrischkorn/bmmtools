@@ -169,3 +169,11 @@ mock_calls_by_kind <- function(calls) {
     if (identical(entry$sample_prior, "only")) "prior" else "fit"
   }, character(1))
 }
+
+#' Skip a test that runs a validation through the mock
+#' @noRd
+skip_validation_run <- function() {
+  skip_if_not_installed("bmm")
+  skip_if_not_installed("SBC")
+  skip_on_cran() # every run fits through SBC: about 0.5 s each, 40 runs
+}
