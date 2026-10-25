@@ -928,8 +928,9 @@ simulate_from_draw <- function(row, row_number, model, layout, population,
 #' A count model always gets a design, so that every simulated row holds
 #' the trials its row of `data` holds. Before 0.3.0 it got none, and was
 #' simulated with as many trials per row as `data` has rows per subject
-#' (#26). `m3` with numbers of options has no trial-count column: its
-#' design's `n_trials` is each row's total over `resp_cats`. The counts are
+#' (#26). `m3` with numbers of options and `sdt_ranking` have no
+#' trial-count column: their design's `n_trials` is each row's total over
+#' the response columns. The counts are
 #' checked here, before the prior fit, so that a design error is never
 #' reported as a property of a prior draw.
 #'
@@ -943,11 +944,9 @@ sbc_trial_design <- function(data, model, layout,
     return(NULL)
   }
   count <- length(count_design_columns(model)) > 0L
-  m3_counts <- identical(adapter_name(model), "m3") &&
-    !is.character(model$other_vars$num_options)
-  if (m3_counts) {
+  if (!is.null(count_total_columns(model))) {
     data <- as.data.frame(data)
-    data$n_trials <- sbc_m3_totals(data, model, call = call)
+    data$n_trials <- sbc_row_totals(data, model, call = call)
   }
   missing <- setdiff(columns, names(data))
   if (length(missing) > 0L) {
@@ -999,18 +998,21 @@ sbc_stimulus_numbers <- function(design, model) {
   design
 }
 
-#' The trials in each row of an `m3` `data`: its total over `resp_cats`
+#' The trials in each row of `data`: its total over the response columns
+#'
+#' For `m3` with numbers of options and for `sdt_ranking`
+#' ([count_total_columns()]); `NA` counts as 0, as bmm reads it.
 #' @noRd
-sbc_m3_totals <- function(data, model, call = rlang::caller_env()) {
-  cats <- model$resp_vars$resp_cats
+sbc_row_totals <- function(data, model, call = rlang::caller_env()) {
+  cats <- count_total_columns(model)
   missing <- setdiff(cats, names(data))
   if (length(missing) > 0L) {
     cli::cli_abort(
       c(
         "{cli::qty(missing)}{.arg data} lacks the column{?s} \\
          {.val {missing}}.",
-        i = "The default generator for {.cls m3} reads each row's number \\
-             of trials as its total over {.val {cats}}."
+        i = "The default generator for {.cls {adapter_name(model)}} reads \\
+             each row's number of trials as its total over {.val {cats}}."
       ),
       call = call
     )
@@ -1026,7 +1028,7 @@ sbc_m3_totals <- function(data, model, call = rlang::caller_env()) {
       call = call
     )
   }
-  unname(rowSums(data[cats]))
+  unname(rowSums(data[cats], na.rm = TRUE))
 }
 
 #' The SBC generator: one prior draw, one simulated data set
@@ -1566,12 +1568,14 @@ check_sbc_args <- function(prior, seed, fitter, cache_mode, cache_location,
 #'   [simulate_recovery()]) takes it from `data`: the columns that
 #'   generator reads, per subject and in `data`'s order, so every
 #'   simulated data set has the trials of `data`. So does a count model
-#'   (`sdt_yn`, `sdt_mafc`, `ezdm`, `m3` with numbers of options): each
-#'   simulated row holds the trials its row of `data` holds, read from the
-#'   model's `n_trials` column, or for `m3` from the row's total over
-#'   `resp_cats`, and rows may hold different numbers. A count that
-#'   cannot be simulated (not a whole number, or below 3 for `ezdm`) is an
-#'   error before the prior is fitted. With a `generator`,
+#'   (`sdt_yn`, `sdt_mafc`, `sdt_ranking`, `ezdm`, `m3` with numbers of
+#'   options): each simulated row holds the trials its row of `data`
+#'   holds, read from the model's `n_trials` column, or for `m3` and
+#'   `sdt_ranking` from the row's total over the response columns, and
+#'   rows may hold different numbers; `sdt_ranking` whose `m` names a
+#'   column also keeps each row's set size. A count that cannot be
+#'   simulated (not a whole number, or below 3 for `ezdm`) is an error
+#'   before the prior is fitted. With a `generator`,
 #'   `data` is handed to it as it is, columns and all.
 #' @param prior A `brmsprior`, or `NULL` for bmm's defaults. This is the
 #'   prior that is calibrated, so `NULL` calibrates bmm's own. A list is

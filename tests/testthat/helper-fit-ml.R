@@ -238,12 +238,46 @@ ml_density_cases <- function() {
           s = pars$s, log = TRUE
         ))
       }
+    ),
+    list(
+      label = "ezdm_4par",
+      model = bmm::ezdm(
+        mean_rt = c("mrt_u", "mrt_l"), var_rt = c("vrt_u", "vrt_l"),
+        n_upper = "n_upper", n_trials = "n_trials", version = "4par"
+      ),
+      link = c(
+        drift = log(1.5), bound = log(1.2), ndt = log(0.3),
+        zr = stats::qlogis(0.55)
+      ),
+      raw = function(pars, data, model) {
+        exp(bmm::dezdm(
+          as.matrix(data[c("mrt_u", "mrt_l")]),
+          as.matrix(data[c("vrt_u", "vrt_l")]),
+          data$n_upper, data$n_trials,
+          drift = pars$drift, bound = pars$bound, ndt = pars$ndt,
+          zr = pars$zr, s = pars$s, version = "4par", log = TRUE
+        ))
+      }
     )
   )
   if (!exists("sdt_yn", envir = asNamespace("bmm"), inherits = FALSE)) {
     return(cases)
   }
   c(cases, list(
+    list(
+      label = "sdt_ranking",
+      model = bmm::sdt_ranking(
+        response = paste0("k", 1:4), m = 4, dist = "normal"
+      ),
+      link = c(d = 1, sdratio = log(1.5)),
+      raw = function(pars, data, model) {
+        exp(bmm::dsdt_ranking(
+          as.matrix(as.data.frame(data)[paste0("k", 1:4)]),
+          m = 4, d = pars$d, sdratio = exp(pars$sdratio), dist = "normal",
+          log = TRUE
+        ))
+      }
+    ),
     list(
       label = "sdt_yn",
       model = bmm::sdt_yn(response = "hits", stimulus = "stim", n_trials = "n"),

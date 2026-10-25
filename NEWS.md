@@ -1,5 +1,19 @@
 # bmmtools (development version)
 
+* `simulate_recovery()`, `recovery_grid()`, `sbc()`, `prior_check()` and
+  `fit_ml(method = "optim")` now work without a `generator` for two more
+  bmm models (#8). The four-parameter `ezdm` simulates its response-time
+  summaries per boundary from `zr`; a boundary reached fewer than twice
+  leaves them `NA`, and bmm (from 1.4.1) keeps such rows. `sdt_ranking`
+  takes its set size `m` from the model, or per row from a column of
+  `trial_design` when `m` names one, and each row's number of trials
+  from `n_trials` there. Its `sdratio` is the log of the SD ratio, so
+  the adapter hands bmm's generator the ratio itself. `sdt_rating` and
+  `sdt_cdp` still need a `generator` of your own: bmm does not yet
+  export the map from their parameters to thresholds. A model version
+  bmmtools does not know now gets no adapter rather than another
+  version's, so a later version of `ezdm` asks for a `generator`.
+
 * A new article, "Recovering the EZ diffusion model on the standard
   grid", reports a recovery study of the three-parameter `ezdm` under
   bmm 1.4.1: 20 or 50 subjects, 30, 100 or 300 trials, 10 replications

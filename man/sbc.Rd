@@ -51,12 +51,14 @@ generator reads a trial design (see \code{trial_design} in
 \code{\link[=simulate_recovery]{simulate_recovery()}}) takes it from \code{data}: the columns that
 generator reads, per subject and in \code{data}'s order, so every
 simulated data set has the trials of \code{data}. So does a count model
-(\code{sdt_yn}, \code{sdt_mafc}, \code{ezdm}, \code{m3} with numbers of options): each
-simulated row holds the trials its row of \code{data} holds, read from the
-model's \code{n_trials} column, or for \code{m3} from the row's total over
-\code{resp_cats}, and rows may hold different numbers. A count that
-cannot be simulated (not a whole number, or below 3 for \code{ezdm}) is an
-error before the prior is fitted. With a \code{generator},
+(\code{sdt_yn}, \code{sdt_mafc}, \code{sdt_ranking}, \code{ezdm}, \code{m3} with numbers of
+options): each simulated row holds the trials its row of \code{data}
+holds, read from the model's \code{n_trials} column, or for \code{m3} and
+\code{sdt_ranking} from the row's total over the response columns, and
+rows may hold different numbers; \code{sdt_ranking} whose \code{m} names a
+column also keeps each row's set size. A count that cannot be
+simulated (not a whole number, or below 3 for \code{ezdm}) is an error
+before the prior is fitted. With a \code{generator},
 \code{data} is handed to it as it is, columns and all.}
 
 \item{prior}{A \code{brmsprior}, or \code{NULL} for bmm's defaults. This is the

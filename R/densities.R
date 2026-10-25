@@ -9,8 +9,9 @@
 # These exist only for `fit_ml(method = "optim")`. Decision 34 keeps the
 # Stan route free of any per-model code --- it optimises bmm's own generated
 # likelihood --- but the optim route has to know the likelihood in R, so it
-# is capped at the seven models of density_classes() for decision 13's own
-# reason: a general package cannot re-implement every model it validates.
+# is capped at the models of density_classes() (seven in 0.2.0) for
+# decision 13's own reason: a general package cannot re-implement every
+# model it validates.
 #
 # Two things measured 2026-09-17 before this file was written
 # (local/dev/sim/ml-optim-probe.R):
@@ -27,21 +28,24 @@
 
 #' The models `fit_ml(method = "optim")` has a density for
 #'
-#' The seven of 0.2.0. `mixture3p` and `imm` have generators but no
+#' The seven of 0.2.0, `sdt_ranking` and the four-parameter `ezdm`
+#' (Milestone 13). `mixture3p`
+#' and `imm` have generators but no
 #' density here: `dmixture3p()` and `dimm()` take one location vector per
 #' call, so a density would be one call per trial inside every step of the
 #' optimiser; their `"stan"` route optimises bmm's own likelihood.
 #'
 #' @noRd
 density_classes <- function() {
-  c("sdt_yn", "sdt_mafc", "ezdm", "ddm", "cswald", "mixture2p", "sdm")
+  c(
+    "sdt_yn", "sdt_mafc", "sdt_ranking", "ezdm", "ezdm_4par", "ddm",
+    "cswald", "mixture2p", "sdm"
+  )
 }
 
 #' Look a density adapter up by the model's class
 #'
-#' `NULL` when the model has none, including the four-parameter EZ variant,
-#' whose column layout the adapter does not know --- the same cap
-#' [generator_for()] applies.
+#' `NULL` when the model has none, as for [generator_for()].
 #'
 #' @param model A `bmmodel`.
 #'
@@ -49,13 +53,12 @@ density_classes <- function() {
 #'   densities, or `NULL`.
 #' @noRd
 density_for <- function(model) {
-  if (inherits(model, "ezdm_4par")) {
-    return(NULL)
-  }
   switch(adapter_name(model),
     sdt_yn = density_sdt_yn,
     sdt_mafc = density_sdt_mafc,
+    sdt_ranking = density_sdt_ranking,
     ezdm = density_ezdm,
+    ezdm_4par = density_ezdm_4par,
     ddm = density_ddm,
     cswald = density_cswald,
     mixture2p = density_mixture2p,
@@ -88,6 +91,25 @@ density_sdt_mafc <- function(pars, data, model) {
   )
 }
 
+#' Ranking: one row of rank counts
+#'
+#' `dsdt_ranking()` refuses `NA` counts, while bmm's data check reads `NA`
+#' beyond a row's set size as 0, so they are read as 0 here too. `m` comes
+#' from its column when the model names one (D101); `sdratio` is passed as
+#' the ratio, as to the generator ([ranking_sdratio()]).
+#' @noRd
+density_sdt_ranking <- function(pars, data, model) {
+  vars <- model$other_vars
+  counts <- as.matrix(as.data.frame(data)[unname(model$resp_vars$response)])
+  counts[is.na(counts)] <- 0
+  m <- if (is.character(vars$m)) data[[vars$m]] else vars$m
+  bmm::dsdt_ranking(
+    counts,
+    m = m, d = pars$d, sdratio = ranking_sdratio(pars), dist = vars$dist,
+    log = TRUE
+  )
+}
+
 #' EZ diffusion: one row of summary statistics
 #' @noRd
 density_ezdm <- function(pars, data, model) {
@@ -98,6 +120,24 @@ density_ezdm <- function(pars, data, model) {
     data[[model$other_vars$n_trials]],
     drift = pars$drift, bound = pars$bound, ndt = pars$ndt, s = pars$s,
     log = TRUE
+  )
+}
+
+#' Four-parameter EZ diffusion: one row of per-boundary summaries
+#'
+#' `dezdm()` takes the summaries as two-column matrices, upper first, and
+#' leaves out the RT terms of a boundary whose summaries are `NA` (bmm
+#' #430, measured 2026-10-25 on CRAN bmm 1.4.1).
+#' @noRd
+density_ezdm_4par <- function(pars, data, model) {
+  columns <- ezdm_4par_columns(model)
+  bmm::dezdm(
+    as.matrix(data[unname(columns[c("mean_rt_upper", "mean_rt_lower")])]),
+    as.matrix(data[unname(columns[c("var_rt_upper", "var_rt_lower")])]),
+    data[[columns[["n_upper"]]]],
+    data[[model$other_vars$n_trials]],
+    drift = pars$drift, bound = pars$bound, ndt = pars$ndt, zr = pars$zr,
+    s = pars$s, version = "4par", log = TRUE
   )
 }
 
