@@ -44,19 +44,34 @@ bmm_fun <- function(name) {
 }
 
 #' The class name an adapter is registered under
+#'
+#' A model with versions of different parameters gets one adapter per
+#' version, registered under the version's own class (D100), so that a
+#' version bmm adds later gets no adapter rather than a sibling's.
 #' @noRd
 adapter_classes <- function() {
   c(
-    "sdt_yn", "sdt_mafc", "ezdm", "ddm", "cswald", "mixture2p", "sdm",
-    "mixture3p", "imm", "m3"
+    "sdt_yn", "sdt_mafc", "sdt_ranking", "ezdm", "ezdm_4par", "ddm",
+    "cswald", "mixture2p", "sdm", "mixture3p", "imm", "m3"
   )
+}
+
+#' The class a model must carry for an adapter to take it
+#'
+#' The adapter's own name, except the three-parameter `ezdm`'s, which keeps
+#' its 0.2.0 name (it is part of every stored `"adapter:ezdm"` record and
+#' of the `validation_defaults()` entry) and takes only the version class
+#' `ezdm_3par`.
+#' @noRd
+adapter_class <- function(name) {
+  if (identical(name, "ezdm")) "ezdm_3par" else name
 }
 
 #' @noRd
 adapter_name <- function(model) {
-  for (cls in adapter_classes()) {
-    if (inherits(model, cls)) {
-      return(cls)
+  for (name in adapter_classes()) {
+    if (inherits(model, adapter_class(name))) {
+      return(name)
     }
   }
   NA_character_
@@ -64,18 +79,16 @@ adapter_name <- function(model) {
 
 #' Look an adapter up by the model's class
 #'
-#' `NULL` when the model has none, including the four-parameter EZ
-#' variant, whose column layout the adapter does not know.
+#' `NULL` when the model has none.
 #'
 #' @noRd
 generator_for <- function(model) {
-  if (inherits(model, "ezdm_4par")) {
-    return(NULL)
-  }
   switch(adapter_name(model),
     sdt_yn = generate_sdt_yn,
     sdt_mafc = generate_sdt_mafc,
+    sdt_ranking = generate_sdt_ranking,
     ezdm = generate_ezdm,
+    ezdm_4par = generate_ezdm_4par,
     ddm = generate_ddm,
     cswald = generate_cswald,
     mixture2p = generate_mixture2p,
@@ -114,7 +127,9 @@ adapter_reads_formula <- function(model) {
 #' column (a number is every trial's set size and no column), the
 #' non-target locations, and for `imm` `full` and `bsc` the non-target
 #' distances (`NULL` on `abc`). `m3` reads its numbers of options when the
-#' model names them as columns, in the order of `resp_cats`.
+#' model names them as columns, in the order of `resp_cats`, and
+#' `sdt_ranking` its set size `m` when the model names it as a column
+#' (D101).
 #'
 #' @param model A `bmmodel`.
 #' @return A character vector, empty when the adapter reads no design.
@@ -124,6 +139,10 @@ trial_design_columns <- function(model) {
   if (identical(key, "m3")) {
     options <- model$other_vars$num_options
     return(if (is.character(options)) unname(options) else character())
+  }
+  if (identical(key, "sdt_ranking")) {
+    m <- model$other_vars$m
+    return(if (is.character(m)) unname(m) else character())
   }
   if (!key %in% c("mixture3p", "imm")) {
     return(character())
@@ -154,9 +173,9 @@ trial_design_columns <- function(model) {
 #' [trial_design_columns()].
 #'
 #' `sdt_yn` reads the stimulus class with the count, so that a row keeps
-#' its class. `m3` with numbers of options has no trial-count column of its
-#' own, so its design names one `n_trials`; `m3` with option columns is a
-#' per-trial model and reads none.
+#' its class. `m3` with numbers of options and `sdt_ranking` have no
+#' trial-count column of their own, so their design names one `n_trials`;
+#' `m3` with option columns is a per-trial model and reads none.
 #'
 #' @param model A `bmmodel`.
 #' @return A character vector, the count column last; empty for every
@@ -171,10 +190,31 @@ count_design_columns <- function(model) {
   switch(key,
     sdt_yn = unname(c(vars$stimulus, vars$n_trials)),
     sdt_mafc = ,
-    ezdm = unname(vars$n_trials),
+    ezdm = ,
+    ezdm_4par = unname(vars$n_trials),
     m3 = if (is.character(vars$num_options)) character() else "n_trials",
+    sdt_ranking = "n_trials",
     character()
   )
+}
+
+#' The response columns whose total is a row's number of trials
+#'
+#' bmm takes the trials of a row of `m3` with numbers of options, or of
+#' `sdt_ranking`, to be its total over the response columns
+#' (`check_data.m3()`, `check_data.sdt_ranking()`), so a design's
+#' `n_trials` is that total. `NULL` for every other model.
+#'
+#' @noRd
+count_total_columns <- function(model) {
+  key <- adapter_name(model)
+  if (identical(key, "sdt_ranking")) {
+    return(unname(model$resp_vars$response))
+  }
+  if (identical(key, "m3") && !is.character(model$other_vars$num_options)) {
+    return(model$resp_vars$resp_cats)
+  }
+  NULL
 }
 
 #' Check a count design's values, naming the rows that are wrong
@@ -186,8 +226,9 @@ count_design_columns <- function(model) {
 #' error (both measured 2026-10-05 on the installed 1.3.2.9000).
 #'
 #' @param in_data `TRUE` when the design was read from [sbc()]'s `data`,
-#'   whose rows it keeps: the messages then name `data` and, for `m3`, the
-#'   row total over `resp_cats`, which is what the design's `n_trials` is.
+#'   whose rows it keeps: the messages then name `data` and, for `m3` and
+#'   `sdt_ranking`, the row total over the response columns, which is what
+#'   the design's `n_trials` is.
 #' @noRd
 check_count_design <- function(design, model, in_data = FALSE,
                                call = rlang::caller_env()) {
@@ -200,9 +241,9 @@ check_count_design <- function(design, model, in_data = FALSE,
     if (!in_data) {
       return(cli::format_inline("{.arg trial_design}'s column {.val {column}}"))
     }
-    if (identical(adapter_name(model), "m3")) {
+    cats <- count_total_columns(model)
+    if (identical(column, "n_trials") && !is.null(cats)) {
       # one line: format_inline() keeps a backslash-newline as it is
-      cats <- model$resp_vars$resp_cats
       return(cli::format_inline(
         "The total of each row of {.arg data} over {.val {cats}}"
       ))
@@ -212,7 +253,7 @@ check_count_design <- function(design, model, in_data = FALSE,
   # nolint end
   count <- columns[[length(columns)]]
   n <- design[[count]]
-  minimum <- if (identical(adapter_name(model), "ezdm")) 3 else 1
+  minimum <- if (adapter_name(model) %in% c("ezdm", "ezdm_4par")) 3 else 1
   ok <- if (is.numeric(n)) {
     is.finite(n) & n == round(n) & n >= minimum
   } else {
@@ -230,6 +271,7 @@ check_count_design <- function(design, model, in_data = FALSE,
       call = call
     )
   }
+  check_ranking_design(design, model, where, call = call)
   if (length(columns) == 2L) {
     stimulus <- design[[columns[[1L]]]]
     # a factor of "0" and "1" would pass `%in%`, which compares as text,
@@ -250,6 +292,47 @@ check_count_design <- function(design, model, in_data = FALSE,
         call = call
       )
     }
+  }
+  invisible(design)
+}
+
+#' Check the set sizes a ranking design gives, naming the rows that are wrong
+#'
+#' Only when the model's `m` is a column (D101) and the design has it: a
+#' number, as bmm's data check requires ("Set-size column ... must be
+#' numeric"), and a whole one from 2, the smallest ranking, to the number of
+#' rank columns. A factor or text is refused here rather than by bmm once
+#' the data are drawn.
+#'
+#' @param where The function [check_count_design()] names a column with.
+#' @noRd
+check_ranking_design <- function(design, model, where,
+                                 call = rlang::caller_env()) {
+  if (!identical(adapter_name(model), "sdt_ranking")) {
+    return(invisible(design))
+  }
+  column <- trial_design_columns(model)
+  if (length(column) == 0L || !column %in% names(design)) {
+    return(invisible(design))
+  }
+  m <- design[[column]]
+  largest <- length(model$resp_vars$response)
+  bad <- if (is.numeric(m)) {
+    which(is.na(m) | m != round(m) | m < 2 | m > largest)
+  } else {
+    seq_along(m)
+  }
+  if (length(bad) > 0L) {
+    cli::cli_abort(
+      c(
+        "{where(column)} must hold whole numbers from 2 to {largest}, the \\
+         number of rank columns.",
+        x = "Not so in row{?s} {as.character(bad)}.",
+        i = "{cli::qty(length(bad))}{?It holds/They hold} \\
+             {.val {design[[column]][bad]}}."
+      ),
+      call = call
+    )
   }
   invisible(design)
 }
@@ -330,6 +413,55 @@ generate_sdt_mafc <- function(pars, n_trials, model, trial_design = NULL) {
   )
 }
 
+#' The SD ratio `rsdt_ranking()` and `dsdt_ranking()` take
+#'
+#' The model's `sdratio` (`dist = "normal"`) is the **log** of the ratio of
+#' signal to noise SDs, on an identity link and fixed at 0, while bmm's
+#' generator and density take the ratio itself (`rsdt_ranking()` refuses
+#' one of 0 or below; measured 2026-10-25 on CRAN bmm 1.4.1). Passing the
+#' parameter through would fail at the fixed 0 and, for a free value, draw
+#' data under another ratio than the one the model fits. `gumbel_min` has
+#' no `sdratio`: a ratio of 1.
+#' @noRd
+ranking_sdratio <- function(pars) {
+  exp(pars$sdratio %||% 0)
+}
+
+#' Ranking: one row of rank counts
+#'
+#' Without a design, one row per subject (and task) of `n_trials` trials at
+#' the model's set size; with one, one row per design row, of its
+#' `n_trials` trials and, when the model names `m` as a column, its own set
+#' size (D101). `rsdt_ranking()` returns as many rank columns as the
+#' largest set size it is given, so a design's counts are padded with zeros
+#' up to the model's rank columns, as bmm's data check wants beyond a row's
+#' `m`. A number for `m` needs no padding: bmm's constructor refuses one
+#' that differs from the number of rank columns.
+#' @noRd
+generate_sdt_ranking <- function(pars, n_trials, model, trial_design = NULL) {
+  vars <- model$other_vars
+  response <- unname(model$resp_vars$response)
+  if (is.null(trial_design)) {
+    rows <- 1L
+    sizes <- n_trials
+  } else {
+    rows <- nrow(trial_design)
+    sizes <- trial_design[[count_design_columns(model)]]
+  }
+  m <- if (is.character(vars$m)) {
+    trial_design[[vars$m]]
+  } else {
+    vars$m
+  }
+  counts <- bmm::rsdt_ranking(
+    rows, sizes,
+    m = m, d = pars$d, sdratio = ranking_sdratio(pars), dist = vars$dist
+  )
+  out <- matrix(0, rows, length(response))
+  out[, seq_len(ncol(counts))] <- counts
+  name_columns(as.data.frame(out), as.list(response))
+}
+
 #' EZ diffusion: one row of summary statistics
 #'
 #' With a trial design, one row per design row of its own number of trials.
@@ -363,6 +495,61 @@ generate_ezdm <- function(pars, n_trials, model, trial_design = NULL) {
       model$resp_vars$mean_rt, model$resp_vars$var_rt,
       model$resp_vars$n_upper, model$other_vars$n_trials
     )
+  )
+}
+
+#' The four-parameter EZ diffusion's column names, in `rezdm()`'s order
+#'
+#' `rezdm(version = "4par")` returns the RT summaries per boundary, upper
+#' first; the model names them `mean_rt = c(upper, lower)` and `var_rt =
+#' c(upper, lower)` (`check_data.ezdm()`; measured 2026-10-25 on CRAN bmm
+#' 1.4.1). The constructor accepts one name each and only bmm's data check
+#' objects, so a model like that is refused here, before anything is drawn.
+#' @noRd
+ezdm_4par_columns <- function(model) {
+  vars <- model$resp_vars
+  if (length(vars$mean_rt) != 2L || length(vars$var_rt) != 2L) {
+    cli::cli_abort(c(
+      "The built-in generator for {.cls ezdm_4par} needs two column names \\
+       in each of {.arg mean_rt} and {.arg var_rt}.",
+      i = "The four-parameter version has RT summaries per boundary: \\
+           {.code mean_rt = c(upper, lower)}, \\
+           {.code var_rt = c(upper, lower)}."
+    ))
+  }
+  c(
+    mean_rt_upper = vars$mean_rt[[1L]], mean_rt_lower = vars$mean_rt[[2L]],
+    var_rt_upper = vars$var_rt[[1L]], var_rt_lower = vars$var_rt[[2L]],
+    n_upper = vars$n_upper
+  )
+}
+
+#' Four-parameter EZ diffusion: one row of per-boundary summaries
+#'
+#' As [generate_ezdm()], with `zr` and `version = "4par"` passed on. A
+#' boundary reached fewer than twice has `NA` summaries; bmm 1.4.1 keeps
+#' such a row and warns how many there are (bmm #430), so they are left
+#' as `rezdm()` draws them.
+#' @noRd
+generate_ezdm_4par <- function(pars, n_trials, model, trial_design = NULL) {
+  columns <- ezdm_4par_columns(model)
+  draw <- function(n) {
+    bmm::rezdm(
+      1L, n,
+      drift = pars$drift, bound = pars$bound, ndt = pars$ndt, zr = pars$zr,
+      s = pars$s, version = "4par"
+    )
+  }
+  if (!is.null(trial_design)) {
+    rows <- lapply(trial_design[[count_design_columns(model)]], function(n) {
+      draw(n)[names(columns)]
+    })
+    return(name_columns(do.call(rbind, rows), as.list(columns)))
+  }
+  out <- draw(n_trials)
+  name_columns(
+    out[c(names(columns), "n_trials")],
+    c(as.list(columns), list(model$other_vars$n_trials))
   )
 }
 

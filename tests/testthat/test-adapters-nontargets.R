@@ -119,9 +119,13 @@ test_that("fit_ml's optim route has no density for them", {
   expect_null(density_for(m3p_model()))
   expect_null(density_for(imm_model("full")))
   expect_false(any(c("mixture3p", "imm") %in% density_classes()))
+  # the seven of 0.2.0 and the two Milestone 13 added
   expect_setequal(
     density_classes(),
-    c("sdt_yn", "sdt_mafc", "ezdm", "ddm", "cswald", "mixture2p", "sdm")
+    c(
+      "sdt_yn", "sdt_mafc", "sdt_ranking", "ezdm", "ezdm_4par", "ddm",
+      "cswald", "mixture2p", "sdm"
+    )
   )
 })
 

@@ -269,6 +269,71 @@ test_that("sbc() runs ezdm with the trials of data", {
   }
 })
 
+test_that("sbc() runs ezdm 4par with the trials of data", {
+  skip_if_not_installed("SBC")
+  skip_on_cran() # runs SBC's pipeline, as the other sbc() tests here
+  skip_if_not_installed("bmm")
+  model <- bmm::ezdm(
+    mean_rt = c("mrt_u", "mrt_l"), var_rt = c("vrt_u", "vrt_l"),
+    n_upper = "nu", n_trials = "n", version = "4par"
+  )
+  data <- data.frame(
+    id = c("a", "b"), n = c(100, 40), mrt_u = 0, mrt_l = 0, vrt_u = 0,
+    vrt_l = 0, nu = 0
+  )
+  calls <- run_count_sbc(
+    model, data,
+    count_draws(
+      b_drift_Intercept = 1, b_bound_Intercept = log(1.2),
+      b_ndt_Intercept = log(0.3), b_zr_Intercept = 0.4
+    )
+  )
+  expect_length(calls, 2L)
+  for (call in calls) {
+    expect_identical(call$data$n, data$n)
+    expect_true(all(call$data$nu <= call$data$n))
+    expect_named(call$data, c("id", names(data)[-1L]), ignore.order = TRUE)
+  }
+})
+
+test_that("sbc() takes sdt_ranking's row totals and set sizes from data", {
+  skip_if_not_installed("SBC")
+  skip_on_cran() # runs SBC's pipeline, as the other sbc() tests here
+  skip_if_no_bmm_model("sdt_ranking")
+  ranks <- paste0("k", 1:4)
+  numeric_m <- bmm::sdt_ranking(response = ranks, m = 4)
+  data <- data.frame(
+    id = c("a", "b"), k1 = c(50, 20), k2 = c(30, 5), k3 = 10, k4 = 10
+  )
+  draws <- count_draws(b_d_Intercept = 1)
+  for (call in run_count_sbc(numeric_m, data, draws)) {
+    expect_equal(unname(rowSums(as.data.frame(call$data)[ranks])), c(100, 45))
+  }
+  column_m <- bmm::sdt_ranking(response = ranks, m = "mm")
+  data$mm <- c(4, 2)
+  data$k3[2] <- 0
+  data$k4[2] <- 0
+  for (call in run_count_sbc(column_m, data, draws)) {
+    counts <- as.matrix(as.data.frame(call$data)[ranks])
+    expect_equal(unname(rowSums(counts)), c(100, 25))
+    expect_identical(call$data$mm, c(4, 2))
+    expect_true(all(counts[2, 3:4] == 0))
+  }
+})
+
+test_that("sbc() refuses a set size of data it cannot rank", {
+  skip_if_not_installed("SBC")
+  skip_if_no_bmm_model("sdt_ranking")
+  model <- bmm::sdt_ranking(response = paste0("k", 1:3), m = "mm")
+  mock <- sbc_mock_fitter(draws = count_draws(b_d_Intercept = 1))
+  data <- data.frame(id = c("a", "b"), mm = c(3, 5), k1 = 5, k2 = 3, k3 = 2)
+  expect_error(
+    sbc(model, recovery_formula(model), data, n_sims = 2L, .fitter = mock$fitter),
+    "Column \"mm\" of `data`"
+  )
+  expect_identical(mock$calls$n, 0L)
+})
+
 test_that("sbc() simulates m3 with the row totals of data", {
   skip_if_not_installed("SBC")
   skip_on_cran()

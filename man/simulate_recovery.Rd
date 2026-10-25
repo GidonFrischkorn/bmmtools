@@ -161,12 +161,15 @@ or to the function you pass as \code{generator}, which always takes
 precedence over the built-in one.
 }
 \details{
-Adapters exist for \code{sdt_yn}, \code{sdt_mafc}, \code{ezdm} (three parameters),
-\code{ddm}, \code{cswald} (both versions), \code{mixture2p}, \code{sdm}, \code{mixture3p},
-\code{imm} (\code{full}, \code{bsc} and \code{abc}) and \code{m3} (\code{ss}, \code{cs} and \code{custom}).
-Every other model takes a \code{generator}. The \code{mixture3p} and \code{imm}
-adapters need a \code{trial_design}; see the section "Trial design". The
-custom \code{m3} needs \code{formula}; see the section "The m3 model".
+Adapters exist for \code{sdt_yn}, \code{sdt_mafc}, \code{sdt_ranking}, \code{ezdm} (both
+versions), \code{ddm}, \code{cswald} (both versions), \code{mixture2p}, \code{sdm},
+\code{mixture3p}, \code{imm} (\code{full}, \code{bsc} and \code{abc}) and \code{m3} (\code{ss}, \code{cs} and
+\code{custom}). Every other model takes a \code{generator}, among them bmm's
+\code{sdt_rating} and \code{sdt_cdp}, whose thresholds bmm builds internally
+from \code{criterion} and the spacing parameters. The \code{mixture3p} and \code{imm}
+adapters need a \code{trial_design}, and so does \code{sdt_ranking} when its \code{m}
+names a column; see the section "Trial design". The custom \code{m3} needs
+\code{formula}; see the section "The m3 model".
 The truth for the subjects and for the SDs lists only the parameters
 that vary, because a parameter that does not vary has nothing
 person-level to recover.
@@ -235,13 +238,17 @@ scale, and \code{\link[=recover]{recover()}} scores it there (its \code{scale} c
 names columns, those columns are a trial design and each of its rows
 is one trial: see the section "The m3 model".
 
-\strong{Count models.} One row of \code{sdt_yn}, \code{sdt_mafc}, \code{ezdm} or \code{m3} with
-numbers of options holds many trials. Without a design, every row holds
-\code{n_trials} of them. A design is optional for these models; with one,
-each design row is one row of \code{data} and carries its own number of
-trials, so \code{n_trials} counts the design rows. The trial count is read
-from the model's \code{n_trials} column, and for \code{m3}, which has none, from
-a design column \code{n_trials}. \code{sdt_yn} also reads its stimulus column
+\strong{Count models.} One row of \code{sdt_yn}, \code{sdt_mafc}, \code{sdt_ranking},
+\code{ezdm} or \code{m3} with numbers of options holds many trials. Without a
+design, every row holds \code{n_trials} of them. A design is optional for
+these models; with one, each design row is one row of \code{data} and
+carries its own number of trials, so \code{n_trials} counts the design rows.
+The trial count is read from the model's \code{n_trials} column, and for
+\code{m3} and \code{sdt_ranking}, which have none, from a design column
+\code{n_trials}. \code{sdt_ranking} whose \code{m} names a column reads each row's set
+size from that column, so for it the design is required: a whole number
+from 2 to the number of rank columns, with the ranks beyond it 0.
+\code{sdt_yn} also reads its stimulus column
 (0 or 1), so that 100 signal and 50 noise trials are
 \code{data.frame(stimulus = c(1, 0), n_trials = c(100, 50))} under the
 model's column names. A count must be a whole number of at least 1, and

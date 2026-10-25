@@ -46,9 +46,11 @@ the fit holds is reported and capped, not refused.}
 
 \item{range}{The floor and the ceiling of the response, as two
 numbers. \code{NULL} derives them from the model where they are known:
-\code{0} and the trial count for \code{sdt_yn} and \code{sdt_mafc}, \code{-pi} and \code{pi}
-for \code{mixture2p} and \code{sdm}. Where they are not known the two rates
-are \code{NA} rather than invented.}
+\code{0} and the trial count for \code{sdt_yn} and \code{sdt_mafc}, \code{0} and each
+row's total for \code{m3} and \code{sdt_ranking}, \code{-pi} and \code{pi} for
+\code{mixture2p}, \code{sdm}, \code{mixture3p} and \code{imm}. Where they are not known
+(the response-time models among them) the two rates are \code{NA} rather
+than invented.}
 
 \item{file}{Where to cache the fits. \code{NULL} uses a temporary file, so
 the compile is reused within the session and nothing is left behind;

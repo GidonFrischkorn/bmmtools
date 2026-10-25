@@ -794,8 +794,22 @@ check_trial_design_generator <- function(trial_design, generator, model,
   needed <- if (adapter) trial_design_columns(model) else character()
   optional <- if (adapter) count_design_columns(model) else character()
   if (length(optional) > 0L) {
+    # a count model may also need a design: sdt_ranking with `m` a column
+    if (length(needed) > 0L && is.null(trial_design)) {
+      cli::cli_abort(
+        c(
+          "The built-in generator for {.cls {adapter_name(model)}} needs \\
+           {.arg trial_design}.",
+          i = "It reads the column{?s} {.val {c(needed, optional)}} per row."
+        ),
+        call = call
+      )
+    }
     if (is.data.frame(trial_design)) {
-      check_trial_design_needs(names(trial_design), optional, call = call)
+      check_trial_design_needs(
+        names(trial_design), c(needed, optional),
+        call = call
+      )
       check_count_design(trial_design, model, call = call)
     }
     return(invisible(NULL))
@@ -1204,12 +1218,15 @@ truth_tables <- function(pars, sds, values, cors = NULL, covariates = NULL) {
 #'   element deparsed to text).
 #'
 #' @details
-#' Adapters exist for `sdt_yn`, `sdt_mafc`, `ezdm` (three parameters),
-#' `ddm`, `cswald` (both versions), `mixture2p`, `sdm`, `mixture3p`,
-#' `imm` (`full`, `bsc` and `abc`) and `m3` (`ss`, `cs` and `custom`).
-#' Every other model takes a `generator`. The `mixture3p` and `imm`
-#' adapters need a `trial_design`; see the section "Trial design". The
-#' custom `m3` needs `formula`; see the section "The m3 model".
+#' Adapters exist for `sdt_yn`, `sdt_mafc`, `sdt_ranking`, `ezdm` (both
+#' versions), `ddm`, `cswald` (both versions), `mixture2p`, `sdm`,
+#' `mixture3p`, `imm` (`full`, `bsc` and `abc`) and `m3` (`ss`, `cs` and
+#' `custom`). Every other model takes a `generator`, among them bmm's
+#' `sdt_rating` and `sdt_cdp`, whose thresholds bmm builds internally
+#' from `criterion` and the spacing parameters. The `mixture3p` and `imm`
+#' adapters need a `trial_design`, and so does `sdt_ranking` when its `m`
+#' names a column; see the section "Trial design". The custom `m3` needs
+#' `formula`; see the section "The m3 model".
 #' The truth for the subjects and for the SDs lists only the parameters
 #' that vary, because a parameter that does not vary has nothing
 #' person-level to recover.
@@ -1278,13 +1295,17 @@ truth_tables <- function(pars, sds, values, cors = NULL, covariates = NULL) {
 #' names columns, those columns are a trial design and each of its rows
 #' is one trial: see the section "The m3 model".
 #'
-#' **Count models.** One row of `sdt_yn`, `sdt_mafc`, `ezdm` or `m3` with
-#' numbers of options holds many trials. Without a design, every row holds
-#' `n_trials` of them. A design is optional for these models; with one,
-#' each design row is one row of `data` and carries its own number of
-#' trials, so `n_trials` counts the design rows. The trial count is read
-#' from the model's `n_trials` column, and for `m3`, which has none, from
-#' a design column `n_trials`. `sdt_yn` also reads its stimulus column
+#' **Count models.** One row of `sdt_yn`, `sdt_mafc`, `sdt_ranking`,
+#' `ezdm` or `m3` with numbers of options holds many trials. Without a
+#' design, every row holds `n_trials` of them. A design is optional for
+#' these models; with one, each design row is one row of `data` and
+#' carries its own number of trials, so `n_trials` counts the design rows.
+#' The trial count is read from the model's `n_trials` column, and for
+#' `m3` and `sdt_ranking`, which have none, from a design column
+#' `n_trials`. `sdt_ranking` whose `m` names a column reads each row's set
+#' size from that column, so for it the design is required: a whole number
+#' from 2 to the number of rank columns, with the ranks beyond it 0.
+#' `sdt_yn` also reads its stimulus column
 #' (0 or 1), so that 100 signal and 50 noise trials are
 #' `data.frame(stimulus = c(1, 0), n_trials = c(100, 50))` under the
 #' model's column names. A count must be a whole number of at least 1, and

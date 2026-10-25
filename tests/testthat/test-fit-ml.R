@@ -463,18 +463,25 @@ test_that("print names the Wald interval and says there are no priors", {
 
 # the density adapters -------------------------------------------------
 
-test_that("density_for() knows seven models and nothing else", {
+test_that("density_for() knows its models and nothing else", {
   skip_if_not_installed("bmm")
   skip_if_no_bmm_model("sdt_yn", density = TRUE)
   skip_if_no_bmm_model("sdt_mafc", density = TRUE)
-  # the generator table grew past it in 21.2 (mixture3p, imm)
+  # the generator table grew past it in 21.2 (mixture3p, imm); 13.1 added
+  # the four-parameter ezdm, 13.2 sdt_ranking
   expect_equal(density_classes(), c(
-    "sdt_yn", "sdt_mafc", "ezdm", "ddm", "cswald", "mixture2p", "sdm"
+    "sdt_yn", "sdt_mafc", "sdt_ranking", "ezdm", "ezdm_4par", "ddm",
+    "cswald", "mixture2p", "sdm"
   ))
   known <- list(
     bmm::sdt_yn(response = "hits", stimulus = "stim", n_trials = "n"),
     bmm::sdt_mafc(response = "k", n_trials = "n", m = 4),
+    bmm::sdt_ranking(response = paste0("k", 1:3), m = 3),
     bmm::ezdm(mean_rt = "m", var_rt = "v", n_upper = "u", n_trials = "n"),
+    bmm::ezdm(
+      mean_rt = c("mu", "ml"), var_rt = c("vu", "vl"), n_upper = "u",
+      n_trials = "n", version = "4par"
+    ),
     bmm::ddm(rt = "rt", response = "resp"),
     bmm::cswald(rt = "rt", response = "resp"),
     bmm::cswald(rt = "rt", response = "resp", version = "crisk"),

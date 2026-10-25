@@ -84,8 +84,8 @@ yrep_list <- function(yrep, model, call = rlang::caller_env()) {
   }
   if (is.array(yrep) && length(dim(yrep)) == 3L) {
     k <- dim(yrep)[[3L]]
-    # a multinomial model (m3) has one slice per category
-    cats <- model$resp_vars$resp_cats
+    # a multinomial model (m3, sdt_ranking) has one slice per category
+    cats <- model$resp_vars$resp_cats %||% count_total_columns(model)
     names_k <- dimnames(yrep)[[3L]] %||%
       (if (length(cats) == k) cats) %||%
       paste0("response_", seq_len(k))
@@ -124,7 +124,7 @@ response_range <- function(model, data, call = rlang::caller_env()) {
   # adapter_classes() in 0.2.0 and has to be named here: without it the
   # count branch below would run, find no `n_trials` column and report a
   # missing column rather than an absent range.
-  if (is.na(key) || key %in% c("ddm", "ezdm", "cswald")) {
+  if (is.na(key) || key %in% c("ddm", "ezdm", "ezdm_4par", "cswald")) {
     return(none(
       "No response range is known for a model of class {.cls {class(model)}}."
     ))
@@ -132,10 +132,11 @@ response_range <- function(model, data, call = rlang::caller_env()) {
   if (key %in% c("mixture2p", "sdm", "mixture3p", "imm")) {
     return(list(floor = -pi, ceiling = pi))
   }
-  # m3: a count per category out of the row's trials, which bmm takes to
-  # be the row's total, reading NA as 0 (check_data.m3())
-  if (identical(key, "m3")) {
-    cats <- model$resp_vars$resp_cats
+  # m3 and sdt_ranking: a count per category out of the row's trials, which
+  # bmm takes to be the row's total, reading NA as 0 (check_data.m3(),
+  # check_data.sdt_ranking())
+  if (key %in% c("m3", "sdt_ranking")) {
+    cats <- unname(model$resp_vars$resp_cats %||% model$resp_vars$response)
     missing <- setdiff(cats, names(data))
     if (length(missing) > 0L) {
       return(none(
@@ -403,9 +404,11 @@ prior_fit <- function(set, prior, formula, data, model, base, refit, seed,
 #'   the fit holds is reported and capped, not refused.
 #' @param range The floor and the ceiling of the response, as two
 #'   numbers. `NULL` derives them from the model where they are known:
-#'   `0` and the trial count for `sdt_yn` and `sdt_mafc`, `-pi` and `pi`
-#'   for `mixture2p` and `sdm`. Where they are not known the two rates
-#'   are `NA` rather than invented.
+#'   `0` and the trial count for `sdt_yn` and `sdt_mafc`, `0` and each
+#'   row's total for `m3` and `sdt_ranking`, `-pi` and `pi` for
+#'   `mixture2p`, `sdm`, `mixture3p` and `imm`. Where they are not known
+#'   (the response-time models among them) the two rates are `NA` rather
+#'   than invented.
 #' @param file Where to cache the fits. `NULL` uses a temporary file, so
 #'   the compile is reused within the session and nothing is left behind;
 #'   a path caches durably and each set gets `<file>-<set>`.

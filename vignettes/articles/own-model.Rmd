@@ -32,10 +32,15 @@ library(bmmtools)
 res <- readRDS(from_root("vignettes/articles/assets/own-model.rds"))
 ```
 
-bmmtools ships generator adapters for ten bmm models: `sdt_yn`,
-`sdt_mafc`, the three-parameter `ezdm`, `ddm`, `cswald` (both the
-`simple` and the `crisk` version), `mixture2p`, `sdm`, `mixture3p`,
-`imm` (all three versions) and `m3` (`ss`, `cs` and `custom`).
+bmmtools ships generator adapters for eleven bmm models: `sdt_yn`,
+`sdt_mafc`, `sdt_ranking`, `ezdm` (both versions), `ddm`, `cswald`
+(both the `simple` and the `crisk` version), `mixture2p`, `sdm`,
+`mixture3p`, `imm` (all three versions) and `m3` (`ss`, `cs` and
+`custom`). Two bmm models still need a generator of your own:
+`sdt_rating` and `sdt_cdp`. bmm builds their thresholds from
+`criterion` and the spacing parameters inside the package, and
+bmmtools will not keep a second copy of that map
+([#8](https://github.com/GidonFrischkorn/bmmtools/issues/8)).
 A model you are developing, for example one started with
 `bmm::use_model_template()`, has none, and `simulate_recovery()` stops
 with an error asking for `generator`. This article shows how to write

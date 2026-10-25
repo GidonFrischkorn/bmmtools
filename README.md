@@ -186,13 +186,13 @@ plausible parameter values and run the grid for you.
 bmmtools reads more of a fitted model than bmm’s exported API promises.
 The scorers take `$links`, `$fixed_parameters`,
 `$alternative_parameters`, `$resp_vars` and `$other_vars` directly off
-the `bmmodel` object, and ten generator adapters translate a model’s own
-parameters into the arguments of its `r*()` function — `thetat` on the
-logit scale becomes `p_mem` for `rmixture2p()`, for example. None of
-that is part of bmm’s documented contract, so a bmm rename can break an
-adapter without a deprecation warning on either side: when the rebuilt
-circular mixture models ship, `mu1` becomes `mu`, and the adapter that
-reads `mu1` has to follow. [Issue
+the `bmmodel` object, and generator adapters for eleven models translate
+a model’s own parameters into the arguments of its `r*()` function —
+`thetat` on the logit scale becomes `p_mem` for `rmixture2p()`, for
+example. None of that is part of bmm’s documented contract, so a bmm
+rename can break an adapter without a deprecation warning on either
+side: when the rebuilt circular mixture models ship, `mu1` becomes `mu`,
+and the adapter that reads `mu1` has to follow. [Issue
 \#10](https://github.com/GidonFrischkorn/bmmtools/issues/10) tracks what
 bmmtools reads and what it has asked bmm for in return.
 
