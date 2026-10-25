@@ -16,7 +16,11 @@ test_that("recovery_mixture2p satisfies the recovery contract", {
 test_that("summary() of recovery_mixture2p groups by condition", {
   s <- summary(recovery_mixture2p)
   expect_s3_class(s, "bmmtools_recovery_summary")
-  expect_identical(names(s), c("condition", recovery_summary_columns()))
+  # a grid summary carries the grid's columns after condition (D98)
+  expect_identical(
+    names(s),
+    c("condition", "n_subjects", "n_trials", recovery_summary_columns())
+  )
   expect_setequal(s$condition, unique(recovery_mixture2p$condition))
 })
 

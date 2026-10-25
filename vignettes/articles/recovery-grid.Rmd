@@ -172,15 +172,12 @@ cells <- attr(recovery_mixture2p, "cells")
 cells
 ```
 
-To read the summary against the design, join the design columns from
-`cells`:
+The summary of a grid carries the grid's columns after `condition`, so
+each row says which design it describes:
 
 ```{r}
-design <- unique(cells[c("condition", "n_subjects", "n_trials")])
-
 subject_summary <- summary(recovery_mixture2p) |>
-  dplyr::filter(level == "subject") |>
-  dplyr::left_join(design, by = "condition")
+  dplyr::filter(level == "subject")
 
 subject_summary[c(
   "term", "n_subjects", "n_trials", "n_converged",
@@ -204,6 +201,20 @@ ggplot(
     colour = "Subjects"
   )
 ```
+
+`smallest_design()` reads the grid the other way round: for each number
+of subjects, the fewest trials at which a target is met, and met at
+every larger number of trials in the grid. A design meets the target
+when the lower end of its Monte Carlo interval clears it; `r_low` is
+already such a lower end.
+
+```{r}
+smallest_design(subject_summary, c(r_low = 0.8))
+```
+
+The example has five replications per design, which is too few to plan
+a study from; the call is shown for what it reads, not for the number
+of trials `mixture2p` needs.
 
 Because the object keeps its class through dplyr verbs, a single cell
 can be plotted directly:

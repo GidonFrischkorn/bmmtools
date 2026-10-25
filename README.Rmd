@@ -131,8 +131,8 @@ each step.
 
 ## Planning a study
 
-There is no dedicated design function yet, but `recovery_grid()` already
-answers how precise the estimates of a planned design will be. Give it a
+`recovery_grid()` answers how precise the estimates of a planned design
+will be. Give it a
 grid over `n_subjects` and `n_trials`, the parameter values and effects
 you expect, on the link scale, and a number of replications; with
 `coding = "contrast"` it also scores a condition effect. `summary()` then
@@ -148,13 +148,18 @@ crossed with 30 and 100 trials, and
 shows how the interval of an experimental effect narrows from 40 to 100
 subjects. `?summary.bmmtools_recovery` defines every column.
 
-Two planned additions make this easier: `design_check()`
+`summary()` also reports how reliably each design measures individual
+differences (`reliability_true`, and `reliability_model`, the number
+real data can report), and with `precision = c(kappa = 1)` the share of
+intervals no wider than a target. `smallest_design()` then reads the
+grid for the fewest trials, per number of subjects, at which a target
+such as `c(r_low = 0.8)` is met with the grid's Monte Carlo error taken
+into account, and says when the grid ran too few replications to tell.
+
+One planned addition makes this easier: `design_check()`
 ([#5](https://github.com/GidonFrischkorn/bmmtools/issues/5)) is proposed
 to take a design in subjects, conditions and trials with plausible
-parameter values and run the grid for you, and
-[#17](https://github.com/GidonFrischkorn/bmmtools/issues/17) adds
-precision targets, the reliability of subject estimates and the smallest
-design that meets a target.
+parameter values and run the grid for you.
 
 ## What bmmtools is not
 

@@ -5,7 +5,7 @@
 \alias{summary.bmmtools_recovery_summary}
 \title{Summarise a recovery object into per-parameter metrics}
 \usage{
-\method{summary}{bmmtools_recovery}(object, ...)
+\method{summary}{bmmtools_recovery}(object, precision = NULL, ...)
 
 \method{summary}{bmmtools_recovery_summary}(object, ...)
 }
@@ -13,7 +13,14 @@
 \item{object}{A \code{bmmtools_recovery} object from \code{\link[=recover]{recover()}} or
 \code{\link[=recover_subjects]{recover_subjects()}}.}
 
-\item{...}{Not used.}
+\item{precision}{Optional targets for the width of the \code{ci_level}
+interval: a data frame with the columns \code{term}, \code{level} and \code{width},
+and optionally \code{condition}, or a named numeric vector, which is
+shorthand for population-level targets (\code{c(kappa = 1)}). Each width
+is read on the row's own \code{scale}. Adds \code{precision_target},
+\code{precision_met} and \code{precision_met_mcse}; see "Precision" below.}
+
+\item{...}{Not used; a misspelt argument is an error.}
 }
 \value{
 A \code{bmmtools_recovery_summary} tibble with the columns \code{term},
@@ -23,8 +30,20 @@ A \code{bmmtools_recovery_summary} tibble with the columns \code{term},
 \code{r_low}, \code{r_high}, \code{rank_r},
 \code{ccc}, \code{ccc_low}, \code{ccc_high}, \code{ccc_accuracy}, \code{ccc_scale_shift},
 \code{ccc_location_shift}, \code{calibration_slope}, \code{calibration_intercept},
-\code{truth_sd}, \code{z_mean}, \code{z_sd}, \code{contraction}, \code{z_mean_mcse} and
-\code{z_sd_mcse}. \code{truth_sd} is the
+\code{truth_sd}, \code{z_mean}, \code{z_sd}, \code{contraction}, \code{z_mean_mcse},
+\code{z_sd_mcse}, \code{reliability_true}, \code{reliability_true_mcse},
+\code{reliability_model}, \code{reliability_model_mcse}, \code{reliability_gap},
+\code{reliability_gap_mcse}, \code{coverage_mcse}, \code{coverage_50_mcse},
+\code{detected_mcse}, \code{sign_recovery_mcse} and \code{ci_level} (the mass the
+coverages are nominal against, \code{NA} for a group that mixes masses),
+followed, when \code{precision} is given, by \code{precision_target},
+\code{precision_met} and \code{precision_met_mcse}. A grid summary also has
+\code{condition} first, followed by the grid's own columns (\code{n_subjects},
+\code{n_trials} or \verb{n_trials_<component>}, and any other column of the
+grid), so that each row says which design it describes; a grid
+column whose name is already a summary column, such as a parameter
+called \code{bias}, is renamed \verb{grid_<name>}. \code{\link[=smallest_design]{smallest_design()}} reads
+them. \code{truth_sd} is the
 standard deviation of the generating values. \code{r} and \code{ccc} both grow
 with \code{truth_sd} at a fixed measurement error, so compare them only
 at a similar spread.
@@ -52,6 +71,71 @@ already contained it (contraction near 0). \code{z_mean_mcse} is
 and understate when subject rows of one replication share a population
 posterior or when z has heavy tails. With fewer than two z, \code{z_sd}
 and both MCSEs are \code{NA}.
+
+\strong{Reliability of subject estimates.} Two estimates of how reliably a
+design measures individual differences, on subject rows only (\code{NA}
+elsewhere). Both are computed per replication on the link scale from
+the posterior mean, whatever \code{scale} says, and then averaged over
+replications. \code{reliability_true} is the squared correlation of the
+posterior means with the generating values: with no change between
+sessions, the test-retest correlation a second session would show
+(Katahira et al., 2024). \code{reliability_model} needs no truth, so it is
+the one real data can report: for posterior means
+\code{var(mean) / (var(mean) + mean(sd^2))}, for an \code{"ml"} row the
+separation form \code{1 - mean(se^2) / var(estimate)} (Adams, 2005), which
+is not clamped at 0. Only the estimator \code{"ml"} gets the separation
+form; any other label is read as a posterior mean. \code{reliability_gap}
+is the mean of the paired difference, model minus truth, and says
+whether the model's own number can be trusted for this design. Read
+it with \code{reliability_gap_mcse}, not with the two marginal MCSEs: it is
+a paired difference, so its MCSE is small where the two move together
+across replications and can exceed theirs where they do not, and a
+gap smaller than its MCSE is no evidence against the model's own
+number. A replication with fewer than three complete subjects or no
+spread contributes nothing, and each column uses the replications it
+can: one whose generating values have no spread enters
+\code{reliability_model} but neither \code{reliability_true} nor the gap, so the
+gap need not equal the difference of the two columns. Likewise a
+natural-scale subject whose z is \code{NA} (a zero posterior SD) has no
+link-scale truth and drops out of \code{reliability_true} only. When subjects
+differ in how much data they have, both weight the well-measured
+subjects more. Every \verb{_mcse} here is the SD across replications over
+the square root of their number, \code{NA} with fewer than two.
+
+\strong{Monte Carlo error of the rates.} \code{coverage_mcse} and
+\code{coverage_50_mcse} are binomial at the nominal mass, \code{sqrt(p (1 - p) / R)} with \code{p} the \code{ci_level} or 0.5, so that a coverage of 100 \% still
+has an error to compare against. \code{detected_mcse} and
+\code{sign_recovery_mcse} are binomial at the observed rate (Morris et al.,
+2019), which is 0 at a rate of 0 or 1: ten successes in ten still
+leave a 95 \% interval reaching down to 0.72. At the subject level the
+coverage MCSEs are the SD of the per-replication coverages over the
+square root of their number, because the subjects of one fit share a
+population posterior and are not independent intervals; that is the
+error of the pooled coverage when every replication has the same
+number of subjects, as a grid has. \code{detected_mcse} and
+\code{sign_recovery_mcse} are \code{NA} there, with their rates. A group whose
+rows mix \code{ci_level}s has no nominal mass, and \code{coverage_mcse} is \code{NA}.
+
+\strong{Precision.} With \code{precision}, \code{precision_met} is the share of
+\code{ci_level} intervals no wider than \code{precision_target} (inclusive),
+and \code{precision_met_mcse} its Monte Carlo standard error. The width is
+\code{ci_high - ci_low} on the row's own \code{scale}, which is the one printed
+beside it: natural for population and subject rows scored natural,
+link for sd, effect and softmax rows. A natural-scale width is not
+translated onto a link-scale row, because a width does not map
+through a nonlinear link. On a population row the share is over
+replications and the MCSE binomial at the observed rate. On a subject
+row it is over every subject interval of every replication --- the
+chance that one participant's interval is this narrow --- and the MCSE
+is the SD of the per-replication shares over the square root of
+their number. Rows without a target have \code{NA}. A term is named with
+its level, because one name can be a population, an sd and a subject
+row at once; the named-vector shorthand means the population row. An
+unnamed vector, a target for a term and level the recovery does not
+have, a key given twice, and a width that is not positive and finite
+are errors. A target applies to every estimator of its term and level,
+and, without a \code{condition} column, to every condition. A group whose
+rows mix scales or \code{ci_level}s has no share (\code{NA}).
 }
 \description{
 One row per parameter and level, with these recovery metrics: bias,
@@ -111,10 +195,13 @@ other. \code{coverage_50} is \code{NA} when the estimates carry no 50 \% interva
 as with a hand-built tibble that has no \code{ci_low_50}/\code{ci_high_50}.
 
 \strong{The print.} Printing the summary shows a core set of columns ---
-the condition, the term, the estimator when there is more than one,
+the condition and, on a grid, the design columns after it, the term,
+the estimator when there is more than one,
 the level, the scale, \code{n}, \code{bias}, \code{rmse}, \code{coverage}, \code{coverage_50},
-\code{z_mean}, \code{z_sd}, \code{contraction}, \code{r}, \code{ccc} and the calibration columns
---- and says how many it hides.
+\code{z_mean}, \code{z_sd}, \code{contraction}, \code{r}, \code{ccc}, \code{reliability_true} and
+\code{reliability_model} when there are subject rows, the calibration
+columns, and \code{precision_target} and \code{precision_met} when \code{precision}
+was given --- and says how many it hides.
 The object itself keeps all of them; \code{tibble::as_tibble()} prints
 every one.
 
@@ -127,9 +214,27 @@ to \code{n} there would assert something that was never measured.
 \examples{
 summary(recovery_mixture2p)
 
+# the share of intervals on mean kappa at most 2 wide, per design
+summary(recovery_mixture2p, precision = c(kappa = 2))
+
 # one cell of the example grid, subject level only
 recovery_mixture2p |>
   dplyr::filter(condition == "row-4", level == "subject") |>
   summary()
 
+}
+\references{
+Adams, R. J. (2005). Reliability as a measurement design effect.
+\emph{Studies in Educational Evaluation, 31}(2--3), 162--172.
+\doi{10.1016/j.stueduc.2005.05.008}
+
+Katahira, K., Oba, T., & Toyama, A. (2024). Does the reliability of
+computational models truly improve with hierarchical modeling? Some
+recommendations and considerations for the assessment of model
+parameter reliability. \emph{Psychonomic Bulletin & Review, 31}(6),
+2465--2486. \doi{10.3758/s13423-024-02490-8}
+
+Morris, T. P., White, I. R., & Crowther, M. J. (2019). Using simulation
+studies to evaluate statistical methods. \emph{Statistics in Medicine,
+38}(11), 2074--2102. \doi{10.1002/sim.8086}
 }
