@@ -45,6 +45,18 @@
   replications. The `ezdm` entry checks prior predictive mean response
   times against a plausibility range of 0.15 to 5 s (#21).
 
+* `run_validation()` runs the data requirements stage: the smallest
+  number of trials at which every subject-varying parameter's
+  person-level correlation with its generating value has a lower bound
+  (`r_low`) of at least 0.80 at 50 subjects, read off the recovery grid
+  by `smallest_design()`, with the read-off at 0.70 and 0.90 beside it.
+  Both the bar and the number of subjects are criteria of the plan. Its
+  coverage condition is the recovery stage's pooled test: held design by
+  design, it changed or removed the read-off of a calibrated `ezdm`
+  model in 24 % to 56 % of runs at 10 replications. The stage is not
+  applicable to a model without a subject-varying parameter or a grid
+  without two numbers of trials at that many subjects (#21, #17).
+
 * bmmtools works with bmm 1.4.1, which offers `criterion` and `bias` of
   `sdt_yn()` and `sdt_rating()` as alternative parameterizations, of
   which a fit estimates one. It read both as free parameters, so

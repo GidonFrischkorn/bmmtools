@@ -107,10 +107,12 @@ In card order: \code{run_record}, \code{prior_predictive}, \code{sbc}, \code{rec
 \code{computation}, \code{identifiability}, \code{individual_differences},
 \code{data_requirements}, \code{agreement}, \code{model_recovery} and
 \code{posterior_checks}. A stage is \code{"planned"}; \code{"not built"} with the
-issue that will build it (data requirements, #17; model recovery, #6;
-posterior checks, #20); \code{"not applicable"} with the reason
-(individual differences with fewer than two subject-varying
-parameters; agreement without a reference); or \code{"excluded"} when
+issue that will build it (model recovery, #6; posterior checks, #20);
+\code{"not applicable"} with the reason (individual differences with fewer
+than two subject-varying parameters; data requirements without a
+subject-varying parameter, or without two numbers of trials at
+\code{read_off_n_subjects} subjects in the grid; agreement without a
+reference); or \code{"excluded"} when
 \code{stages} leaves it out. All but agreement, model recovery and posterior
 checks are required for a card to be called complete.
 }
@@ -130,6 +132,11 @@ one-sided binomial test at \code{coverage_alpha} divided by the number of
 parameters; the generating correlations are held to the same test.
 \code{contraction_min} (0) and \code{z_mean_max} (2): the identifiability bars at
 the largest design.
+\code{read_off_r_low} (0.80) and \code{read_off_n_subjects} (50): the data
+requirements read-off (D83), the smallest \code{n_trials} at which every
+subject-varying parameter's person-level \code{r_low} reaches the bar at
+that many subjects; 0.80 is a convention, and the read-off at 0.70 and
+0.90 is reported beside it.
 \code{tolerance}: by metric, how far a number without a Monte Carlo
 standard error may move between two runs before
 \code{\link[=compare_validations]{compare_validations()}} flags it.

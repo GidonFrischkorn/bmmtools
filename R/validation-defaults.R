@@ -34,9 +34,9 @@ validation_stage_table <- function() {
       TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, FALSE, FALSE, FALSE
     ),
     built = c(
-      TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, FALSE, TRUE, FALSE, FALSE
+      TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, FALSE, FALSE
     ),
-    issue = c(NA, NA, NA, NA, NA, NA, NA, 17L, NA, 6L, 20L),
+    issue = c(NA, NA, NA, NA, NA, NA, NA, NA, NA, 6L, 20L),
     reads = c(
       NA, NA, NA, NA, "recovery", "recovery", "recovery", "recovery",
       "recovery", NA, NA
@@ -77,6 +77,8 @@ default_validation_criteria <- function() {
     coverage_alpha = 0.05,
     contraction_min = 0,
     z_mean_max = 2,
+    read_off_r_low = 0.80,
+    read_off_n_subjects = 50,
     tolerance = c(default = 0, seconds = Inf, median_fit_seconds = Inf)
   )
 }

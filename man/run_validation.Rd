@@ -95,6 +95,12 @@ least two subject-varying parameters, every cell gated by
 (\code{prior_sd = "fit"}).
 \item \code{computation}, \code{identifiability}, \code{individual_differences}: tables
 read off the recovery grid's cells and summary.
+\item \code{data_requirements}: D83's read-off, \code{\link[=smallest_design]{smallest_design()}} of the
+subject-level \code{r_low} along \code{n_trials} at the plan's
+\code{read_off_n_subjects}, at \code{read_off_r_low} and at 0.70 and 0.90; one
+row per subject-varying parameter and threshold with \code{n_subjects},
+\code{term}, \code{threshold}, \code{smallest} and \code{status}. It has no coverage
+condition of its own (see \code{\link[=verdict_table]{verdict_table()}}).
 \item \code{agreement}: \code{\link[=cross_check]{cross_check()}} of the fit of the largest design's first
 replication against the plan's reference.
 }

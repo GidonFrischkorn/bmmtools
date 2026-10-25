@@ -132,7 +132,11 @@ test_that("every stage has a section, run or not", {
     expect_match(card$text, title, fixed = TRUE)
   }
   # in the stage's own section, not only in the verdicts' notes
-  expect_match(card$text, "not built\\s*:\\s*not run \\(#17\\)")
+  expect_match(card$text, "not built\\s*:\\s*not run \\(#6\\)")
+  expect_match(
+    card$text,
+    "not applicable\\s*:\\s*the grid has no design with 50 subjects"
+  )
   expect_match(
     card$text, "not applicable\\s*:\\s*no reference implementation"
   )
@@ -158,7 +162,8 @@ test_that("a number with a Monte Carlo error prints it in brackets", {
   numbers <- card$result$numbers
   at <- numbers$stage == "prior_predictive" & numbers$metric == "floor_rate"
   row <- numbers[at, ][1, ]
-  shown <- sprintf("%s (%s)",
+  shown <- sprintf(
+    "%s (%s)",
     format(signif(row$value, 3), trim = TRUE),
     format(signif(row$mcse, 3), trim = TRUE)
   )
@@ -174,6 +179,14 @@ test_that("the changes section lists the moved rows and the count", {
     card$text,
     sprintf(
       "%d of %d", sum(changes$moved, na.rm = TRUE), attr(changes, "n_compared")
+    ),
+    fixed = TRUE
+  )
+  # the rule's multiplier is the comparison's, not typed in the template
+  expect_match(
+    card$text,
+    sprintf(
+      "by more than %d times their combined", attr(changes, "mcse_multiplier")
     ),
     fixed = TRUE
   )
@@ -239,6 +252,48 @@ test_that("a run with no earlier result says so, and a path is read", {
     card_unexplained_numbers(out, readRDS(file.path(dir, "result.rds"))),
     character()
   )
+})
+
+test_that("the data requirements section prints the read-off and its bar", {
+  skip_card_render()
+  dir <- withr::local_tempdir()
+  result <- mock_validation(
+    readoff_validation_plan(), dir, validation_mock_fitter()
+  )
+  out <- file.path(dir, "card.html")
+  render_card(result, out)
+  text <- card_visible_text(out)
+  # the title's last occurrence is the section's heading (the contents
+  # and the verdicts table come first); the next stage ends it
+  pieces <- strsplit(text, "Data requirements", fixed = TRUE)[[1L]]
+  section <- sub(" Agreement .*", "", pieces[[length(pieces)]])
+  expect_lt(nchar(section), nchar(text) / 2)
+  # D83: the bar is stated as a convention in the section itself
+  expect_match(
+    section, "The read-off at r_low 0.8 is a convention, not a finding",
+    fixed = TRUE
+  )
+  expect_match(section, "n_trials_at_r_low_0.7", fixed = TRUE)
+  expect_match(section, "n_trials_at_r_low_0.9", fixed = TRUE)
+  # the all-terms row: 10, 20 and 40 trials
+  expect_match(section, "8 subjects\\s+subject\\s+all\\s+10\\s+20\\s+40")
+  expect_identical(card_unexplained_numbers(out, result), character())
+})
+
+test_that("a bar no design reaches keeps its column of dashes", {
+  skip_card_render()
+  dir <- withr::local_tempdir()
+  result <- mock_validation(
+    readoff_validation_plan(criteria = list(read_off_r_low = 0.95)), dir,
+    validation_mock_fitter()
+  )
+  out <- file.path(dir, "card.html")
+  render_card(result, out)
+  text <- card_visible_text(out)
+  pieces <- strsplit(text, "Data requirements", fixed = TRUE)[[1L]]
+  section <- sub(" Agreement .*", "", pieces[[length(pieces)]])
+  expect_match(section, "n_trials_at_r_low_0.95", fixed = TRUE)
+  expect_match(section, "subject\\s+all\\s+10\\s+40\\s+\u2013")
 })
 
 # the number check -----------------------------------------------------------
