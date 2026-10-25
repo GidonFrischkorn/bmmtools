@@ -1,5 +1,14 @@
 # bmmtools (development version)
 
+* A new article, "Recovering the EZ diffusion model on the standard
+  grid", reports a recovery study of the three-parameter `ezdm` under
+  bmm 1.4.1: 20 or 50 subjects, 30, 100 or 300 trials, 10 replications
+  each. It covers population values, between-subject SDs, subject
+  parameters and the drift-boundary correlation. It also says how many
+  trials a person-level correlation of 0.70, 0.80 or 0.90 needs. The
+  Monte Carlo standard errors, reliabilities and that read-off are
+  computed by hand in the article until `summary()` reports them (#17),
+  and a validation card will replace the article (#21).
 * A validation of a bmm model is now one plan and one run.
   `validation_plan()` resolves everything a validation needs before
   anything is fitted: the generating values, a grid of designs with its
