@@ -20,6 +20,9 @@ one follows from the stored results: binomial for a rate, at the rate
 for a mean z-score and its SD. \code{NA} elsewhere.
 }
 \description{
+\ifelse{html}{\href{https://lifecycle.r-lib.org/articles/stages.html#experimental}{\figure{lifecycle-experimental.svg}{options: alt='[Experimental]'}}}{\strong{[Experimental]}}
+}
+\details{
 Every number a validation card prints, in one long tibble, so a card
 can be checked against it and two runs compared with
 \code{\link[=compare_validations]{compare_validations()}}.

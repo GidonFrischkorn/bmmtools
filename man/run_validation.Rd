@@ -58,6 +58,9 @@ names) and \code{text}; and \code{changes}, the
 same object is written to \verb{<dir>/result.rds}.
 }
 \description{
+\ifelse{html}{\href{https://lifecycle.r-lib.org/articles/stages.html#experimental}{\figure{lifecycle-experimental.svg}{options: alt='[Experimental]'}}}{\strong{[Experimental]}}
+}
+\details{
 Executes a \code{\link[=validation_plan]{validation_plan()}} stage by stage into \code{dir}, where every
 stage keeps its result and its status. A rerun reads the stages whose
 inputs have not changed and runs the rest, so an interrupted run is
@@ -73,7 +76,7 @@ the plan's own status for a stage that does not run (\code{"not built"},
 \code{"not applicable"}, \code{"excluded"}). A failed stage is never an error of
 \code{run_validation()}.
 
-The headline (D80) is \code{"incomplete"} while a required stage that
+The headline is \code{"incomplete"} while a required stage that
 exists is not \code{"ok"}; \code{"not validated"} when a required criterion
 failed; \code{"not judged"} when none failed but one could not be evaluated
 (a response without a known range, say); and \code{"validated"}, printed

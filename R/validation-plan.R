@@ -10,6 +10,8 @@
 
 #' Plan the validation of a bmm model
 #'
+#' `r lifecycle::badge("experimental")`
+#'
 #' Builds a `bmmtools_validation_plan`: everything [run_validation()]
 #' needs to validate one model, resolved before anything is fitted. Every
 #' argument left `NULL` is filled from the model's [validation_defaults()]
@@ -45,7 +47,7 @@
 #'   the agreement stage: a data frame with `term` and `estimate` (and
 #'   optionally `ci_low`, `ci_high`) on the natural scale, as
 #'   [cross_check()] takes it, plus the provenance columns `package`,
-#'   `version`, `call`, `data_hash`, `date` and `source` (D85).
+#'   `version`, `call`, `data_hash`, `date` and `source`.
 #' @param convergence `NULL` for [check_convergence()]'s defaults, or a
 #'   named list of its arguments, as in [recovery_grid()].
 #' @param criteria A named list replacing some of the default criteria

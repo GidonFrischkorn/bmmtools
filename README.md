@@ -38,10 +38,14 @@ other package does. Scoring dispatches on `brmsfit`, so a plain brms fit
 can be scored too; only the simulation step, which reads a bmm model
 object to know what to generate, needs bmm itself.
 
-Version 0.2.0 adds what running a study needs: `collect_grid()`,
-`run_info()`, a convergence gate and a per-cell diagnostics record on
-`recovery_grid()`, contrast-coded effect designs, and `fit_ml()` for
-comparing hierarchical estimation with subject-wise maximum likelihood.
+Version 0.3.0 adds what planning a study needs: `summary()` of a
+recovery reports posterior z-scores and contraction, the reliability of
+subject estimates and the share of intervals that meet a precision
+target, and `smallest_design()` reads off the fewest trials a design
+needs. It also adds built-in generators for `mixture3p`, `imm` and `m3`
+with per-trial designs (`trial_design`), a benchmark module, and support
+for CRAN bmm 1.4.1. `validation_plan()` and `run_validation()`, which
+run every stage of a model’s validation from one plan, are experimental.
 Every function this README names is built and documented: the five
 scorers of the table, `recover_subjects()`, and underneath them
 `simulate_recovery()`, `recovery_grid()` and `fit_cached()`. It is an
@@ -198,7 +202,7 @@ bmmtools is not on CRAN. Install the current release from GitHub:
 
 ``` r
 # install.packages("pak")
-pak::pak("GidonFrischkorn/bmmtools@v0.2.0")
+pak::pak("GidonFrischkorn/bmmtools@v0.3.0")
 ```
 
 Without the tag you get the development version, which is whatever is on

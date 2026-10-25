@@ -26,7 +26,10 @@ number present in one run only has \code{moved = NA}. The attributes
 \code{mcse_multiplier} is the 2 of the rule.
 }
 \description{
+\ifelse{html}{\href{https://lifecycle.r-lib.org/articles/stages.html#experimental}{\figure{lifecycle-experimental.svg}{options: alt='[Experimental]'}}}{\strong{[Experimental]}}
+}
+\details{
 Joins the \code{\link[=card_numbers]{card_numbers()}} of an earlier and a later run and flags the
 numbers that moved by more than their Monte Carlo error, so a card
-regenerated after a bmm release can say what changed (D84).
+regenerated after a bmm release can say what changed.
 }

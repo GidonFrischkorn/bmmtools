@@ -65,7 +65,7 @@ range is what it is, printed on the card), \code{summary} and \code{sampler}
 the agreement stage: a data frame with \code{term} and \code{estimate} (and
 optionally \code{ci_low}, \code{ci_high}) on the natural scale, as
 \code{\link[=cross_check]{cross_check()}} takes it, plus the provenance columns \code{package},
-\code{version}, \code{call}, \code{data_hash}, \code{date} and \code{source} (D85).}
+\code{version}, \code{call}, \code{data_hash}, \code{date} and \code{source}.}
 
 \item{convergence}{\code{NULL} for \code{\link[=check_convergence]{check_convergence()}}'s defaults, or a
 named list of its arguments, as in \code{\link[=recovery_grid]{recovery_grid()}}.}
@@ -95,6 +95,9 @@ tibble: \code{stage}, \code{order}, \code{title}, \code{required}, \code{status}
 \code{reason}), \code{hash} and \code{bmmtools_version}.
 }
 \description{
+\ifelse{html}{\href{https://lifecycle.r-lib.org/articles/stages.html#experimental}{\figure{lifecycle-experimental.svg}{options: alt='[Experimental]'}}}{\strong{[Experimental]}}
+}
+\details{
 Builds a \code{bmmtools_validation_plan}: everything \code{\link[=run_validation]{run_validation()}}
 needs to validate one model, resolved before anything is fitted. Every
 argument left \code{NULL} is filled from the model's \code{\link[=validation_defaults]{validation_defaults()}}
