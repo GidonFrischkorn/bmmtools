@@ -6,6 +6,8 @@
 
 #' Render the validation card of a result
 #'
+#' `r lifecycle::badge("experimental")`
+#'
 #' Renders the card of a [run_validation()] result to one self-contained
 #' HTML file: the headline verdict, the run record and the plan, the
 #' verdict of every stage beside its criterion, a section per stage in

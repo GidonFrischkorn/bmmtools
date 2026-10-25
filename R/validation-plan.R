@@ -99,7 +99,7 @@
 #' `contraction_min` (0) and `z_mean_max` (2): the identifiability bars at
 #' the largest design.
 #' `read_off_r_low` (0.80) and `read_off_n_subjects` (50): the data
-#' requirements read-off (D83), the smallest `n_trials` at which every
+#' requirements read-off, the smallest `n_trials` at which every
 #' subject-varying parameter's person-level `r_low` reaches the bar at
 #' that many subjects; 0.80 is a convention, and the read-off at 0.70 and
 #' 0.90 is reported beside it.

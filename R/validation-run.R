@@ -84,7 +84,7 @@
 #'   (`prior_sd = "fit"`).
 #' * `computation`, `identifiability`, `individual_differences`: tables
 #'   read off the recovery grid's cells and summary.
-#' * `data_requirements`: D83's read-off, [smallest_design()] of the
+#' * `data_requirements`: the read-off, [smallest_design()] of the
 #'   subject-level `r_low` along `n_trials` at the plan's
 #'   `read_off_n_subjects`, at `read_off_r_low` and at 0.70 and 0.90; one
 #'   row per subject-varying parameter and threshold with `n_subjects`,
@@ -1231,11 +1231,12 @@ numbers_agreement <- function(x) {
 #'   held to the same pooled test, divided by the number of correlations.
 #' * data requirements: every subject-varying parameter reaches `r_low >=
 #'   read_off_r_low` within the grid at `read_off_n_subjects` subjects,
-#'   the value being the largest read-off over the parameters (D83); a
+#'   the value being the largest read-off over the parameters; a
 #'   parameter the grid gave no person-level correlation is not judged.
 #'   Its coverage leg is the recovery criterion's pooled test, repeated as
-#'   a second row: D83's per-design coverage bar changed or removed a calibrated
-#'   `ezdm` model's read-off in 24 % to 56 % of runs at 10 replications.
+#'   a second row: a per-design coverage bar changed or removed a
+#'   calibrated `ezdm` model's read-off in 24 % to 56 % of runs at 10
+#'   replications.
 #' * agreement: reported, not judged.
 #'
 #' The ECDF band is simultaneous over the ranks of one variable; it is not
@@ -1348,7 +1349,7 @@ stage_criterion_text <- function(stage, result, criteria) {
     data_requirements = sprintf(
       paste(
         "the smallest number of trials at which every subject-varying",
-        "parameter has person-level r_low >= %s at %s subjects (D83; %s is",
+        "parameter has person-level r_low >= %s at %s subjects (%s is",
         "a convention, not a finding)"
       ),
       fmt(criteria$read_off_r_low), format(criteria$read_off_n_subjects),
@@ -1586,7 +1587,7 @@ verdict_data_requirements <- function(result, criteria) {
     sprintf(
       paste(
         "%s%% interval coverage of every population parameter, pooled",
-        "across designs, %s (the recovery stage's test; D83 as amended)"
+        "across designs, %s (the recovery stage's test)"
       ),
       fmt(100 * criteria$coverage_level), pooled_test_text(criteria)
     ),

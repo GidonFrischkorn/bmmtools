@@ -136,7 +136,7 @@ parameters; the generating correlations are held to the same test.
 \code{contraction_min} (0) and \code{z_mean_max} (2): the identifiability bars at
 the largest design.
 \code{read_off_r_low} (0.80) and \code{read_off_n_subjects} (50): the data
-requirements read-off (D83), the smallest \code{n_trials} at which every
+requirements read-off, the smallest \code{n_trials} at which every
 subject-varying parameter's person-level \code{r_low} reaches the bar at
 that many subjects; 0.80 is a convention, and the read-off at 0.70 and
 0.90 is reported beside it.

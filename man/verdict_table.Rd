@@ -43,11 +43,12 @@ mean contraction above \code{contraction_min} and its mean z-score within
 \item individual differences: the coverage of every generating correlation
 held to the same pooled test, divided by the number of correlations.
 \item data requirements: every subject-varying parameter reaches \code{r_low >= read_off_r_low} within the grid at \code{read_off_n_subjects} subjects,
-the value being the largest read-off over the parameters (D83); a
+the value being the largest read-off over the parameters; a
 parameter the grid gave no person-level correlation is not judged.
 Its coverage leg is the recovery criterion's pooled test, repeated as
-a second row: D83's per-design coverage bar changed or removed a calibrated
-\code{ezdm} model's read-off in 24 \% to 56 \% of runs at 10 replications.
+a second row: a per-design coverage bar changed or removed a
+calibrated \code{ezdm} model's read-off in 24 \% to 56 \% of runs at 10
+replications.
 \item agreement: reported, not judged.
 }
 

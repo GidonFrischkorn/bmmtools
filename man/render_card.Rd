@@ -26,14 +26,16 @@ path to a Quarto document of your own that takes the parameter
 \code{output}, invisibly.
 }
 \description{
+\ifelse{html}{\href{https://lifecycle.r-lib.org/articles/stages.html#experimental}{\figure{lifecycle-experimental.svg}{options: alt='[Experimental]'}}}{\strong{[Experimental]}}
+}
+\details{
 Renders the card of a \code{\link[=run_validation]{run_validation()}} result to one self-contained
 HTML file: the headline verdict, the run record and the plan, the
 verdict of every stage beside its criterion, a section per stage in
 the order of the workflow (results, or why the stage did not run), the
 model's own sections, and the numbers that moved since the earlier
 result the run was compared with.
-}
-\details{
+
 The template prints no number of its own: every figure on the card is
 read off the result (its \code{numbers}, \code{verdicts}, \code{stages}, \code{run_info}
 and \code{plan}), so a card always describes the run it was rendered from.
