@@ -1482,7 +1482,7 @@ grid_formula <- function(formula, row, i, model, re_cor, task_col,
 #' @param prior Passed to [fit_cached()]; with components, `NULL` or a list
 #'   with a prior per component.
 #' @param prior_sd The prior SD each posterior is contracted against
-#'   (Milestone 22, D89): `NULL` (the default) for no contraction and no
+#'   (#16): `NULL` (the default) for no contraction and no
 #'   extra fit; `"fit"` to fit the prior alone (`sample_prior = "only"`)
 #'   once per distinct formula, model and prior among the grid's rows,
 #'   cached in `dir` through [fit_cached()] with the backend named, and
@@ -1491,7 +1491,7 @@ grid_formula <- function(formula, row, i, model, re_cor, task_col,
 #'   `prior`, which needs no fit and leaves `NA` where there is no closed
 #'   form; or a table as [recover()] takes it, which may carry a
 #'   `condition` column (`"row-1"`, ...) to differ between rows. Subject
-#'   rows have no contraction (D63). The table used is written to
+#'   rows have no contraction. The table used is written to
 #'   `<dir>/prior-sd.rds`, which [collect_grid()] reads.
 #' @param trial_design As in [simulate_recovery()], the same for every
 #'   cell. A data frame without `id` needs every row of the grid to have

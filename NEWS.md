@@ -1,108 +1,37 @@
-# bmmtools (development version)
+# bmmtools 0.3.0
 
-* A new article, "Recovering the EZ diffusion model on the standard
-  grid", reports a recovery study of the three-parameter `ezdm` under
-  bmm 1.4.1: 20 or 50 subjects, 30, 100 or 300 trials, 10 replications
-  each. It covers population values, between-subject SDs, subject
-  parameters and the drift-boundary correlation. It also says how many
-  trials a person-level correlation of 0.70, 0.80 or 0.90 needs. The
-  Monte Carlo standard errors, reliabilities and that read-off are
-  computed by hand in the article until `summary()` reports them (#17),
-  and a validation card will replace the article (#21).
-* A validation of a bmm model is now one plan and one run.
-  `validation_plan()` resolves everything a validation needs before
-  anything is fitted: the generating values, a grid of designs with its
-  replications, the sampler budget, the design point and prior of the
-  simulation-based calibration, the prior-check layout, an optional
-  reference implementation, the criteria, the seed, the owner and a
-  version, with a content hash that changes only when what is planned
-  changes. `validation_defaults()` holds the values a plan fills from;
-  entries ship for `mixture2p` and `ezdm`, and a model without one needs
-  `pars`. `run_validation()` runs the stages in order (run record, prior
-  predictive check, SBC, recovery grid, computation, identifiability,
-  individual differences, agreement) into one directory, each cached
-  under its own folder. A rerun reads every stage whose inputs did not
-  change, a stage that fails is recorded with its message while the
-  others run, and stages that do not exist yet (data requirements,
-  model recovery, posterior checks) are listed as not run with their
-  issue. The result keeps every stage's own object and adds
-  `card_numbers()`, every number a card prints with its Monte Carlo
-  standard error, `verdict_table()`, each criterion in words with its
-  value and verdict, and a headline that says "validated" only with the
-  plan version beside it. `compare_validations()` flags the numbers that
-  moved between two runs by more than their Monte Carlo error (#21, #9).
+## Breaking changes
 
-* bmmtools works with bmm 1.4.1, which offers `criterion` and `bias` of
-  `sdt_yn()` and `sdt_rating()` as alternative parameterizations, of
-  which a fit estimates one. It read both as free parameters, so
-  `simulate_recovery()` demanded a value for `bias` and
-  `recovery_formula()` wrote a formula bmm rejects. Now one member of
-  each alternative group is free: the one `pars` names, or bmm's
-  default, `criterion`. Naming both is an error, and the other member
-  appears in no truth table, formula or score. `recovery_formula()`
-  gains `pars`, whose names choose the member
-  (`recovery_formula(sim$model, pars = sim$pars)`); `recovery_grid()`,
-  the components and `fit_ml()` in a grid follow each cell's `pars`,
-  `sbc()` and `fit_ml()` follow their formula (or `fit_ml()`'s `start`),
-  and a formula that estimates the other member is refused before
-  anything is fitted. The `sdt_yn` adapter and density pass `bias` to
-  bmm when it is the chosen member (#30).
-* bmmtools now declares `bmm (>= 1.4.1)` in Suggests, the first CRAN
-  release with the signal-detection models. Note what bmm 1.4.1 changed
-  for `sdt_yn`: `criterion` is measured from the noise mean, and the
-  criterion measured from the midpoint between the noise and signal
-  means, which development builds of bmm called `criterion`, is now
-  `bias`. A script written against such a build that simulates
-  `c(d = , criterion = )` keeps running and simulates a different
-  quantity; write `bias` to keep the old meaning (#30).
+* **A recovery saved by 0.2.0 no longer satisfies the recovery
+  contract.** A `bmmtools_recovery` lacks `ci_low_50`, `ci_high_50` and
+  `covered_50` (#1) and `post_mean_link`, `post_sd_link`, `z` and
+  `contraction` (#16); a `bmmtools_cor_recovery` lacks the same columns
+  but `contraction`. Printing or summarising one is an error that names
+  the missing columns. The link-scale moments need the draws, so there
+  is no in-place fix: run `recovery_grid()` again on the grid's
+  directory, which re-extracts every cell from its cached fit without
+  refitting, or call `recover()`, `recover_subjects()` or
+  `recover_correlations()` on the fits again.
+* **A summary saved by 0.2.0 still prints but lacks the columns 0.3.0
+  adds**: `coverage_50`, `ci_width_50` and `calibration_intercept` (#1),
+  the z-score and contraction columns (#16), the reliabilities, the
+  Monte Carlo standard errors of the rates, `ci_level` and a grid's
+  design columns (#17). Summarise the recovery again to get them.
+* **`criterion` of `sdt_yn` means something else under bmm 1.4.1.** A
+  simulation or grid stored under 0.2.0 with a development build of bmm
+  holds `criterion` truths measured from the midpoint between the noise
+  and signal means; bmm 1.4.1 estimates `criterion` from the noise mean,
+  so scoring such truths against a new fit reads as bias. Simulate again
+  with `bias` in `pars` to keep the old quantity (#30).
+* SBC results for `sdt_yn`, `sdt_mafc` and `m3` with numbers of options
+  from 0.2.0 were computed on fewer trials than `data` described (#26),
+  and a fit cached without a `backend` is refitted once (#24); both are
+  described under their changes below.
+* `summary()` of a recovery refuses an argument it does not know instead
+  of ignoring it (#17).
 
-* A benchmark module compares implementations of a model on the same
-  data: `benchmark()` runs them interleaved (A, B, A, B) and returns one
-  row per run, `benchmark_metrics()` measures a single fit, and
-  `benchmark_compile()` times a forced compile on its own. Compile time
-  and sampling time are kept apart, and every rate divides by seconds
-  summed over chains rather than by wall time, which would make the same
-  fit look cheaper on more cores: a run reports `us_per_gradient` (the
-  median over chains of chain sampling time over that chain's leapfrog
-  steps) and ESS per chain-second for bulk and tail, over the
-  post-warmup phase and over warmup plus sampling. `summary()` reports
-  the spread beside the centre per implementation, and the ratio between
-  implementations as a geometric mean of per-pair ratios with a t
-  interval on the logs -- never a bare quotient. No benchmark fit is
-  cached, so none can be served to a recovery grid (#4).
-* Estimates, recovery rows and correlation estimates gain
-  `post_mean_link` and `post_sd_link`, the posterior mean and SD of the
-  draws on the link scale. They stay on the link scale whatever `scale`
-  a recovery is scored on, because neither is invariant under a
-  nonlinear link; `estimate` stays the posterior median. Maximum-
-  likelihood rows carry the point estimate and its standard error, and
-  `point` correlations `NA`. They are the groundwork for posterior
-  z-scores and contraction in `summary()`. A grid cell file without them
-  is re-extracted from its cached fit on the next `recovery_grid()` run,
-  without refitting; `collect_grid()` reads it with `NA` and says so
-  (#16).
-* Recovery rows gain `z`, the posterior z-score `(post_mean_link -
-  truth) / post_sd_link`, and `contraction`, `1 - post_sd_link^2 /
-  prior_sd_link^2`, both on the link scale; `summary()` reports
-  `z_mean`, `z_sd` and the mean `contraction`, with `z_mean_mcse` and
-  `z_sd_mcse`, and its print shows the first three after
-  `coverage_50`. Together they tell a posterior that covers the truth
-  because the data located it from one that covers it because it never
-  left a prior that already held it. The prior SD comes from the new
-  `prior_sd` argument of `recover()` and `recovery_grid()`: a table, a
-  fit with `sample_prior = "only"`, or a one-set `prior_check()`;
-  `recovery_grid(prior_sd = "fit")` fits the prior once per distinct
-  prior set and caches it, and `"analytic"` uses the new
-  `prior_sd_table()`, which gives the prior SD in closed form for
-  normal, logistic and Student t priors, their halves on standard
-  deviations, and the exponential prior bmm puts on them.
-  `collect_grid()` reuses the table the grid scored with and takes
-  `prior_sd` to replace it. Without a source, `contraction` is `NA`;
-  subject rows and maximum-likelihood rows never have one. Correlation
-  recoveries gain `z` and the z summary columns. The article "Recovery
-  summary columns" defines them and shows, on a grid with one to 100
-  trials per subject, intervals that cover the truth while the
-  posterior is still mostly the prior (#16).
+## Planning a study
+
 * `summary()` of a recovery reports how reliably a design measures
   individual differences, on subject rows: `reliability_true`, the
   squared correlation of the posterior means with the generating
@@ -149,6 +78,82 @@
   README section, "Planning a study", shows how `recovery_grid()` and
   `summary()` already answer how many subjects and trials a design needs
   (#14).
+* A new article, "Recovering the EZ diffusion model on the standard
+  grid", reports a recovery study of the three-parameter `ezdm` under
+  bmm 1.4.1: 20 or 50 subjects, 30, 100 or 300 trials, 10 replications
+  each. It covers population values, between-subject SDs, subject
+  parameters and the drift-boundary correlation. It also says how many
+  trials a person-level correlation of 0.70, 0.80 or 0.90 needs. The
+  article computes its Monte Carlo standard errors, reliabilities and
+  that read-off by hand, as it was written before `summary()` and
+  `smallest_design()` reported them (#17); a validation card will
+  replace it (#21).
+
+## Score recovery
+
+* Every estimate now carries a central 50 % interval, `ci_low_50` and
+  `ci_high_50`, beside the `ci_level` interval: the 25th and 75th
+  percentiles of the draws, a Wald interval at `qnorm(0.75)` standard
+  errors on `fit_ml(method = "optim")`, and a Fisher-z interval for the
+  `point` correlation estimator. Recovery rows gain `covered_50`, and
+  `summary()` of a recovery or a correlation recovery gains
+  `coverage_50` and `ci_width_50`: the 95 % interval checks the tails of
+  the posterior, the 50 % interval its centre. The mass is fixed and
+  carried in the name, so it does not follow `ci_level`. An estimates
+  tibble without the inner bounds still scores, with `coverage_50` `NA`.
+  `cross_check()` keeps one interval.
+* `recovery_grid()` stores the 50 % interval in each cell's file. A cell
+  file written before it is re-extracted from its cached fit on the next
+  run, without refitting; `collect_grid()` reads such files with the
+  inner columns `NA` and says how many there were.
+* `summary()` of a recovery object and `recovery_ccc()` gain
+  `calibration_intercept`, after `calibration_slope`: the intercept of
+  the generating value regressed on the estimate, so that the two
+  columns give the whole calibration line. It is read on the scale of
+  the row, and at subject level the replications' intercepts are
+  averaged. It is `NA` wherever the slope is
+  ([#1](https://github.com/GidonFrischkorn/bmmtools/issues/1)).
+* Printing a recovery summary shows a core set of columns (the row, `n`,
+  `bias`, `rmse`, both coverages, `r`, `ccc` and the calibration
+  columns) and names how many it hides; `tibble::as_tibble()` prints all
+  of them. The summary itself still has every column.
+  Tracked in [#1](https://github.com/GidonFrischkorn/bmmtools/issues/1).
+* Estimates, recovery rows and correlation estimates gain
+  `post_mean_link` and `post_sd_link`, the posterior mean and SD of the
+  draws on the link scale. They stay on the link scale whatever `scale`
+  a recovery is scored on, because neither is invariant under a
+  nonlinear link; `estimate` stays the posterior median. Maximum-
+  likelihood rows carry the point estimate and its standard error, and
+  `point` correlations `NA`. They are the groundwork for posterior
+  z-scores and contraction in `summary()`. A grid cell file without them
+  is re-extracted from its cached fit on the next `recovery_grid()` run,
+  without refitting; `collect_grid()` reads it with `NA` and says so
+  (#16).
+* Recovery rows gain `z`, the posterior z-score `(post_mean_link -
+  truth) / post_sd_link`, and `contraction`, `1 - post_sd_link^2 /
+  prior_sd_link^2`, both on the link scale; `summary()` reports
+  `z_mean`, `z_sd` and the mean `contraction`, with `z_mean_mcse` and
+  `z_sd_mcse`, and its print shows the first three after
+  `coverage_50`. Together they tell a posterior that covers the truth
+  because the data located it from one that covers it because it never
+  left a prior that already held it. The prior SD comes from the new
+  `prior_sd` argument of `recover()` and `recovery_grid()`: a table, a
+  fit with `sample_prior = "only"`, or a one-set `prior_check()`;
+  `recovery_grid(prior_sd = "fit")` fits the prior once per distinct
+  prior set and caches it, and `"analytic"` uses the new
+  `prior_sd_table()`, which gives the prior SD in closed form for
+  normal, logistic and Student t priors, their halves on standard
+  deviations, and the exponential prior bmm puts on them.
+  `collect_grid()` reuses the table the grid scored with and takes
+  `prior_sd` to replace it. Without a source, `contraction` is `NA`;
+  subject rows and maximum-likelihood rows never have one. Correlation
+  recoveries gain `z` and the z summary columns. The article "Recovery
+  summary columns" defines them and shows, on a grid with one to 100
+  trials per subject, intervals that cover the truth while the
+  posterior is still mostly the prior (#16).
+
+## Simulate
+
 * `simulate_recovery()`, `recovery_grid()` and `recovery_component()`
   gain `trial_design`, the per-trial variables a generator needs and the
   model does not hold, such as set sizes and non-target locations: a data
@@ -198,6 +203,43 @@
   four models, one design row per row of data with its own number of
   trials (and, for `sdt_yn`, its stimulus); without one, nothing changes
   (#26).
+* `coding = "contrast"` with the default contrasts
+  (`stats::contr.treatment`), or any contrast matrix with column names,
+  now recovers: the matrix's column names made brms call the contrast
+  `task2` where the truth says `task1`, and scoring stopped with "No
+  term in `truth` matches an estimated parameter". The column names are
+  dropped, so the contrast is always `<task_col>1` … `<task_col>(k-1)`.
+  Unnamed contrasts such as `bayestestR::contr.equalprior` were not
+  affected ([#1](https://github.com/GidonFrischkorn/bmmtools/issues/1)).
+
+## bmm 1.4.1
+
+* bmmtools now declares `bmm (>= 1.4.1)` in Suggests, the first CRAN
+  release with the signal-detection models. Note what bmm 1.4.1 changed
+  for `sdt_yn`: `criterion` is measured from the noise mean, and the
+  criterion measured from the midpoint between the noise and signal
+  means, which development builds of bmm called `criterion`, is now
+  `bias`. A script written against such a build that simulates
+  `c(d = , criterion = )` keeps running and simulates a different
+  quantity; write `bias` to keep the old meaning (#30).
+* bmmtools works with bmm 1.4.1, which offers `criterion` and `bias` of
+  `sdt_yn()` and `sdt_rating()` as alternative parameterizations, of
+  which a fit estimates one. It read both as free parameters, so
+  `simulate_recovery()` demanded a value for `bias` and
+  `recovery_formula()` wrote a formula bmm rejects. Now one member of
+  each alternative group is free: the one `pars` names, or bmm's
+  default, `criterion`. Naming both is an error, and the other member
+  appears in no truth table, formula or score. `recovery_formula()`
+  gains `pars`, whose names choose the member
+  (`recovery_formula(sim$model, pars = sim$pars)`); `recovery_grid()`,
+  the components and `fit_ml()` in a grid follow each cell's `pars`,
+  `sbc()` and `fit_ml()` follow their formula (or `fit_ml()`'s `start`),
+  and a formula that estimates the other member is refused before
+  anything is fitted. The `sdt_yn` adapter and density pass `bias` to
+  bmm when it is the chosen member (#30).
+
+## Running a study
+
 * `fit_cached()` keys a fit run without a `backend` on the Stan toolchain
   bmm actually uses: the `brms.backend` option if set, otherwise cmdstanr
   if it is installed, otherwise rstan. Before, it assumed rstan, so a fit
@@ -211,52 +253,68 @@
   after it ran is refitted, not re-read. Calls that pass `backend`, or
   set the option, as every article and `data-raw/` script does, keep
   their keys (#24).
-* Every estimate now carries a central 50 % interval, `ci_low_50` and
-  `ci_high_50`, beside the `ci_level` interval: the 25th and 75th
-  percentiles of the draws, a Wald interval at `qnorm(0.75)` standard
-  errors on `fit_ml(method = "optim")`, and a Fisher-z interval for the
-  `point` correlation estimator. Recovery rows gain `covered_50`, and
-  `summary()` of a recovery or a correlation recovery gains
-  `coverage_50` and `ci_width_50`: the 95 % interval checks the tails of
-  the posterior, the 50 % interval its centre. The mass is fixed and
-  carried in the name, so it does not follow `ci_level`. An estimates
-  tibble without the inner bounds still scores, with `coverage_50` `NA`.
-  `cross_check()` keeps one interval.
-* `recovery_grid()` stores the 50 % interval in each cell's file. A cell
-  file written before it is re-extracted from its cached fit on the next
-  run, without refitting; `collect_grid()` reads such files with the
-  inner columns `NA` and says how many there were.
-* Printing a recovery summary shows a core set of columns (the row, `n`,
-  `bias`, `rmse`, both coverages, `r`, `ccc` and the calibration
-  columns) and names how many it hides; `tibble::as_tibble()` prints all
-  of them. The summary itself still has every column.
-  Tracked in [#1](https://github.com/GidonFrischkorn/bmmtools/issues/1).
-* `summary()` of a recovery object and `recovery_ccc()` gain
-  `calibration_intercept`, after `calibration_slope`: the intercept of
-  the generating value regressed on the estimate, so that the two
-  columns give the whole calibration line. It is read on the scale of
-  the row, and at subject level the replications' intercepts are
-  averaged. It is `NA` wherever the slope is
-  ([#1](https://github.com/GidonFrischkorn/bmmtools/issues/1)).
-* `coding = "contrast"` with the default contrasts
-  (`stats::contr.treatment`), or any contrast matrix with column names,
-  now recovers: the matrix's column names made brms call the contrast
-  `task2` where the truth says `task1`, and scoring stopped with "No
-  term in `truth` matches an estimated parameter". The column names are
-  dropped, so the contrast is always `<task_col>1` … `<task_col>(k-1)`.
-  Unnamed contrasts such as `bayestestR::contr.equalprior` were not
-  affected ([#1](https://github.com/GidonFrischkorn/bmmtools/issues/1)).
+* The help page of `recovery_grid()` gains a section "Backend", `?sbc`
+  points to it, and "Running a recovery study" a paragraph: use cmdstanr
+  for grids and SBC. Under rstan every fit compiles its model again
+  (19–23 s per fit, measured for a small `mixture2p` grid); cmdstanr
+  compiles once and reuses the executable, and
+  `options(cmdstanr_write_stan_file_dir = )` keeps it across R sessions
+  (#18).
 * "Running a recovery study" gains a section on a combined design: one
   grid that recovers population intercepts, a contrast-coded task
   effect, between-subject SDs, correlated subject values and their
   correlations, reported as one table per estimand family, from 20
   sampled fits of `mixture2p`
   ([#1](https://github.com/GidonFrischkorn/bmmtools/issues/1)).
-* The README states what bmmtools reads off a fitted bmm model beyond
-  its exported API (`$links`, `$fixed_parameters`, `$resp_vars`,
-  `$other_vars`, and the generator adapters), and why a bmm parameter
-  rename can break an adapter. Tracked in
-  [#10](https://github.com/GidonFrischkorn/bmmtools/issues/10).
+
+## Comparing implementations
+
+* A benchmark module compares implementations of a model on the same
+  data: `benchmark()` runs them interleaved (A, B, A, B) and returns one
+  row per run, `benchmark_metrics()` measures a single fit, and
+  `benchmark_compile()` times a forced compile on its own. Compile time
+  and sampling time are kept apart, and every rate divides by seconds
+  summed over chains rather than by wall time, which would make the same
+  fit look cheaper on more cores: a run reports `us_per_gradient` (the
+  median over chains of chain sampling time over that chain's leapfrog
+  steps) and ESS per chain-second for bulk and tail, over the
+  post-warmup phase and over warmup plus sampling. `summary()` reports
+  the spread beside the centre per implementation, and the ratio between
+  implementations as a geometric mean of per-pair ratios with a t
+  interval on the logs -- never a bare quotient. No benchmark fit is
+  cached, so none can be served to a recovery grid (#4).
+
+## Validating a model (experimental)
+
+* A validation of a bmm model is now one plan and one run.
+  `validation_plan()` resolves everything a validation needs before
+  anything is fitted: the generating values, a grid of designs with its
+  replications, the sampler budget, the design point and prior of the
+  simulation-based calibration, the prior-check layout, an optional
+  reference implementation, the criteria, the seed, the owner and a
+  version, with a content hash that changes only when what is planned
+  changes. `validation_defaults()` holds the values a plan fills from;
+  entries ship for `mixture2p` and `ezdm`, and a model without one needs
+  `pars`. `run_validation()` runs the stages in order (run record, prior
+  predictive check, SBC, recovery grid, computation, identifiability,
+  individual differences, agreement) into one directory, each cached
+  under its own folder. A rerun reads every stage whose inputs did not
+  change, a stage that fails is recorded with its message while the
+  others run, and stages that do not exist yet (data requirements,
+  model recovery, posterior checks) are listed as not run with their
+  issue. The result keeps every stage's own object and adds
+  `card_numbers()`, every number a card prints with its Monte Carlo
+  standard error, `verdict_table()`, each criterion in words with its
+  value and verdict, and a headline that says "validated" only with the
+  plan version beside it. `compare_validations()` flags the numbers that
+  moved between two runs by more than their Monte Carlo error (#21, #9).
+* The six validation functions above are experimental, and their help
+  pages say so: no validation card has been made with them yet, so
+  their arguments, the stages a run holds and the shape of its result
+  can still change.
+
+## Infrastructure and documentation
+
 * The R-CMD-check workflow now checks bmmtools against both released
   bmm and bmm's `develop` branch (weekly on a schedule, and on every
   push and pull request), and installs SBC so `test-sbc.R`'s 47
@@ -264,6 +322,22 @@
   guard per model with the new `skip_if_no_bmm_model()`, replacing
   `skip_if_no_bmm_sdt()`, which only ever checked for `sdt_yn`. Tracked
   in [#7](https://github.com/GidonFrischkorn/bmmtools/issues/7).
+* The README states what bmmtools reads off a fitted bmm model beyond
+  its exported API (`$links`, `$fixed_parameters`, `$resp_vars`,
+  `$other_vars`, and the generator adapters), and why a bmm parameter
+  rename can break an adapter. Tracked in
+  [#10](https://github.com/GidonFrischkorn/bmmtools/issues/10).
+
+## Known limitations
+
+* A grid cell is not reproducible from its `seed` alone. Two runs of the
+  same `ezdm` grid with the same `seed` simulated identical data and
+  passed the same sampler seed, but gave different chains: estimates
+  differed by up to 0.036, and 2 of 360 population interval verdicts
+  changed. The likely cause, not yet confirmed, is that bmm draws the
+  initial values from R's random number generator, which `fit_cached()`
+  does not seed. A cached fit is read back as it was; a refit is a new
+  draw.
 
 # bmmtools 0.2.0
 
