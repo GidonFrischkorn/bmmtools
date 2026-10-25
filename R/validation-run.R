@@ -11,6 +11,8 @@
 
 #' Run a validation plan
 #'
+#' `r lifecycle::badge("experimental")`
+#'
 #' Executes a [validation_plan()] stage by stage into `dir`, where every
 #' stage keeps its result and its status. A rerun reads the stages whose
 #' inputs have not changed and runs the rest, so an interrupted run is
@@ -61,7 +63,7 @@
 #' `"not applicable"`, `"excluded"`). A failed stage is never an error of
 #' `run_validation()`.
 #'
-#' The headline (D80) is `"incomplete"` while a required stage that
+#' The headline is `"incomplete"` while a required stage that
 #' exists is not `"ok"`; `"not validated"` when a required criterion
 #' failed; `"not judged"` when none failed but one could not be evaluated
 #' (a response without a known range, say); and `"validated"`, printed
@@ -815,6 +817,8 @@ validation_stage_rows <- function(plan, records) {
 
 #' The numbers of a validation, one per row
 #'
+#' `r lifecycle::badge("experimental")`
+#'
 #' Every number a validation card prints, in one long tibble, so a card
 #' can be checked against it and two runs compared with
 #' [compare_validations()].
@@ -1103,6 +1107,8 @@ numbers_agreement <- function(x) {
 # verdicts and the headline ---------------------------------------------
 
 #' The verdict of every stage against the plan's criteria
+#'
+#' `r lifecycle::badge("experimental")`
 #'
 #' One row per criterion, with the bar written out, so a card can print
 #' the criterion next to its verdict rather than a bare pass or fail.
@@ -1483,9 +1489,11 @@ validation_headline <- function(result) {
 
 #' Compare the numbers of two validations
 #'
+#' `r lifecycle::badge("experimental")`
+#'
 #' Joins the [card_numbers()] of an earlier and a later run and flags the
 #' numbers that moved by more than their Monte Carlo error, so a card
-#' regenerated after a bmm release can say what changed (D84).
+#' regenerated after a bmm release can say what changed.
 #'
 #' @param old,new Each a `bmmtools_validation`, a path to its
 #'   `result.rds` or its directory, or a [card_numbers()] tibble.

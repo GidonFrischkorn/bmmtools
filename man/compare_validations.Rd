@@ -23,7 +23,10 @@ attributes \code{old_bmm} and \code{new_bmm} name the bmm versions of the two
 runs, and \code{n_compared} counts the numbers present in both.
 }
 \description{
+\ifelse{html}{\href{https://lifecycle.r-lib.org/articles/stages.html#experimental}{\figure{lifecycle-experimental.svg}{options: alt='[Experimental]'}}}{\strong{[Experimental]}}
+}
+\details{
 Joins the \code{\link[=card_numbers]{card_numbers()}} of an earlier and a later run and flags the
 numbers that moved by more than their Monte Carlo error, so a card
-regenerated after a bmm release can say what changed (D84).
+regenerated after a bmm release can say what changed.
 }
