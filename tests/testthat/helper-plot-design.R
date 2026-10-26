@@ -15,14 +15,18 @@ design_fixture <- function(reps = 4L) {
     condition <- sprintf("row-%d", i)
     # precision grows with trials, so the profiles have a direction
     noise <- 0.4 / sqrt(grid$n_trials[[i]] / 30)
-    hw <- 1.96 * noise
     group <- function(level, ids, true_value) {
-      estimate <- true_value + stats::rnorm(length(true_value), 0, noise)
+      n_rows <- length(true_value)
+      estimate <- true_value + stats::rnorm(n_rows, 0, noise)
+      # every interval its own width, so that the widths' bars over the
+      # replications differ from a bar over every row
+      post_sd <- noise * stats::runif(n_rows, 0.7, 1.3)
+      hw <- 1.96 * post_sd
       # outside tibble(), whose `level` column would mask the argument
       contraction <- if (level == "subject") {
-        NA_real_
+        stats::runif(n_rows, 0.3, 0.8)
       } else {
-        stats::runif(length(true_value), 0.9, 0.99)
+        stats::runif(n_rows, 0.9, 0.99)
       }
       tibble::tibble(
         term = names(true_value), estimate = estimate,
@@ -34,8 +38,8 @@ design_fixture <- function(reps = 4L) {
         condition = condition, estimator = "bayes",
         ci_low_50 = estimate - hw / 2.9, ci_high_50 = estimate + hw / 2.9,
         covered_50 = abs(estimate - true_value) <= hw / 2.9,
-        post_mean_link = estimate, post_sd_link = noise,
-        z = (estimate - true_value) / noise,
+        post_mean_link = estimate, post_sd_link = post_sd,
+        z = (estimate - true_value) / post_sd,
         contraction = contraction,
         replication = rep
       )

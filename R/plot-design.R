@@ -94,11 +94,39 @@ check_design_axes <- function(x_axis, color_by, design, call) {
   invisible(NULL)
 }
 
+#' Refuse a design column named like a column of the plot's own data
+#'
+#' The plot data copy every design column next to their own columns, so
+#' a design column of the same name would be overwritten and drawn as
+#' something else, without an error.
+#'
+#' @noRd
+check_design_names <- function(design, type, call) {
+  own <- if (identical(type, "convergence")) {
+    c("pass", "label", "dark")
+  } else {
+    c("metric", "value", "lower", "upper", "colour_group")
+  }
+  clash <- intersect(design, own)
+  if (length(clash) > 0L) {
+    cli::cli_abort(
+      c(
+        "The design column{?s} {.field {clash}} {?has/have} the name of a \\
+         column the figure is drawn from.",
+        i = "Rename {cli::qty(clash)}{?it/them} in the grid given to \\
+             {.fn recovery_grid}."
+      ),
+      call = call
+    )
+  }
+  invisible(NULL)
+}
+
 #' The replication-level part of the bars: what a summary has dropped
 #'
 #' One row per condition and term with the MCSE of the RMSE (the MSE's
 #' MCSE from Morris et al., 2019, Table 6, through the delta method) and
-#' of the mean CrI widths and contraction (SD over the replications'
+#' of the mean CrI widths, contraction and z (SD over the replications'
 #' means / sqrt(R)), and the count of rows behind each rate.
 #'
 #' @noRd
@@ -150,7 +178,8 @@ design_row_mcse <- function(rows) {
         per_rep(d$contraction)
       } else {
         NA_real_
-      }
+      },
+      z_mean = if ("z" %in% names(d)) per_rep(d$z) else NA_real_
     )
   })
   dplyr::bind_rows(pieces)
@@ -203,6 +232,18 @@ design_bounds <- function(metric, s, level, row_mcse) {
   }
   if (metric == "r") {
     return(list(lower = s$r_low, upper = s$r_high))
+  }
+  if (metric %in% c("z_mean", "z_sd") && identical(level, "subject")) {
+    # summary()'s z MCSEs count every subject as independent, which the
+    # subjects of one replication, sharing its population posterior, are
+    # not. The mean z takes the SD of the replications' means instead.
+    # The SD of z gets no bar: it pools the subjects of every replication,
+    # so it also holds the spread between the replications' means, and the
+    # SD of the replications' own SDs is the MCSE of a smaller number
+    if (metric == "z_mean" && !is.null(row_mcse)) {
+      return(plus_minus(row_mcse$z_mean[at]))
+    }
+    return(list(lower = none, upper = none))
   }
   if (paste0(metric, "_mcse") %in% names(s)) {
     return(plus_minus(s[[paste0(metric, "_mcse")]]))
@@ -415,6 +456,24 @@ design_theme <- function(p) {
 #' depend on ten replications per design. [plot_recovery()] shows the
 #' estimates of one design against their truth.
 #'
+#' A filter on `x` reaches the profiles of its rows and the model
+#' correlations. The convergence tiles and the cell metrics draw the
+#' designs `x` holds and count every replication of them: an errored fit
+#' has no rows, so a filter on replications or on `converged` cannot be
+#' read back from `x`, and a message says so. A design without rows
+#' (every fit errored, or every fit in the replications `x` holds) is
+#' still drawn, unless `x` was filtered by condition to designs whose
+#' values it does not share; a message names it then. A filter that
+#' removes every row of a design that ran in those replications removes
+#' its tile.
+#'
+#' A figure refuses a design column named like a column it is drawn
+#' from: `value`, `lower`, `upper`, `metric` or `colour_group`
+#' in a profile, `pass`, `label` or `dark` in the tiles, `status`,
+#' `converged`, `failed` or `fit_seconds` in the tiles and the cell
+#' metrics, and a column of the correlation summary at the correlation
+#' level. Rename it in the grid.
+#'
 #' @section Error bars:
 #' Each metric's bar has one source, stated here so that a figure can be
 #' read without the code:
@@ -436,17 +495,25 @@ design_theme <- function(p) {
 #'   dropped them, its complete pairs. At the subject level it is the
 #'   count behind the between-replication MCSE that
 #'   [summary()][summary.bmmtools_recovery()] reports (the effective n of
-#'   [smallest_design()]), or the replications at a rate of 0 or 1.
+#'   [smallest_design()]), or the replications at a rate of 0 or 1. A
+#'   subject rate of exactly 0 or 1 has a between-replication MCSE of 0,
+#'   which carries no count, so the interval at the replications is
+#'   conservative: it can be much wider than at a rate just below 1.
 #' * `r`: the pooled interval `r_low` to `r_high` of
 #'   [summary()][summary.bmmtools_recovery()].
 #' * `reliability_model`, `reliability_true`, `reliability_gap`,
 #'   `z_mean`, `z_sd`: ±1 of the MCSE column
-#'   [summary()][summary.bmmtools_recovery()] reports.
+#'   [summary()][summary.bmmtools_recovery()] reports. At the subject
+#'   level that MCSE counts every subject as independent and understates,
+#'   so `z_mean` takes ±1 MCSE, the SD of the replications' mean z /
+#'   sqrt(R), and `z_sd` has no bar: it pools the subjects of every
+#'   replication, so it also holds the spread between their mean z, which
+#'   a bar from the replications' own SDs would leave out.
 #' * `fit_seconds`: ±1 MCSE, the SD over fits / sqrt(fits).
 #'
 #' Any other metric is drawn without a bar. From a summary, which has
-#' dropped the replications, `rmse`, the widths and contraction have no
-#' bar.
+#' dropped the replications, `rmse`, the widths, contraction and the
+#' subject-level `z_mean` have no bar.
 #'
 #' @param x A `bmmtools_recovery` object from [recovery_grid()], or its
 #'   [summary()][summary.bmmtools_recovery()]. A summary draws profiles
@@ -536,6 +603,7 @@ plot_design.bmmtools_recovery <- function(x,
   }
   design <- design_columns_of(grid)
   check_design_axes(x_axis, color_by, design, call)
+  check_design_names(design, type, call)
   if (type == "convergence") {
     return(design_convergence_plot(x, grid, x_axis, color_by, call))
   }
@@ -577,11 +645,53 @@ plot_design.bmmtools_recovery <- function(x,
       )
       rows <- rows[rows$estimator == "model", ]
     }
-    rows <- rows[rows$condition %in% x$condition, ]
+    # rows bound from two grids can hold both scales, which the summary
+    # keeps apart and the figure cannot: draw the attribute's own scale
+    scale <- attr(cors, "scale")
+    scales <- unique(rows$scale)
+    if (length(scales) > 1L) {
+      if (!rlang::is_string(scale) || !scale %in% scales) {
+        cli::cli_abort(
+          c(
+            "The model correlations hold the scales {.val {scales}}.",
+            i = "Keep the correlations of one scale."
+          ),
+          call = call
+        )
+      }
+      cli::cli_inform(
+        "Drawing the model correlations on the {.val {scale}} scale; \\
+         {.val {setdiff(scales, scale)}} {?is/are} left out."
+      )
+      rows <- rows[rows$scale == scale, ]
+    }
+    # the fits `x` still holds, so that a filter on replications reaches
+    # the correlations too
+    if (!is.null(rows[["replication"]]) && !is.null(x[["replication"]])) {
+      held <- paste(rows$condition, rows$replication, sep = "\r") %in%
+        paste(x$condition, x$replication, sep = "\r")
+    } else {
+      held <- rows$condition %in% x$condition
+    }
+    rows <- rows[held, ]
     s <- tibble::as_tibble(unclass(summary(new_bmmtools_cor_recovery(
       rows,
       scale = attr(cors, "scale"), ci_level = attr(cors, "ci_level")
     ))))
+    # grid_design_columns() renames clashes with the recovery summary, not
+    # with the correlation summary's own columns
+    clash <- intersect(design, names(s))
+    if (length(clash) > 0L) {
+      cli::cli_abort(
+        c(
+          "The design column{?s} {.field {clash}} {?has/have} the name of \\
+           a column of the correlation summary.",
+          i = "Rename {cli::qty(clash)}{?it/them} in the grid given to \\
+               {.fn recovery_grid}."
+        ),
+        call = call
+      )
+    }
     at <- match(s$condition, grid$condition)
     for (column in design) s[[column]] <- grid[[column]][at]
   } else {
@@ -632,12 +742,21 @@ plot_design.bmmtools_recovery_summary <- function(x,
       call = call
     )
   }
-  # a grid summary carries its design columns between `condition` and
-  # `term`, where new_bmmtools_recovery_summary() puts them
+  # a grid summary's design columns are those outside its contract that
+  # hold one value per condition: by name, not position, so a relocated
+  # column is still one, and a column added per term is a metric; so is
+  # one asked for by `metric`
   design <- character()
   if ("condition" %in% names(x)) {
-    between <- seq_len(match("term", names(x)) - 1L)
-    design <- setdiff(names(x)[between], "condition")
+    extra <- setdiff(names(x), c(
+      "condition", recovery_summary_columns(), precision_summary_columns()
+    ))
+    constant <- vapply(extra, function(column) {
+      all(tapply(x[[column]], x$condition, function(v) {
+        length(unique(v)) == 1L
+      }))
+    }, logical(1))
+    design <- setdiff(extra[constant], metric)
   }
   if (length(design) == 0L) {
     cli::cli_abort(
@@ -650,6 +769,7 @@ plot_design.bmmtools_recovery_summary <- function(x,
     )
   }
   check_design_axes(x_axis, color_by, design, call)
+  check_design_names(design, "profile", call)
   if (!is.null(metric) && any(metric %in% design_cell_metrics())) {
     cli::cli_abort(
       "{.val {design_cell_metrics()}} come from the grid's cells, which a \\
@@ -720,11 +840,20 @@ check_cell_metrics <- function(metric, call) {
 #' The grid's cells joined to the design, or an error naming what is
 #' missing
 #'
-#' Only the columns read here are kept, so that a grid column of the
-#' same name cannot replace them in the join, and only the designs `x`
-#' still has rows for, so that a filtered object draws what it holds. A
-#' component grid's cells have no `failed` or `fit_seconds`; they are
-#' `NA`.
+#' Cells are kept by condition, every replication of each: an errored
+#' fit has no rows, so which replications a filter meant to keep cannot
+#' be read from `x` (a message says so). A design with no rows is kept
+#' when its fits ran only in replications `x` does not hold (a filter on
+#' replications removed them) or when no fit of it ran; `x` counts as
+#' filtered by condition when a design ran in its replications and has
+#' no rows, and an errored design is then kept only where each of its
+#' design values is one a kept design has, with a message naming those
+#' left out.
+#'
+#' Only the cell columns read here are kept. A design column named like
+#' one of them is refused, because the figures read both under that
+#' name. A component grid's cells have no `failed` or `fit_seconds`;
+#' they are `NA`.
 #'
 #' @noRd
 design_cells <- function(x, grid, call) {
@@ -736,8 +865,67 @@ design_cells <- function(x, grid, call) {
       call = call
     )
   }
+  read <- c("status", "converged", "failed", "fit_seconds")
+  clash <- intersect(design_columns_of(grid), read)
+  if (length(clash) > 0L) {
+    cli::cli_abort(
+      c(
+        "The grid has a design column named {.field {clash}}, which the \\
+         cells also use.",
+        i = "The cells cannot be drawn by design; the profiles of the \\
+             summary metrics still can."
+      ),
+      call = call
+    )
+  }
   cells <- tibble::as_tibble(cells)
-  cells <- cells[cells$condition %in% x$condition, , drop = FALSE]
+  ok <- (cells[["status"]] %||% rep("ok", nrow(cells))) %in% "ok"
+  # by condition: an errored fit has no rows, so which replications a
+  # filter on `x` meant to keep cannot be read from `x`, and every
+  # replication of a design drawn is counted
+  shown <- cells$condition %in% x$condition
+  in_reps <- rep(TRUE, nrow(cells))
+  if (!is.null(cells[["replication"]]) && !is.null(x[["replication"]])) {
+    in_reps <- cells$replication %in% x$replication
+  }
+  # a design whose fits ran only in replications `x` does not hold lost
+  # its rows to a filter on replications, not on conditions
+  rowless <- !shown & cells$condition %in% cells$condition[ok] &
+    !cells$condition %in% cells$condition[ok & in_reps]
+  # a design with no fit that ran has no rows to filter
+  errored <- !cells$condition %in% cells$condition[ok]
+  if (any(errored) && any(!shown & ok & in_reps)) {
+    # `x` was filtered by condition: keep an errored design only where
+    # each of its design values is one a kept design has, and say which
+    # it leaves out, since the filter could not name them
+    at <- match(cells$condition, grid$condition)
+    held <- grid[grid$condition %in% x$condition, , drop = FALSE]
+    out_of_view <- errored
+    for (column in design_columns_of(grid)) {
+      errored <- errored & grid[[column]][at] %in% held[[column]]
+    }
+    left_out <- unique(cells$condition[out_of_view & !errored])
+    if (length(left_out) > 0L) {
+      cli::cli_inform(
+        "Leaving out {.val {left_out}}: every fit there errored, and its \\
+         design is not among those {.arg x} was filtered to."
+      )
+    }
+  }
+  kept <- shown | rowless | errored
+  if (any(kept & ok & !in_reps)) {
+    # nolint next: object_usage_linter. Used by cli's glue interpolation.
+    drawn <- unique(cells$condition[rowless])
+    cli::cli_inform(c(
+      "The cells count every replication of a design; a filter on \\
+       {.field replication} does not reach them.",
+      i = if (length(drawn) > 0L) {
+        "{.val {drawn}} {?has/have} no rows in {.arg x}, its fits in those \\
+         replications having errored, and {?is/are} drawn."
+      }
+    ))
+  }
+  cells <- cells[kept, , drop = FALSE]
   out <- tibble::tibble(
     condition = cells$condition,
     status = cells[["status"]] %||% rep("ok", nrow(cells)),
@@ -745,8 +933,10 @@ design_cells <- function(x, grid, call) {
     failed = cells[["failed"]] %||% rep(NA_character_, nrow(cells)),
     fit_seconds = cells[["fit_seconds"]] %||% rep(NA_real_, nrow(cells))
   )
-  # the grid, not the cells, carries the design: join on the condition
-  tibble::as_tibble(merge(out, grid, by = "condition", sort = FALSE))
+  # the grid, not the cells, carries the design
+  at <- match(out$condition, grid$condition)
+  for (column in design_columns_of(grid)) out[[column]] <- grid[[column]][at]
+  out
 }
 
 #' Two designs that share the axes would be drawn as one point or tile
@@ -757,6 +947,20 @@ check_design_unique <- function(data, keys, design, call) {
   }
   # nolint next: object_usage_linter. Used by cli's glue interpolation.
   others <- setdiff(design, keys)
+  if (length(others) == 0L) {
+    # the same design twice: the rows differ in something that is not a
+    # design column, such as a scale or an estimator
+    cli::cli_abort(
+      c(
+        "Several rows share the same {.field {keys}}.",
+        x = "No design column tells them apart, so they would be drawn on \\
+             top of each other.",
+        i = "Keep one row of each: filter {.arg x}, for example to one \\
+             {.field scale} or {.field estimator}."
+      ),
+      call = call
+    )
+  }
   cli::cli_abort(
     c(
       "Several designs share the same {.field {intersect(keys, design)}}.",
@@ -842,6 +1046,7 @@ design_coverage_plot <- function(x, call) {
       call = call
     )
   }
+  check_one_estimator(rows, call)
   nominal <- unique(rows$ci_level[!is.na(rows$ci_level)])
   if (length(nominal) != 1L) nominal <- attr(x, "ci_level") %||% 0.95
   keys <- paste(rows$level, rows$term, sep = "\r")

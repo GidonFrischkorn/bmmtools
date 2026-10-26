@@ -71,6 +71,25 @@ every design per term and level, the coverage check that does not
 depend on ten replications per design. \code{\link[=plot_recovery]{plot_recovery()}} shows the
 estimates of one design against their truth.
 }
+\details{
+A filter on \code{x} reaches the profiles of its rows and the model
+correlations. The convergence tiles and the cell metrics draw the
+designs \code{x} holds and count every replication of them: an errored fit
+has no rows, so a filter on replications or on \code{converged} cannot be
+read back from \code{x}, and a message says so. A design without rows
+(every fit errored, or every fit in the replications \code{x} holds) is
+still drawn, unless \code{x} was filtered by condition to designs whose
+values it does not share; a message names it then. A filter that
+removes every row of a design that ran in those replications removes
+its tile.
+
+A figure refuses a design column named like a column it is drawn
+from: \code{value}, \code{lower}, \code{upper}, \code{metric} or \code{colour_group}
+in a profile, \code{pass}, \code{label} or \code{dark} in the tiles, \code{status},
+\code{converged}, \code{failed} or \code{fit_seconds} in the tiles and the cell
+metrics, and a column of the correlation summary at the correlation
+level. Rename it in the grid.
+}
 \section{Error bars}{
 
 Each metric's bar has one source, stated here so that a figure can be
@@ -93,18 +112,26 @@ recovery, those whose truth is not zero); from a summary, which has
 dropped them, its complete pairs. At the subject level it is the
 count behind the between-replication MCSE that
 \link[=summary.bmmtools_recovery]{summary()} reports (the effective n of
-\code{\link[=smallest_design]{smallest_design()}}), or the replications at a rate of 0 or 1.
+\code{\link[=smallest_design]{smallest_design()}}), or the replications at a rate of 0 or 1. A
+subject rate of exactly 0 or 1 has a between-replication MCSE of 0,
+which carries no count, so the interval at the replications is
+conservative: it can be much wider than at a rate just below 1.
 \item \code{r}: the pooled interval \code{r_low} to \code{r_high} of
 \link[=summary.bmmtools_recovery]{summary()}.
 \item \code{reliability_model}, \code{reliability_true}, \code{reliability_gap},
 \code{z_mean}, \code{z_sd}: ±1 of the MCSE column
-\link[=summary.bmmtools_recovery]{summary()} reports.
+\link[=summary.bmmtools_recovery]{summary()} reports. At the subject
+level that MCSE counts every subject as independent and understates,
+so \code{z_mean} takes ±1 MCSE, the SD of the replications' mean z /
+sqrt(R), and \code{z_sd} has no bar: it pools the subjects of every
+replication, so it also holds the spread between their mean z, which
+a bar from the replications' own SDs would leave out.
 \item \code{fit_seconds}: ±1 MCSE, the SD over fits / sqrt(fits).
 }
 
 Any other metric is drawn without a bar. From a summary, which has
-dropped the replications, \code{rmse}, the widths and contraction have no
-bar.
+dropped the replications, \code{rmse}, the widths, contraction and the
+subject-level \code{z_mean} have no bar.
 }
 
 \examples{

@@ -121,7 +121,9 @@ test_that("CrI width and contraction carry the SD over replications", {
   width <- rows$ci_high[at] - rows$ci_low[at]
   got <- pick_row(p$data, "ci_width", "a", 10L, 30L)
   expect_equal(got$value, mean(width))
-  # the fixture's widths are equal within a design, so the bar is zero
+  # one population row per replication, so the SD over rows is the SD
+  # over the replications' means
+  expect_gt(stats::sd(width), 0)
   expect_equal(got$upper - got$lower, 2 * stats::sd(width) / sqrt(sum(at)))
   got <- pick_row(p$data, "contraction", "a", 10L, 30L)
   ctr <- rows$contraction[at]
@@ -163,6 +165,75 @@ test_that("a design where every interval covered keeps a lower bound below 1", {
   z <- stats::qnorm(0.975)
   expect_equal(c(got$value, got$upper), c(1, 1))
   expect_equal(got$lower, 4 / (4 + z^2))
+})
+
+test_that("subject widths and contraction take the SD of replication means", {
+  x <- design_fixture()
+  p <- plot_design(
+    x,
+    level = "subject", metric = c("ci_width", "ci_width_50", "contraction")
+  )
+  rows <- by_design(x, "subject")
+  at <- rows$term == "b" & rows$n_subjects == 20L & rows$n_trials == 30L
+  d <- rows[at, ]
+  by_hand <- function(values) {
+    means <- tapply(values, d$replication, mean)
+    stats::sd(means) / sqrt(length(means))
+  }
+  widths <- list(
+    ci_width = d$ci_high - d$ci_low,
+    ci_width_50 = d$ci_high_50 - d$ci_low_50,
+    contraction = d$contraction
+  )
+  for (metric in names(widths)) {
+    got <- pick_row(p$data, metric, "b", 20L, 30L)
+    expect_equal(got$value, mean(widths[[metric]]))
+    expect_equal(got$upper - got$value, by_hand(widths[[metric]]))
+    expect_equal(got$value - got$lower, by_hand(widths[[metric]]))
+    # the subjects of one replication are not independent draws
+    expect_false(isTRUE(all.equal(
+      got$upper - got$value,
+      stats::sd(widths[[metric]]) / sqrt(nrow(d))
+    )))
+  }
+})
+
+test_that("subject z: mean z over replications, no bar on SD of z or RMSE", {
+  x <- design_fixture()
+  p <- plot_design(x, level = "subject", metric = c("z_mean", "z_sd", "rmse"))
+  rows <- by_design(x, "subject")
+  for (n_subjects in c(10L, 20L)) {
+    at <- rows$term == "a" & rows$n_subjects == n_subjects &
+      rows$n_trials == 100L
+    means <- tapply(rows$z[at], rows$replication[at], mean)
+    got <- pick_row(p$data, "z_mean", "a", n_subjects, 100L)
+    expect_equal(got$value, mean(rows$z[at]))
+    expect_equal(
+      c(got$lower, got$upper),
+      got$value + c(-1, 1) * stats::sd(means) / sqrt(length(means))
+    )
+    # not summary()'s MCSE, which counts every subject as independent
+    s <- summary_row(x, "subject", "a", n_subjects, 100L)
+    expect_false(isTRUE(all.equal(got$upper - got$value, s$z_mean_mcse)))
+  }
+  none <- p$data[p$data$metric %in% c("z_sd", "rmse"), ]
+  expect_true(all(!is.na(none$value)))
+  expect_true(all(is.na(none$lower) & is.na(none$upper)))
+
+  # a summary has dropped the replications, so subject z has no bar
+  from_summary <- plot_design(
+    summary(x),
+    level = "subject", metric = c("z_mean", "z_sd")
+  )$data
+  expect_true(all(is.na(from_summary$lower) & is.na(from_summary$upper)))
+
+  # one row per replication: the population keeps summary()'s MCSE
+  pop <- plot_design(x, metric = c("z_mean", "z_sd"))$data
+  s <- summary_row(x, "population", "b", 10L, 30L)
+  got <- pick_row(pop, "z_mean", "b", 10L, 30L)
+  expect_equal(got$upper - got$value, s$z_mean_mcse)
+  got <- pick_row(pop, "z_sd", "b", 10L, 30L)
+  expect_equal(got$upper - got$value, s$z_sd_mcse)
 })
 
 test_that("subject r is drawn with its pooled interval from summary()", {
@@ -308,6 +379,29 @@ test_that("pooled coverage pools every design per level and term", {
   expect_setequal(unique(ref$xintercept), c(0.5, 0.95))
 })
 
+test_that("pooled coverage counts only the rows with an interval", {
+  x <- design_fixture()
+  rows <- tibble::as_tibble(x)
+  sd_b <- which(rows$level == "sd" & rows$term == "b")
+  # one fit without a 95 % interval; its 50 % interval stays
+  rows$ci_low[sd_b[[1L]]] <- NA_real_
+  rows$ci_high[sd_b[[1L]]] <- NA_real_
+  rows$covered[sd_b[[1L]]] <- NA
+  y <- new_bmmtools_recovery(rows, scale = "link", ci_level = 0.95)
+  attr(y, "grid") <- attr(x, "grid")
+  p <- plot_design(y, type = "coverage")
+  at <- p$data$level == "sd" & p$data$term == "b"
+  got <- p$data[at & p$data$nominal == 0.95, ]
+  known <- rows$covered[sd_b][-1L]
+  expect_identical(got$n, length(sd_b) - 1L)
+  expect_equal(got$value, mean(known))
+  expect_equal(
+    c(got$lower, got$upper), wilson_by_hand(sum(known), length(known))
+  )
+  got50 <- p$data[at & p$data$nominal == 0.5, ]
+  expect_identical(got50$n, length(sd_b))
+})
+
 # the shipped grid --------------------------------------------------------
 
 test_that("the shipped example grid draws at both of its levels", {
@@ -367,7 +461,7 @@ test_that("a grid run through the mock fitter draws end to end", {
   )
 })
 
-# what the review of 33.1 found ------------------------------------------
+# third design columns, cells and rate counts -----------------------------
 
 # a copy of `x` with its rows replaced, keeping the grid's attributes
 with_rows <- function(x, rows) {
