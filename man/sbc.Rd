@@ -135,9 +135,13 @@ session.}
 \code{SBC::generate_datasets()}, so the same seed gives the same data
 sets, and passed to the fitter of the prior fit, where it enters
 \code{\link[=fit_cached]{fit_cached()}}'s key. \code{NULL} leaves the random number generator
-alone and is recorded as \code{NA}. The data set fits take no seed:
-SBC's \code{future.seed} handles them, and one seed across fits would
-correlate them.}
+alone and is recorded as \code{NA}. The data set fits take no seed of
+their own, since one seed across fits would correlate them; SBC's
+\code{future.seed} gives each its own stream, and those streams start
+from \code{seed}, because \code{SBC::compute_SBC()} runs under it. So the
+same seed gives the same fits and ranks too, except for results
+SBC's own cache (\code{cache_mode = "results"}) reuses from a run made
+before bmmtools seeded them.}
 
 \item{file}{Where to cache the \strong{prior fit}, as in \code{\link[=prior_check]{prior_check()}}.
 \code{NULL} uses a temporary file. The data set fits are cached by SBC

@@ -1996,3 +1996,39 @@ test_that("an adapter that reads no design gets none from data", {
     expect_named(call$data, c("id", "y"))
   }
 })
+
+test_that("the data set fits are reproducible from the seed (Milestone 34, D112)", {
+  # SBC's future.seed derives each fit's stream from the caller's state;
+  # the mock draws inside every fit, as bmm's initial values do
+  skip_if_not_installed("SBC")
+  skip_if_not_installed("bmm")
+  skip_on_cran()
+  dataset_draws <- function() {
+    mock <- rng_mock_fitter(sbc_mock_fitter())
+    sbc_run(mock, n_sims = 4L, seed = 11)
+    mock$draws$values[-1L]
+  }
+  withr::local_seed(42)
+  first <- dataset_draws()
+  before <- get(".Random.seed", envir = globalenv())
+  second <- dataset_draws()
+
+  expect_length(first, 4L)
+  expect_identical(first, second)
+  expect_identical(get(".Random.seed", envir = globalenv()), before)
+})
+
+test_that("check_sbc_args refuses a seed beyond R's integer range", {
+  expect_error(
+    check_sbc_args(NULL, 3e9, NULL, "none", NULL),
+    regexp = "integer.max|2147483647",
+    class = "rlang_error"
+  )
+  expect_error(
+    check_sbc_args(NULL, -3e9, NULL, "none", NULL),
+    regexp = "integer.max|2147483647",
+    class = "rlang_error"
+  )
+  expect_null(check_sbc_args(NULL, .Machine$integer.max, NULL, "none", NULL))
+  expect_null(check_sbc_args(NULL, NULL, NULL, "none", NULL))
+})

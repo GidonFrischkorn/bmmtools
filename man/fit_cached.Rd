@@ -38,16 +38,18 @@ not what it is, and does not. An \code{init} given as a function enters
 the key by its text, so a
 closure built afresh in every iteration of a loop still matches.
 brms's \code{file_refit} and \code{file_compress} are refused: there is one
-cache, not two.}
+cache, not two. The fitter runs under \code{seed}, see "Seed" below.}
 
 \item{.fitter}{The fitting function, \code{bmm::bmm()} by default. Tests
 inject a stand-in so that no model is compiled.}
 }
 \value{
 The fit, with an attribute \code{bmmtools_cache}: a list of
-\code{file}, \code{key}, \code{reused} and \code{seconds}, the wall time the fit took
+\code{file}, \code{key}, \code{reused}, \code{seconds}, the wall time the fit took
 when it was run, which is the first fit's time when this call reused
-one and \code{NA} for a fit cached before bmmtools recorded it.
+one and \code{NA} for a fit cached before bmmtools recorded it, and
+\code{rng_seeded}, whether the fit ran under a seed (\code{NA} for a fit cached
+before bmmtools recorded it; see "Seed").
 }
 \description{
 A cache for the fits a recovery study produces. brms's own \code{file}
@@ -74,6 +76,45 @@ and outside the key. It is deliberately not a key component: a
 component that changes with every run would differ from every stored
 key and refit everything a resumed study had already fitted.
 }
+\section{Seed}{
+
+A \code{seed} reaches the sampler and also R's random number generator:
+the fitter is called under \code{withr::with_seed(seed)}, because bmm draws
+the initial values of every chain from R's generator inside the fit.
+The same \code{seed} therefore gives the same initial values and the same
+draws, and the caller's random number stream is left as it was. This
+was measured with both backends, each of which calls bmm's
+initial-value function in the R session before it starts the chains
+(with brms's \code{future = TRUE} each chain calls it inside its own
+future instead, which was not measured): with cmdstanr on an \code{ezdm}
+cell with 1 or 4 \code{cores}, and with rstan
+2.32.7 and cmdstanr 0.9.0 on a \code{mixture2p} fit (10 subjects of 30
+trials, 2 chains of 600 iterations, \code{cores = 2}) in two fresh R
+sessions (without the seeded fitter, the two rstan runs differed in
+initial values and draws). Without a \code{seed} (or with \code{NA}) nothing is
+seeded and the initial values are drawn from the caller's stream.
+A \code{seed} larger than \code{.Machine$integer.max} in absolute value is
+refused with an error when the fit is run, because R's generator
+takes no larger seed; a fit already cached under such a seed is still
+read back.
+Three things the seed does not fix: within-chain threading through
+\code{brms::threading()} with its default \code{static = FALSE}, whose chains
+differ between runs once the data are split into more than one
+partial sum (\code{static = TRUE} repeats); the caller's \code{RNGkind()}, which
+\code{withr::with_seed()} keeps, so a fit inside a future with
+\code{future.seed = TRUE} (L'Ecuyer-CMRG) draws other initial values than
+the same fit run sequentially under the default kind; and the random
+number arithmetic of another platform or R version.
+
+Fits cached before bmmtools seeded the initial values (0.3.0 and
+earlier) still match their key and are read back as they were; the
+attribute's \code{rng_seeded} is \code{NA} for them, and \code{TRUE} or \code{FALSE} for a
+fit run since. Only the cache's meta file and this attribute record
+it: grid sidecars, \code{\link[=recovery_grid]{recovery_grid()}} results and \code{\link[=run_validation]{run_validation()}}
+records do not, so a grid resumed over fits cached by 0.3.0 or
+earlier mixes fits drawn both ways and its result cannot say which.
+}
+
 \examples{
 \dontrun{
 fit <- fit_cached(

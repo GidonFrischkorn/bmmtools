@@ -857,7 +857,16 @@ coerce_like <- function(value, template) {
 #'   paired ratios dependent.
 #' @param ... Passed to every implementation's fitter (`chains`, `iter`,
 #'   `cores`, `seed`, `backend`, ...). Pass the same arguments to all of
-#'   them; `summary()` warns when the recorded settings differ.
+#'   them; `summary()` warns when the recorded settings differ. With a
+#'   `seed`, each fit is also called under `withr::with_seed(seed)`, as in
+#'   [fit_cached()], so that the initial values bmm draws from R's
+#'   random number generator are the same in every run. With one data
+#'   frame for `data` and a `seed`, every run of an implementation is
+#'   therefore the same fit, with the same draws and the same ESS; only
+#'   the wall time varies, so the interval `summary()` gives for the
+#'   ESS-per-second ratio measures timing noise of the machine, not
+#'   variation between fits. To measure efficiency across fits, pass a
+#'   list of data sets, one per pair.
 #' @param runs Recorded pairs per implementation.
 #' @param warmup_runs Leading runs per implementation that are recorded
 #'   and then excluded from `summary()`.
@@ -943,6 +952,8 @@ benchmark <- function(implementations,
     )
   }
   dots <- rlang::list2(...)
+  # once here, so an unusable seed stops the call instead of every run
+  fit_rng_seed(dots[["seed"]])
   sets <- benchmark_data_list(data, warmup_runs + runs)
   compile_table <- benchmark_compile_step(
     impls, sets[[1L]], dots, compile, .compiler
@@ -1073,8 +1084,12 @@ benchmark_one_run <- function(fitter, data, dots, metrics, identity,
     warmup = dots[["warmup"]], thin = dots[["thin"]]
   )
   started <- Sys.time()
+  # under the seed, as fit_cached() fits, so that the initial values bmm
+  # draws from R's generator repeat (D112)
   fit <- tryCatch(
-    rlang::exec(fitter, data, !!!dots),
+    with_seed_if(
+      fit_rng_seed(dots[["seed"]]), rlang::exec(fitter, data, !!!dots)
+    ),
     error = function(e) e
   )
   if (inherits(fit, "condition")) {

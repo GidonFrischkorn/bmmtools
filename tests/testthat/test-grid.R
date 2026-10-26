@@ -1845,3 +1845,29 @@ test_that("ML rows without the moments rerun ML alone", {
   expect_type(ml$post_sd_link, "double")
   expect_false(anyNA(ml$post_sd_link))
 })
+
+test_that("a grid run twice through a fitter that draws gives identical sidecars", {
+  # Milestone 34: the fitter draws from R's generator inside the call, as
+  # bmm's initial values do, and the draw moves every estimate; two runs
+  # into two directories (no cache shared) agree in everything but the
+  # fit's wall time, which the sidecar records as `fit_seconds`
+  skip_if_not_installed("bmm")
+  dirs <- c(withr::local_tempdir(), withr::local_tempdir())
+  runs <- lapply(dirs, function(dir) {
+    suppressMessages(grid_run(dir, rng_mock_fitter(grid_mock_fitter())))
+  })
+
+  sidecars <- lapply(dirs, function(dir) {
+    files <- sort(list.files(dir, "-est\\.rds$"))
+    stats::setNames(lapply(file.path(dir, files), function(path) {
+      sidecar <- readRDS(path)
+      sidecar[setdiff(names(sidecar), "fit_seconds")]
+    }), files)
+  })
+  expect_length(sidecars[[1L]], 4L)
+  expect_identical(sidecars[[1L]], sidecars[[2L]])
+  expect_identical(runs[[1L]]$estimate, runs[[2L]]$estimate)
+  expect_identical(runs[[1L]]$covered, runs[[2L]]$covered)
+  # the draws are what the estimates carry, so the test can fail
+  expect_gt(length(unique(runs[[1L]]$estimate)), 1L)
+})

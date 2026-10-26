@@ -52,28 +52,75 @@ cache_paths <- function(file) {
 #' A fit cached before this file existed has no meta file, and reports
 #' `NA` seconds rather than failing.
 #'
+#' `rng_seeded` says whether the fitter ran under a seed, which since
+#' Milestone 34 also fixes the initial values bmm draws from R's random
+#' number generator (D110). It stays out of the key for the same reason
+#' as the time: the seed is already a component, and a fit cached before
+#' the field existed reads `NA` and is reused as it was.
+#'
 #' @noRd
-write_cache_meta <- function(path, seconds) {
+write_cache_meta <- function(path, seconds, rng_seeded) {
   meta <- list(
     seconds = as.double(seconds),
     fitted_at = Sys.time(),
-    bmmtools_version = bmmtools_version()
+    bmmtools_version = bmmtools_version(),
+    rng_seeded = rng_seeded
   )
   write_atomic(path, function(tmp) saveRDS(meta, tmp))
   meta
 }
 
 #' @noRd
-read_cache_seconds <- function(path) {
+read_cache_meta <- function(path) {
   if (!file.exists(path)) {
-    return(NA_real_)
+    return(NULL)
   }
-  meta <- tryCatch(readRDS(path), error = function(e) NULL)
+  tryCatch(readRDS(path), error = function(e) NULL)
+}
+
+#' @noRd
+read_cache_seconds <- function(meta) {
   seconds <- meta$seconds
   if (!is.numeric(seconds) || length(seconds) != 1L) {
     return(NA_real_)
   }
   as.double(seconds)
+}
+
+#' @noRd
+read_cache_rng_seeded <- function(meta) {
+  seeded <- meta$rng_seeded
+  if (!is.logical(seeded) || length(seeded) != 1L) {
+    return(NA)
+  }
+  seeded
+}
+
+#' The seed R's generator runs the fitter under, or `NULL` for none
+#'
+#' `NA` is brms's own default and means "draw one", so it seeds nothing,
+#' as `NULL` does.
+#'
+#' @noRd
+fit_rng_seed <- function(seed, call = rlang::caller_env()) {
+  if (is.null(seed) || (length(seed) == 1L && is.na(seed))) {
+    return(NULL)
+  }
+  limit <- .Machine$integer.max
+  if (is.numeric(seed) && any(abs(seed) > limit, na.rm = TRUE)) {
+    value <- seed[!is.na(seed) & abs(seed) > limit][[1L]]
+    cli::cli_abort(
+      c(
+        "{.arg seed} must lie between {.val {-limit}} and {.val {limit}}, \\
+         not {format(value, scientific = FALSE)}.",
+        i = "R's random number generator takes no seed whose \\
+             absolute value exceeds {.code .Machine$integer.max}."
+      ),
+      seed = value,
+      call = call
+    )
+  }
+  seed
 }
 
 #' Deparse every formula inside an object
@@ -365,9 +412,11 @@ cache_read <- function(paths, key, lookup, call = rlang::caller_env()) {
       )
     }
   )
+  meta <- read_cache_meta(paths$meta)
   attr(fit, "bmmtools_cache") <- list(
     file = paths$rds, key = key$key, reused = TRUE,
-    seconds = read_cache_seconds(paths$meta)
+    seconds = read_cache_seconds(meta),
+    rng_seeded = read_cache_rng_seeded(meta)
   )
   fit
 }
@@ -423,14 +472,16 @@ cache_announce <- function(paths, lookup, refit) {
 #'   the key by its text, so a
 #'   closure built afresh in every iteration of a loop still matches.
 #'   brms's `file_refit` and `file_compress` are refused: there is one
-#'   cache, not two.
+#'   cache, not two. The fitter runs under `seed`, see "Seed" below.
 #' @param .fitter The fitting function, `bmm::bmm()` by default. Tests
 #'   inject a stand-in so that no model is compiled.
 #'
 #' @return The fit, with an attribute `bmmtools_cache`: a list of
-#'   `file`, `key`, `reused` and `seconds`, the wall time the fit took
+#'   `file`, `key`, `reused`, `seconds`, the wall time the fit took
 #'   when it was run, which is the first fit's time when this call reused
-#'   one and `NA` for a fit cached before bmmtools recorded it.
+#'   one and `NA` for a fit cached before bmmtools recorded it, and
+#'   `rng_seeded`, whether the fit ran under a seed (`NA` for a fit cached
+#'   before bmmtools recorded it; see "Seed").
 #'
 #' @details
 #' The fit and the key are each written to a temporary name and renamed
@@ -442,6 +493,43 @@ cache_announce <- function(paths, lookup, refit) {
 #' and outside the key. It is deliberately not a key component: a
 #' component that changes with every run would differ from every stored
 #' key and refit everything a resumed study had already fitted.
+#'
+#' @section Seed:
+#' A `seed` reaches the sampler and also R's random number generator:
+#' the fitter is called under `withr::with_seed(seed)`, because bmm draws
+#' the initial values of every chain from R's generator inside the fit.
+#' The same `seed` therefore gives the same initial values and the same
+#' draws, and the caller's random number stream is left as it was. This
+#' was measured with both backends, each of which calls bmm's
+#' initial-value function in the R session before it starts the chains
+#' (with brms's `future = TRUE` each chain calls it inside its own
+#' future instead, which was not measured): with cmdstanr on an `ezdm`
+#' cell with 1 or 4 `cores`, and with rstan
+#' 2.32.7 and cmdstanr 0.9.0 on a `mixture2p` fit (10 subjects of 30
+#' trials, 2 chains of 600 iterations, `cores = 2`) in two fresh R
+#' sessions (without the seeded fitter, the two rstan runs differed in
+#' initial values and draws). Without a `seed` (or with `NA`) nothing is
+#' seeded and the initial values are drawn from the caller's stream.
+#' A `seed` larger than `.Machine$integer.max` in absolute value is
+#' refused with an error when the fit is run, because R's generator
+#' takes no larger seed; a fit already cached under such a seed is still
+#' read back.
+#' Three things the seed does not fix: within-chain threading through
+#' `brms::threading()` with its default `static = FALSE`, whose chains
+#' differ between runs once the data are split into more than one
+#' partial sum (`static = TRUE` repeats); the caller's `RNGkind()`, which
+#' `withr::with_seed()` keeps, so a fit inside a future with
+#' `future.seed = TRUE` (L'Ecuyer-CMRG) draws other initial values than
+#' the same fit run sequentially under the default kind; and the random
+#' number arithmetic of another platform or R version.
+#'
+#' Fits cached before bmmtools seeded the initial values (0.3.0 and
+#' earlier) still match their key and are read back as they were; the
+#' attribute's `rng_seeded` is `NA` for them, and `TRUE` or `FALSE` for a
+#' fit run since. Only the cache's meta file and this attribute record
+#' it: grid sidecars, [recovery_grid()] results and [run_validation()]
+#' records do not, so a grid resumed over fits cached by 0.3.0 or
+#' earlier mixes fits drawn both ways and its result cannot say which.
 #'
 #' @examples
 #' \dontrun{
@@ -478,6 +566,10 @@ fit_cached <- function(formula,
   if (lookup$reuse) {
     return(cache_read(paths, key, lookup))
   }
+  # checked after the lookup, so a fit cached under a seed R cannot take
+  # (cmdstanr can) is still read back (D110), and before anything is
+  # written
+  rng_seed <- fit_rng_seed(dots[["seed"]])
 
   cache_announce(paths, lookup, refit)
   dir.create(dirname(paths$rds), recursive = TRUE, showWarnings = FALSE)
@@ -489,18 +581,22 @@ fit_cached <- function(formula,
     rlang::check_installed("bmm", "to fit a model.")
     fitter <- bmm::bmm
   }
+  # only the fitter call runs under the seed: bmm draws the initial values
+  # from R's generator inside it (D111), and the caller's stream is
+  # restored afterwards
   started <- Sys.time()
-  fit <- rlang::exec(
+  fit <- with_seed_if(rng_seed, rlang::exec(
     fitter,
     formula = formula, data = data, model = model, prior = prior, !!!dots
-  )
+  ))
   seconds <- as.double(difftime(Sys.time(), started, units = "secs"))
 
   write_atomic(paths$rds, function(tmp) saveRDS(fit, tmp))
-  meta <- write_cache_meta(paths$meta, seconds)
+  meta <- write_cache_meta(paths$meta, seconds, !is.null(rng_seed))
   write_cache_key(paths$key, key)
   attr(fit, "bmmtools_cache") <- list(
-    file = paths$rds, key = key$key, reused = FALSE, seconds = meta$seconds
+    file = paths$rds, key = key$key, reused = FALSE, seconds = meta$seconds,
+    rng_seeded = meta$rng_seeded
   )
   fit
 }
