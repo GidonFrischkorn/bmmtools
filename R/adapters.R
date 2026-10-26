@@ -504,7 +504,7 @@ generate_ezdm <- function(pars, n_trials, model, trial_design = NULL) {
 #' first; the model names them `mean_rt = c(upper, lower)` and `var_rt =
 #' c(upper, lower)` (`check_data.ezdm()`; measured 2026-10-25 on CRAN bmm
 #' 1.4.1). The constructor accepts one name each and only bmm's data check
-#' objects, so a model like that is refused here, before anything is drawn.
+#' objects, so a model like that is refused here, before any data are drawn.
 #' @noRd
 ezdm_4par_columns <- function(model) {
   vars <- model$resp_vars

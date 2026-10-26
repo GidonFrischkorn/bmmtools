@@ -265,6 +265,128 @@ test_that("the density reads m from its column and NA beyond it as 0", {
   expect_equal(ll, expected)
 })
 
+# fit_ml(method = "optim") refuses what bmm refuses ---------------------------
+
+# bmm's rule (check_data.sdt_ranking()): an NA count beyond a row's m reads
+# as 0, an NA within it is refused. The optim route never runs bmm's data
+# check, so it has to apply the rule itself.
+
+test_that("the optim route refuses an NA count where bmm does, only there", {
+  skip_if_no_bmm_model("sdt_ranking", density = TRUE)
+  skip_if_not_installed("brms")
+  fixed <- simulate_recovery(
+    rank_model(), c(d = 1),
+    n_subjects = 3, n_trials = 60, seed = 1
+  )$data
+  by_col <- simulate_recovery(
+    rank_model("mm"), c(d = 1),
+    n_subjects = 2, n_trials = 3, trial_design = rank_design(), seed = 6
+  )$data
+  # rows 1 to 3 of `by_col` have m = 2, 3 and 4
+  cases <- list(
+    list(model = rank_model(), data = fixed, row = 1, col = "k3"),
+    list(model = rank_model(), data = fixed, row = 2, col = "k4"),
+    list(model = rank_model("mm"), data = by_col, row = 1, col = "k2"),
+    list(model = rank_model("mm"), data = by_col, row = 2, col = "k3"),
+    list(model = rank_model("mm"), data = by_col, row = 1, col = "k3"),
+    list(model = rank_model("mm"), data = by_col, row = 2, col = "k4")
+  )
+  refused <- logical()
+  for (case in cases) {
+    # bmm takes the data as they are, so a refusal is about the NA
+    expect_s3_class(
+      mock_bmm(recovery_formula(case$model), case$data, case$model),
+      "bmmfit"
+    )
+    dat <- as.data.frame(case$data)
+    dat[case$row, case$col] <- NA
+    bmm_refuses <- inherits(
+      try(mock_bmm(recovery_formula(case$model), dat, case$model),
+        silent = TRUE
+      ),
+      "try-error"
+    )
+    if (bmm_refuses) {
+      expect_error(
+        fit_ml(case$model, dat, method = "optim"),
+        paste0("Not so in row ", case$row, " ")
+      )
+    } else {
+      expect_s3_class(
+        fit_ml(case$model, dat, method = "optim"), "bmmtools_ml"
+      )
+    }
+    refused <- c(refused, bmm_refuses)
+  }
+  # both sides of the rule were exercised
+  expect_true(any(refused) && !all(refused))
+})
+
+test_that("the optim route names every row with an NA count within m", {
+  skip_if_no_bmm_model("sdt_ranking", density = TRUE)
+  dat <- as.data.frame(simulate_recovery(
+    rank_model(), c(d = 1),
+    n_subjects = 4, n_trials = 60, seed = 2
+  )$data)
+  dat$k1[2] <- NA
+  dat$k4[4] <- NA
+  expect_error(
+    fit_ml(rank_model(), dat, method = "optim"),
+    "rows 2 and 4"
+  )
+})
+
+# bmm refuses data missing the set-size column or a rank column and names it
+# ("Set-size column 'mm' missing in the data", "Response columns 'k4'
+# missing in the data"; mock backend, CRAN bmm 1.4.1, 2026-10-25).
+
+test_that("the optim route names a missing set-size or rank column", {
+  skip_if_no_bmm_model("sdt_ranking", density = TRUE)
+  by_col <- as.data.frame(simulate_recovery(
+    rank_model("mm"), c(d = 1),
+    n_subjects = 2, n_trials = 3, trial_design = rank_design(), seed = 6
+  )$data)
+  fixed <- as.data.frame(simulate_recovery(
+    rank_model(), c(d = 1),
+    n_subjects = 2, n_trials = 60, seed = 1
+  )$data)
+  no_m <- by_col[setdiff(names(by_col), "mm")]
+  expect_error(
+    fit_ml(rank_model("mm"), no_m, method = "optim"),
+    "no column.*mm",
+    class = "rlang_error"
+  )
+  no_rank <- by_col[setdiff(names(by_col), "k4")]
+  expect_error(
+    fit_ml(rank_model("mm"), no_rank, method = "optim"),
+    "no column.*k4",
+    class = "rlang_error"
+  )
+  no_rank <- fixed[setdiff(names(fixed), "k3")]
+  expect_error(
+    fit_ml(rank_model(), no_rank, method = "optim"),
+    "no column.*k3",
+    class = "rlang_error"
+  )
+})
+
+test_that("the optim route reads an NA count beyond m as the 0 it stands for", {
+  skip_if_no_bmm_model("sdt_ranking", density = TRUE)
+  model <- rank_model("mm")
+  dat <- as.data.frame(simulate_recovery(
+    model, c(d = 1),
+    n_subjects = 2, n_trials = 3, trial_design = rank_design(), seed = 6
+  )$data)
+  # the simulated counts beyond each row's m are 0
+  with_na <- dat
+  with_na$k4[dat$mm < 4] <- NA
+  with_na$k3[dat$mm < 3] <- NA
+  expect_equal(
+    fit_ml(model, with_na, method = "optim")$estimate,
+    fit_ml(model, dat, method = "optim")$estimate
+  )
+})
+
 test_that("prior_check's range for sdt_ranking is 0 to each row's total", {
   skip_if_no_bmm_model("sdt_ranking")
   data <- data.frame(k1 = c(5, 1), k2 = c(3, NA), k3 = 2, k4 = 0)

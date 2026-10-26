@@ -351,6 +351,29 @@ test_that("sbc() simulates m3 with the row totals of data", {
   }
 })
 
+test_that("sbc() counts an NA in m3 data as 0, as bmm does", {
+  skip_if_not_installed("SBC")
+  skip_on_cran()
+  skip_if_not_installed("bmm")
+  # bmm 1.4.1 warns that NA counts are "counted as 0 responses" and takes
+  # each row's trials as its total over the counts it has
+  data <- data.frame(
+    id = c("a", "b"), corr = c(60, 20), other = c(30, NA), npl = c(10, 5)
+  )
+  expect_warning(
+    calls <- run_count_sbc(
+      m3_count_model(), data,
+      count_draws(b_c_Intercept = log(3), b_a_Intercept = log(0.5))
+    ),
+    "counted as 0 responses"
+  )
+  expect_length(calls, 2L)
+  for (call in calls) {
+    totals <- rowSums(as.data.frame(call$data)[c("corr", "other", "npl")])
+    expect_equal(unname(totals), c(100, 25))
+  }
+})
+
 test_that("sbc() refuses a design error before the prior fit", {
   skip_if_not_installed("SBC")
   skip_if_not_installed("bmm")

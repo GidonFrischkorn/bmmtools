@@ -635,6 +635,23 @@ test_that("an objective that stops being a number away from the start errors", {
   )
 })
 
+test_that("data bmm refuses stop the optim route before any subject is fit", {
+  skip_if_no_bmm_model("sdt_ranking", density = TRUE)
+  model <- bmm::sdt_ranking(response = paste0("k", 1:3), m = 3)
+  dat <- data.frame(id = 1:3, k1 = c(5, 6, 7), k2 = c(3, NA, 2), k3 = 2)
+  # an error from the optimiser's guard would be a failed subject, not an
+  # error; reaching the optimiser at all is the failure here
+  local_mocked_bindings(
+    ml_optim_one = function(...) stop("the optimiser was reached")
+  )
+  expect_error(fit_ml(model, dat, method = "optim"), "row 2 of `data`")
+  # a user's nll reads the data its own way, and is not second-guessed
+  expect_error(
+    fit_ml(model, dat, method = "optim", nll = function(...) 0),
+    "the optimiser was reached"
+  )
+})
+
 test_that("arguments of the other route are refused, not silently ignored", {
   skip_if_not_installed("bmm")
   run <- function(...) {

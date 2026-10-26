@@ -528,6 +528,44 @@ ml_cells_table <- function(rows) {
 #' produces MCMC draws, so the values `posterior` would return describe
 #' the approximation and not the estimate.
 #'
+#' @section Four-parameter `ezdm`, one subject at a time:
+#' Under `bmm::ezdm(version = "4par")` one subject's row holds five
+#' statistics --- the mean and variance of the response times at each
+#' boundary, and `n_upper` --- for four parameters. A boundary reached
+#' fewer than twice leaves its two RT summaries `NA`, three statistics
+#' remain for four parameters, and no-pooling cannot identify that
+#' subject. On the `optim` route such a subject nearly always fails to
+#' converge: of 30 subjects simulated at drift 1.5, bound 1.5, ndt 0.3 and
+#' zr 0.7 with no spread between them (`seed = 1`), 23 failed at 25 trials
+#' and 6 at 100, exactly the subjects with fewer than two lower-boundary
+#' responses. Two or more responses at each boundary are necessary for
+#' identification but not sufficient for a good fit.
+#' At 400 trials every subject reached both boundaries and one still
+#' failed: from the default start at zero, `optim()` used up its 100 BFGS
+#' iterations without a success code, although it stood within 5e-05 on
+#' the link scale of the optimum that a start at the true values reaches.
+#' Nor does `converged` vouch for every subject that passes it. In the same
+#' run, subject 17 (15 lower-boundary responses) passed with drift -0.002
+#' against a true 1.5 and log bound 6.73 against a true 0.41, at a
+#' negative log-likelihood of 117.26 against -6.28 at the true values.
+#' That point is not an optimum. The gradient there is -50 on drift and
+#' 15 on log bound, and lowering log bound by 1 lowers the negative
+#' log-likelihood to 107.56: BFGS stalled short of the optimum in an
+#' ill-conditioned valley and returned its success code all the same.
+#' Nelder-Mead started from that point with `maxit = 1000` reaches -8.10,
+#' the optimum that a start at the true values reaches; with the default
+#' `maxit` of 500 it stops at -6.24 without a success code. At 25 trials
+#' with SDs between subjects of 0.3 on `drift`, 0.2
+#' on `bound`, 0.2 on `ndt` and 0.3 on `zr` (`seed = 1`), one subject with
+#' no lower-boundary response passed at a drift of -1.36 against a true
+#' 1.31, with Wald intervals 3308 wide on `bound` and on `zr`. SDs,
+#' estimates and widths are on the link scale. Give each subject enough
+#' trials to reach both boundaries and pass `start` near plausible
+#' values: started at the true values, all 30 subjects of the 400-trial
+#' run converged and subject 17 returned a drift of 1.35. Compare the
+#' estimates with a hierarchical fit by [bmm::bmm()], which pools across
+#' subjects. Both routes of `fit_ml()` are no-pooling fits.
+#'
 #' @param model A `bmmodel`, as [bmm::mixture2p()] returns.
 #' @param data The data to fit.
 #' @param formula An already-reduced `bmmformula` with no group-level
@@ -562,10 +600,14 @@ ml_cells_table <- function(rows) {
 #' @param max_abs_link The largest `abs(estimate)` on the link scale that
 #'   still counts as converged.
 #' @param start Named link-scale start values for `method = "optim"`, one
-#'   per free parameter. `NULL`, the default, starts at zero, which was
-#'   measured to reach the same optimum as a start at the Stan mode on
-#'   every subject of the reference run. Its names also choose the member
-#'   of an alternative parameterization that is estimated.
+#'   per free parameter. `NULL`, the default, starts at zero. On 40
+#'   subjects of `mixture2p` at 100 trials, a start at zero reached the
+#'   same optimum as a start at the mean of the Laplace draws of the
+#'   `"stan"` route, to 4.3e-07 on the link scale. Under
+#'   `bmm::ezdm(version = "4par")` it does not: see the
+#'   section "Four-parameter `ezdm`, one subject at a time". Its names
+#'   also choose the member of an alternative parameterization that is
+#'   estimated.
 #' @param nll A function of `(pars, data, model)` returning the negative
 #'   log-likelihood of one subject's `data` as a single number, where
 #'   `pars` is a named list on the natural scale with the model's fixed
@@ -736,6 +778,12 @@ fit_ml <- function(model,
   }
 
   if (optim) {
+    # bmm's data check never runs on this route, so what it would refuse
+    # and the density would read anyway is refused here. A user's `nll`
+    # stands in for the density and reads the data its own way.
+    if (is.null(nll)) {
+      check_density_data(data, model)
+    }
     rows <- fit_ml_optim_rows(
       model, data, group, levels, free,
       objective = ml_objective(model, nll),

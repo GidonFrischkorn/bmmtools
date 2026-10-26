@@ -63,6 +63,20 @@ test_that("an ezdm version bmmtools does not know gets no adapter", {
 
 # simulate_recovery ----------------------------------------------------------
 
+test_that("ezdm 3par keeps its 0.2.0 record and defaults", {
+  skip_if_not_installed("bmm")
+  # "adapter:ezdm" is in every stored 3par record and names the
+  # validation_defaults() entry; the version class must not rename it
+  sim <- simulate_recovery(
+    ez3_model(), c(drift = 1, bound = log(1.2), ndt = log(0.3)),
+    n_subjects = 2, n_trials = 50, seed = 1
+  )
+  expect_identical(sim$generator, "adapter:ezdm")
+  plan <- validation_plan(ez3_model(), seed = 1)
+  expect_identical(plan$model_name, "ezdm")
+  expect_equal(plan$pars, validation_defaults("ezdm")$pars)
+})
+
 test_that("ezdm 4par simulates one row of per-boundary summaries", {
   skip_if_not_installed("bmm")
   sim <- simulate_recovery(

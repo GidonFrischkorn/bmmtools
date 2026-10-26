@@ -1227,6 +1227,16 @@ truth_tables <- function(pars, sds, values, cors = NULL, covariates = NULL) {
 #' adapters need a `trial_design`, and so does `sdt_ranking` when its `m`
 #' names a column; see the section "Trial design". The custom `m3` needs
 #' `formula`; see the section "The m3 model".
+#' The four-parameter `ezdm` has RT summaries per boundary, so its model
+#' names two columns in each of `mean_rt` and `var_rt`, upper boundary
+#' first: `mean_rt = c(upper, lower)`, `var_rt = c(upper, lower)`. bmm's
+#' constructor accepts one name each; the adapter refuses such a model
+#' before any data are drawn. A boundary reached fewer than twice in a data
+#' row leaves that boundary's mean and variance `NA`; bmm 1.4.1 keeps such
+#' rows, fits that boundary through the response counts only, and warns
+#' how many there are. For `sdt_ranking` with `dist = "normal"`, `pars`
+#' takes `sdratio` on bmm's scale, the log of the ratio of signal to noise
+#' SDs (0 for equal variances).
 #' The truth for the subjects and for the SDs lists only the parameters
 #' that vary, because a parameter that does not vary has nothing
 #' person-level to recover.
