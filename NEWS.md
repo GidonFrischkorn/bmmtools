@@ -1,5 +1,22 @@
 # bmmtools (development version)
 
+* A fit is now reproducible from its `seed`, which fixes the 0.3.0 known
+  limitation. bmm draws the initial values of every chain from R's
+  random number generator inside the fit, and `fit_cached()` passed the
+  seed to the sampler only, so two runs of a grid with the same `seed`
+  simulated the same data but drew different chains. `fit_cached()` now
+  calls the fitter under `withr::with_seed(seed)`, which restores the
+  caller's random number stream afterwards; so do `benchmark()` around
+  each fit and `sbc()` around `SBC::compute_SBC()`. On an `ezdm` cell
+  fitted with the cmdstanr backend the same `seed` now gives identical
+  initial values and identical draws, with 1 or 4 cores; the rstan
+  backend was not measured. Not covered: `brms::threading()` with its default
+  `static = FALSE` once the data are split (`static = TRUE` repeats), and
+  another platform's random number arithmetic. The cache key is
+  unchanged, so a fit cached by 0.3.0 or earlier is still read back as
+  it was; the cache's meta file and the fit's `bmmtools_cache` attribute
+  now record `rng_seeded`, which is `NA` for those fits.
+
 * `render_card()` renders the validation card of a `run_validation()`
   result to one self-contained HTML file: the headline, the run record
   and the plan, each stage's verdict beside its criterion, a section per

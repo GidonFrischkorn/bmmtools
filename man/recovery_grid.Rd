@@ -125,8 +125,12 @@ cell runs, and recorded in \verb{<dir>/grid.rds}.}
 \item{generator}{As in \code{\link[=simulate_recovery]{simulate_recovery()}}.}
 
 \item{seed}{Master seed. Each cell derives its own from it and the
-cell's row and replication, so a cell is reproducible on its own.
-\code{NULL} leaves everything unseeded and records \code{NA}.}
+cell's row and replication, so a cell is reproducible on its own:
+the cell's seed fixes its simulated data, the initial values of its
+chains and the sampler, so a rerun gives the same draws (see "Seed"
+in \code{\link[=fit_cached]{fit_cached()}} for what it does not fix: dynamic within-chain
+threading and another platform's arithmetic). \code{NULL} leaves
+everything unseeded and records \code{NA}.}
 
 \item{subjects}{\code{"redraw"} draws new subject values in every
 replication; \code{"fixed"} draws them once per row and reuses them, so

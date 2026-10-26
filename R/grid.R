@@ -1500,8 +1500,12 @@ grid_formula <- function(formula, row, i, model, re_cor, task_col,
 #'   cell runs, and recorded in `<dir>/grid.rds`.
 #' @param generator As in [simulate_recovery()].
 #' @param seed Master seed. Each cell derives its own from it and the
-#'   cell's row and replication, so a cell is reproducible on its own.
-#'   `NULL` leaves everything unseeded and records `NA`.
+#'   cell's row and replication, so a cell is reproducible on its own:
+#'   the cell's seed fixes its simulated data, the initial values of its
+#'   chains and the sampler, so a rerun gives the same draws (see "Seed"
+#'   in [fit_cached()] for what it does not fix: dynamic within-chain
+#'   threading and another platform's arithmetic). `NULL` leaves
+#'   everything unseeded and records `NA`.
 #' @param subjects `"redraw"` draws new subject values in every
 #'   replication; `"fixed"` draws them once per row and reuses them, so
 #'   replications become a simulated retest of the same people. The

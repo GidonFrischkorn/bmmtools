@@ -38,16 +38,18 @@ not what it is, and does not. An \code{init} given as a function enters
 the key by its text, so a
 closure built afresh in every iteration of a loop still matches.
 brms's \code{file_refit} and \code{file_compress} are refused: there is one
-cache, not two.}
+cache, not two. The fitter runs under \code{seed}, see "Seed" below.}
 
 \item{.fitter}{The fitting function, \code{bmm::bmm()} by default. Tests
 inject a stand-in so that no model is compiled.}
 }
 \value{
 The fit, with an attribute \code{bmmtools_cache}: a list of
-\code{file}, \code{key}, \code{reused} and \code{seconds}, the wall time the fit took
+\code{file}, \code{key}, \code{reused}, \code{seconds}, the wall time the fit took
 when it was run, which is the first fit's time when this call reused
-one and \code{NA} for a fit cached before bmmtools recorded it.
+one and \code{NA} for a fit cached before bmmtools recorded it, and
+\code{rng_seeded}, whether the fit ran under a seed (\code{NA} for a fit cached
+before bmmtools recorded it; see "Seed").
 }
 \description{
 A cache for the fits a recovery study produces. brms's own \code{file}
@@ -74,6 +76,29 @@ and outside the key. It is deliberately not a key component: a
 component that changes with every run would differ from every stored
 key and refit everything a resumed study had already fitted.
 }
+\section{Seed}{
+
+A \code{seed} reaches the sampler and also R's random number generator:
+the fitter is called under \code{withr::with_seed(seed)}, because bmm draws
+the initial values of every chain from R's generator inside the fit.
+The same \code{seed} therefore gives the same initial values and the same
+draws, with 1 or 4 \code{cores} (measured with the cmdstanr backend, which
+calls bmm's initial-value function in the R session; the rstan backend
+was not measured), and the caller's random number stream is left as
+it was. Without a \code{seed} (or with \code{NA}) nothing is
+seeded and the initial values are drawn from the caller's stream.
+Two things the seed does not fix: within-chain threading through
+\code{brms::threading()} with its default \code{static = FALSE}, whose chains
+differ between runs once the data are split into more than one
+partial sum (\code{static = TRUE} repeats), and the random number arithmetic
+of another platform or R version.
+
+Fits cached before bmmtools seeded the initial values (0.3.0 and
+earlier) still match their key and are read back as they were; the
+attribute's \code{rng_seeded} is \code{NA} for them, and \code{TRUE} or \code{FALSE} for a
+fit run since.
+}
+
 \examples{
 \dontrun{
 fit <- fit_cached(

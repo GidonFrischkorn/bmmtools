@@ -494,7 +494,9 @@ test_that("a fit records its wall time in a meta file beside the key", {
 
   expect_true(file.exists(paste0(file, ".meta.rds")))
   meta <- readRDS(paste0(file, ".meta.rds"))
-  expect_named(meta, c("seconds", "fitted_at", "bmmtools_version"))
+  expect_named(
+    meta, c("seconds", "fitted_at", "bmmtools_version", "rng_seeded")
+  )
   expect_type(meta$seconds, "double")
   expect_false(is.na(meta$seconds))
   expect_identical(meta$bmmtools_version, bmmtools_version())
@@ -552,4 +554,110 @@ test_that("the wall time is not a cache component, so it never refits", {
   expect_false(any(grepl("second|time|elapsed", names(stored$components))))
   expect_identical(changed_components(stored, fresh), character(0))
   expect_identical(stored$key, fresh$key)
+})
+
+# the seed covers the fitter's own draws (Milestone 34, D110-D111) ---------
+#
+# bmm draws the initial values from R's generator inside the fit, so the
+# mock of helper-seed.R draws inside the call too.
+
+test_that("the same seed gives the same draw inside the fit, another seed another", {
+  dir <- withr::local_tempdir()
+  mock <- rng_mock_fitter()
+
+  a <- suppressMessages(cache_call(mock, file.path(dir, "a"), seed = 7))
+  b <- suppressMessages(cache_call(mock, file.path(dir, "b"), seed = 7))
+  c <- suppressMessages(cache_call(mock, file.path(dir, "c"), seed = 8))
+
+  expect_identical(a$draw, b$draw)
+  expect_false(identical(a$draw, c$draw))
+  expect_identical(a$draw, withr::with_seed(7, stats::runif(1L)))
+})
+
+test_that("a seeded fit leaves the caller's random number stream as it was", {
+  dir <- withr::local_tempdir()
+  mock <- rng_mock_fitter()
+  withr::local_seed(42)
+  before <- get(".Random.seed", envir = globalenv())
+
+  suppressMessages(cache_call(mock, file.path(dir, "a"), seed = 7))
+
+  expect_identical(get(".Random.seed", envir = globalenv()), before)
+})
+
+test_that("without a seed the fit draws from the caller's stream, as before", {
+  dir <- withr::local_tempdir()
+  mock <- rng_mock_fitter()
+  expected <- withr::with_seed(42, stats::runif(2L))
+
+  withr::local_seed(42)
+  fit <- suppressMessages(cache_call(mock, file.path(dir, "a")))
+  after <- stats::runif(1L)
+
+  expect_identical(fit$draw, expected[[1L]])
+  expect_identical(after, expected[[2L]])
+})
+
+test_that("a cache hit neither fits nor touches the random number stream", {
+  dir <- withr::local_tempdir()
+  mock <- rng_mock_fitter()
+  file <- file.path(dir, "cell-01")
+  first <- suppressMessages(cache_call(mock, file, seed = 7))
+  withr::local_seed(42)
+  before <- get(".Random.seed", envir = globalenv())
+
+  second <- suppressMessages(cache_call(mock, file, seed = 7))
+
+  expect_identical(mock$calls$n, 1L)
+  expect_length(mock$draws$values, 1L)
+  expect_identical(second$draw, first$draw)
+  expect_identical(get(".Random.seed", envir = globalenv()), before)
+})
+
+test_that("the meta file records whether the fit ran under a seed", {
+  dir <- withr::local_tempdir()
+  mock <- mock_fitter()
+
+  seeded <- suppressMessages(cache_call(mock, file.path(dir, "a"), seed = 7))
+  unseeded <- suppressMessages(cache_call(mock, file.path(dir, "b")))
+  reused <- suppressMessages(cache_call(mock, file.path(dir, "a"), seed = 7))
+
+  expect_true(readRDS(file.path(dir, "a.meta.rds"))$rng_seeded)
+  expect_false(readRDS(file.path(dir, "b.meta.rds"))$rng_seeded)
+  expect_true(attr(seeded, "bmmtools_cache")$rng_seeded)
+  expect_false(attr(unseeded, "bmmtools_cache")$rng_seeded)
+  expect_true(attr(reused, "bmmtools_cache")$rng_seeded)
+})
+
+test_that("a fit cached before Milestone 34 still matches and reads NA", {
+  # D110: the key is unchanged, so a meta file without `rng_seeded` (every
+  # fit cached before the field existed) is reused, not refitted
+  dir <- withr::local_tempdir()
+  mock <- mock_fitter()
+  file <- file.path(dir, "cell-01")
+  suppressMessages(cache_call(mock, file, seed = 7))
+  saveRDS(
+    list(seconds = 3, fitted_at = Sys.time(), bmmtools_version = "0.3.0"),
+    paste0(file, ".meta.rds")
+  )
+
+  fit <- suppressMessages(cache_call(mock, file, seed = 7))
+
+  expect_identical(mock$calls$n, 1L)
+  expect_true(attr(fit, "bmmtools_cache")$reused)
+  expect_identical(attr(fit, "bmmtools_cache")$rng_seeded, NA)
+  expect_identical(attr(fit, "bmmtools_cache")$seconds, 3)
+  expect_false(any(grepl("rng", readLines(paste0(file, ".key")))))
+})
+
+test_that("an NA seed, brms's own default, leaves the stream alone like NULL", {
+  dir <- withr::local_tempdir()
+  mock <- rng_mock_fitter()
+  expected <- withr::with_seed(42, stats::runif(1L))
+
+  withr::local_seed(42)
+  fit <- suppressMessages(cache_call(mock, file.path(dir, "a"), seed = NA))
+
+  expect_identical(fit$draw, expected)
+  expect_false(attr(fit, "bmmtools_cache")$rng_seeded)
 })

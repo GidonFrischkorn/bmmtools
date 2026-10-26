@@ -551,3 +551,32 @@ test_that("the fitter is never handed a cache file (D73)", {
   expect_false(any(c("file", "file_refit", "file_compress") %in% passed))
   expect_true("chains" %in% passed)
 })
+
+test_that("each fit runs under the seed it is given (Milestone 34, D112)", {
+  # the fitter draws from R's generator inside the call, as bmm's initial
+  # values do; every run gets the same `seed`, so every run draws the same
+  run_twice <- lapply(1:2, function(i) {
+    mock <- rng_bench_fitter()
+    benchmark(
+      list(a = mock$fitter),
+      data = two_sets(3L), runs = 2L, warmup_runs = 1L,
+      compile = FALSE, .metrics = mock_metrics(), seed = 5
+    )
+    mock$draws$values
+  })
+  withr::local_seed(42)
+  before <- get(".Random.seed", envir = globalenv())
+  mock <- rng_bench_fitter()
+  benchmark(
+    list(a = mock$fitter),
+    data = two_sets(2L), runs = 1L, warmup_runs = 1L,
+    compile = FALSE, .metrics = mock_metrics(), seed = 5
+  )
+
+  expect_length(run_twice[[1L]], 3L)
+  expect_identical(run_twice[[1L]], run_twice[[2L]])
+  expect_identical(
+    run_twice[[1L]], rep(withr::with_seed(5, stats::runif(1L)), 3L)
+  )
+  expect_identical(get(".Random.seed", envir = globalenv()), before)
+})

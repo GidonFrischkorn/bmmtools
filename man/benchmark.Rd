@@ -29,7 +29,10 @@ paired ratios dependent.}
 
 \item{...}{Passed to every implementation's fitter (\code{chains}, \code{iter},
 \code{cores}, \code{seed}, \code{backend}, ...). Pass the same arguments to all of
-them; \code{summary()} warns when the recorded settings differ.}
+them; \code{summary()} warns when the recorded settings differ. With a
+\code{seed}, each fit is also called under \code{withr::with_seed(seed)}, as in
+\code{\link[=fit_cached]{fit_cached()}}, so that the initial values bmm draws from R's
+random number generator are the same in every run.}
 
 \item{runs}{Recorded pairs per implementation.}
 
