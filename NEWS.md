@@ -1,5 +1,15 @@
 # bmmtools (development version)
 
+* `plot_design()` plots recovery across the designs of a grid: a metric
+  against trials per subject on a log axis, one line per number of
+  subjects and a panel per term (`type = "profile"`), for population
+  means, SDs, subject parameters or model correlations; the share of
+  fits passing the convergence gate and the checks the others failed,
+  per design (`"convergence"`); and coverage pooled over every design
+  per term and level (`"coverage"`). Seconds per fit and the pass rate
+  are profiles too. Each error bar has one documented source: ±1 Monte
+  Carlo standard error for bias, RMSE, interval width and contraction,
+  a 95 % Wilson interval for rates, and `r_low` to `r_high` for `r`.
 * A fit is now reproducible from its `seed`, which fixes the 0.3.0 known
   limitation. bmm draws the initial values of every chain from R's
   random number generator inside the fit, and `fit_cached()` passed the
