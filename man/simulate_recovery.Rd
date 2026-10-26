@@ -170,6 +170,16 @@ from \code{criterion} and the spacing parameters. The \code{mixture3p} and \code
 adapters need a \code{trial_design}, and so does \code{sdt_ranking} when its \code{m}
 names a column; see the section "Trial design". The custom \code{m3} needs
 \code{formula}; see the section "The m3 model".
+The four-parameter \code{ezdm} has RT summaries per boundary, so its model
+names two columns in each of \code{mean_rt} and \code{var_rt}, upper boundary
+first: \code{mean_rt = c(upper, lower)}, \code{var_rt = c(upper, lower)}. bmm's
+constructor accepts one name each; the adapter refuses such a model
+before any data are drawn. A boundary reached fewer than twice in a data
+row leaves that boundary's mean and variance \code{NA}; bmm 1.4.1 keeps such
+rows, fits that boundary through the response counts only, and warns
+how many there are. For \code{sdt_ranking} with \code{dist = "normal"}, \code{pars}
+takes \code{sdratio} on bmm's scale, the log of the ratio of signal to noise
+SDs (0 for equal variances).
 The truth for the subjects and for the SDs lists only the parameters
 that vary, because a parameter that does not vary has nothing
 person-level to recover.

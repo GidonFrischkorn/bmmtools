@@ -147,6 +147,28 @@ test_that("a name is built through bmm with the entry's variable names", {
   )
 })
 
+test_that("the hint for a name without defaults names a bmm call that exists", {
+  skip_if_not_installed("bmm")
+  # a version class is built by its model's constructor with `version`;
+  # bmm exports no ezdm_4par()
+  err <- expect_error(validation_plan("ezdm_4par", seed = 1))
+  expect_match(
+    conditionMessage(err), 'bmm::ezdm(..., version = "4par")',
+    fixed = TRUE
+  )
+  expect_no_match(conditionMessage(err), "bmm::ezdm_4par", fixed = TRUE)
+  # an exported constructor keeps its own name
+  err <- expect_error(validation_plan("sdt_rating", seed = 1))
+  expect_match(conditionMessage(err), "bmm::sdt_rating(...)", fixed = TRUE)
+})
+
+test_that("the hint names no bmm call for a name bmm cannot build", {
+  err <- expect_error(validation_plan("toy", seed = 1))
+  expect_match(conditionMessage(err), "has no validation defaults")
+  expect_match(conditionMessage(err), "Pass the model object with")
+  expect_no_match(conditionMessage(err), "bmm::", fixed = TRUE)
+})
+
 # validation_plan(): checks ------------------------------------------------
 
 test_that("seed is required and must be one number", {

@@ -224,6 +224,42 @@ validation_plan <- function(model,
   structure(plan, class = "bmmtools_validation_plan")
 }
 
+#' The bmm call that builds a model of this name, for a hint
+#'
+#' `bmm::<name>(...)` when bmm exports `name`; for a version class such as
+#' `ezdm_4par`, the constructor with its `version` argument, read from the
+#' constructor's own choices; `NULL` when bmm is not installed or neither
+#' applies.
+#' @noRd
+plan_constructor_call <- function(name) {
+  if (!requireNamespace("bmm", quietly = TRUE)) {
+    return(NULL)
+  }
+  exported <- function(x) {
+    fn <- tryCatch(getExportedValue("bmm", x), error = function(e) NULL)
+    if (is.function(fn)) fn else NULL
+  }
+  if (!is.null(exported(name))) {
+    return(paste0("bmm::", name, "(...)"))
+  }
+  parts <- regmatches(name, regexec("^(.+)_([^_]+)$", name))[[1L]]
+  if (length(parts) != 3L) {
+    return(NULL)
+  }
+  constructor <- exported(parts[[2L]])
+  if (is.null(constructor) || !"version" %in% names(formals(constructor))) {
+    return(NULL)
+  }
+  versions <- tryCatch(
+    eval(formals(constructor)$version, environment(constructor)),
+    error = function(e) NULL
+  )
+  if (!is.character(versions) || !parts[[3L]] %in% versions) {
+    return(NULL)
+  }
+  paste0("bmm::", parts[[2L]], "(..., version = \"", parts[[3L]], "\")")
+}
+
 #' Build a named model from its entry
 #' @noRd
 resolve_plan_model <- function(model, name, entry,
@@ -232,12 +268,18 @@ resolve_plan_model <- function(model, name, entry,
     return(model)
   }
   if (is.null(entry)) {
+    constructor_call <- plan_constructor_call(name)
+    hint <- if (is.null(constructor_call)) {
+      "Pass the model object with {.arg pars}."
+    } else {
+      "Pass the model object, such as {.code {constructor_call}}, with \\
+       {.arg pars}."
+    }
     cli::cli_abort(
       c(
         "{.val {name}} has no validation defaults, so it cannot be built \\
          from its name.",
-        i = "Pass the model object, such as \\
-             {.code bmm::{name}(...)}, with {.arg pars}."
+        i = hint
       ),
       call = call
     )
