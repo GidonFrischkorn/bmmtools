@@ -98,9 +98,12 @@ A floor or ceiling rate is meaningful for a \strong{discrete} response --- a
 count out of \code{n_trials} --- where it is the share of prior draws
 implying perfect or floor performance. For a \strong{continuous} response
 exact equality to a boundary has probability zero and the quantiles
-are what to read. A circular response error is best read through a
-summary of your own on the absolute error, because the quantiles of a
-signed error are symmetric about zero and say nothing:
+are what to read. For \code{sdt_ranking} whose \code{m} names a column, the rank
+columns beyond a row's set size are not predictions, and the default
+summary leaves those cells out of that rank's rates and quantiles. A
+circular response error is best read through a summary of your own on
+the absolute error, because the quantiles of a signed error are
+symmetric about zero and say nothing:
 
 \if{html}{\out{<div class="sourceCode r">}}\preformatted{prior_check(model, formula, data, summary = function(yrep, data) \{
   tibble::tibble(

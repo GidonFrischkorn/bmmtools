@@ -188,6 +188,53 @@ bound_rate <- function(yrep, bound, side) {
   mean(hit, na.rm = TRUE)
 }
 
+#' The rows each rank column of a ranking design predicts
+#'
+#' `sdt_ranking` whose `m` names a column ranks only the first `m` items
+#' of a row, and the rank columns beyond are structural zeros, or `NA`,
+#' which bmm's data check accepts there too (`check_data.sdt_ranking()`).
+#' Read as draws they count as floor performance and pull the quantiles
+#' down: with half the rows at `m = 2` and every prediction a 5, `k3` and
+#' `k4` reported a floor rate of 0.5 and a median of 2.5 (measured
+#' 2026-10-25). A numeric `m` needs no mask, because bmm's constructor
+#' asks for exactly `m` rank columns.
+#'
+#' Without the `m` column nothing tells a prediction from a structural
+#' cell, so no row counts and every statistic of the rank columns is `NA`.
+#' bmm refuses an `NA` set size, so an `NA` here masks nothing.
+#'
+#' @param n_rows The number of rows the draws hold, so that a missing
+#'   column still gives a mask of the right length.
+#' @return `NULL` when nothing is masked, otherwise one logical vector per
+#'   rank column, `TRUE` on the rows that predict that rank.
+#' @noRd
+ranking_rows <- function(model, data, n_rows, quiet = FALSE) {
+  column <- model$other_vars$m
+  ranking <- identical(adapter_name(model), "sdt_ranking")
+  if (!ranking || !is.character(column)) {
+    return(NULL)
+  }
+  ranks <- unname(model$resp_vars$response)
+  if (!column %in% names(data)) {
+    if (!quiet) {
+      cli::cli_inform(c(
+        "The set-size column {.val {column}} is not in {.arg data}, so \\
+         the rank columns beyond a row's set size cannot be told from \\
+         predictions; their statistics are {.code NA}.",
+        i = "Give the column, or a {.arg summary} of your own."
+      ))
+    }
+    return(stats::setNames(
+      rep(list(rep(FALSE, n_rows)), length(ranks)), ranks
+    ))
+  }
+  m <- as.double(data[[column]])
+  stats::setNames(
+    lapply(seq_along(ranks), function(k) is.na(m) | k <= m),
+    ranks
+  )
+}
+
 #' The default prior-predictive summary
 #'
 #' Returns the `function(yrep, data)` the user contract names; the range
@@ -199,13 +246,33 @@ bound_rate <- function(yrep, bound, side) {
 #' continuous response exact equality to a boundary has probability zero,
 #' so they report the mass outside the support, which is `0` unless the
 #' model is wrong, and the quantiles are what carries the information.
+#' The rows a ranking design does not ask a rank of are left out of that
+#' rank's statistics ([ranking_rows()]).
 #'
 #' @noRd
 default_prior_summary <- function(range, model) {
   range <- as_range(range)
+  # prior_check() calls the summary once per prior set on the same data,
+  # so a missing set-size column is reported once, not once per set
+  told <- FALSE
   function(yrep, data) {
-    pieces <- lapply(names(yrep_list(yrep, model)), function(name) {
-      values <- yrep_list(yrep, model)[[name]]
+    shaped <- yrep_list(yrep, model)
+    rows <- ranking_rows(model, data, ncol(shaped[[1L]]), quiet = told)
+    told <<- TRUE
+    pieces <- lapply(names(shaped), function(name) {
+      values <- shaped[[name]]
+      if (!is.null(rows)) {
+        # logical NA keeps an integer matrix integer; na.rm drops it below
+        values[, !rows[[name]]] <- NA
+      }
+      rates <- c(
+        bound_rate(values, range$floor, "floor"),
+        bound_rate(values, range$ceiling, "ceiling")
+      )
+      if (!is.null(rows)) {
+        # a rank no row reaches leaves mean(logical(0)), which is NaN
+        rates[is.nan(rates)] <- NA_real_
+      }
       quantiles <- stats::quantile(
         values, c(0.5, 0.9, 0.95),
         na.rm = TRUE, names = FALSE
@@ -213,11 +280,7 @@ default_prior_summary <- function(range, model) {
       tibble::tibble(
         response = name,
         statistic = c("floor_rate", "ceiling_rate", "q50", "q90", "q95"),
-        value = c(
-          bound_rate(values, range$floor, "floor"),
-          bound_rate(values, range$ceiling, "ceiling"),
-          quantiles
-        )
+        value = c(rates, quantiles)
       )
     })
     dplyr::bind_rows(pieces)
@@ -441,9 +504,12 @@ prior_fit <- function(set, prior, formula, data, model, base, refit, seed,
 #' count out of `n_trials` --- where it is the share of prior draws
 #' implying perfect or floor performance. For a **continuous** response
 #' exact equality to a boundary has probability zero and the quantiles
-#' are what to read. A circular response error is best read through a
-#' summary of your own on the absolute error, because the quantiles of a
-#' signed error are symmetric about zero and say nothing:
+#' are what to read. For `sdt_ranking` whose `m` names a column, the rank
+#' columns beyond a row's set size are not predictions, and the default
+#' summary leaves those cells out of that rank's rates and quantiles. A
+#' circular response error is best read through a summary of your own on
+#' the absolute error, because the quantiles of a signed error are
+#' symmetric about zero and say nothing:
 #'
 #' ```r
 #' prior_check(model, formula, data, summary = function(yrep, data) {
