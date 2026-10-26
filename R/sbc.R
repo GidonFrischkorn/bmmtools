@@ -1507,6 +1507,7 @@ check_sbc_args <- function(prior, seed, fitter, cache_mode, cache_location,
       call = call
     )
   }
+  fit_rng_seed(seed, call = call)
   if (!is.null(fitter) && !is.function(fitter)) {
     cli::cli_abort(
       "{.arg .fitter} must be a function, \\
@@ -1646,9 +1647,13 @@ check_sbc_args <- function(prior, seed, fitter, cache_mode, cache_location,
 #'   `SBC::generate_datasets()`, so the same seed gives the same data
 #'   sets, and passed to the fitter of the prior fit, where it enters
 #'   [fit_cached()]'s key. `NULL` leaves the random number generator
-#'   alone and is recorded as `NA`. The data set fits take no seed:
-#'   SBC's `future.seed` handles them, and one seed across fits would
-#'   correlate them.
+#'   alone and is recorded as `NA`. The data set fits take no seed of
+#'   their own, since one seed across fits would correlate them; SBC's
+#'   `future.seed` gives each its own stream, and those streams start
+#'   from `seed`, because `SBC::compute_SBC()` runs under it. So the
+#'   same seed gives the same fits and ranks too, except for results
+#'   SBC's own cache (`cache_mode = "results"`) reuses from a run made
+#'   before bmmtools seeded them.
 #' @param file Where to cache the **prior fit**, as in [prior_check()].
 #'   `NULL` uses a temporary file. The data set fits are cached by SBC
 #'   through `cache_mode`, not by [fit_cached()].
@@ -1869,7 +1874,9 @@ sbc <- function(model,
   options$cores_per_fit <- cores_per_fit
   options$thin_ranks <- thin_ranks
   options$cache_location <- cache_location
-  results <- rlang::exec(SBC::compute_SBC, !!!options)
+  # SBC's future.seed derives every data set fit's stream from the state
+  # it is called in, so the seed makes the fits reproducible too (D112)
+  results <- with_seed_if(seed, rlang::exec(SBC::compute_SBC, !!!options))
 
   attr(results, "bmmtools_sbc") <- list(
     model = class(model)[[length(class(model))]],
