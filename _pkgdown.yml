@@ -99,6 +99,7 @@ reference:
 - title: Plot
   contents:
   - plot_recovery
+  - plot_design
   - plot_prior_check
 
 - title: Example objects
