@@ -57,7 +57,8 @@ here changes the entries it names and keeps the others.}
 \code{\link[=sbc]{sbc()}}). Named entries replace the entry's, the rest are kept.}
 
 \item{prior_check}{A named list for the prior predictive check:
-\code{n_subjects}, \code{n_trials}, \code{n_draws}, \code{range}, \code{summary} and \code{sampler}
+\code{n_subjects}, \code{n_trials}, \code{n_draws}, \code{range}, \code{range_reason} (why the
+range is what it is, printed on the card), \code{summary} and \code{sampler}
 (see \code{\link[=prior_check]{prior_check()}}). Merged as \code{sbc} is.}
 
 \item{reference}{\code{NULL}, or a reference implementation's estimates for
@@ -109,10 +110,12 @@ In card order: \code{run_record}, \code{prior_predictive}, \code{sbc}, \code{rec
 \code{computation}, \code{identifiability}, \code{individual_differences},
 \code{data_requirements}, \code{agreement}, \code{model_recovery} and
 \code{posterior_checks}. A stage is \code{"planned"}; \code{"not built"} with the
-issue that will build it (data requirements, #17; model recovery, #6;
-posterior checks, #20); \code{"not applicable"} with the reason
-(individual differences with fewer than two subject-varying
-parameters; agreement without a reference); or \code{"excluded"} when
+issue that will build it (model recovery, #6; posterior checks, #20);
+\code{"not applicable"} with the reason (individual differences with fewer
+than two subject-varying parameters; data requirements without a
+subject-varying parameter, or without two numbers of trials at
+\code{read_off_n_subjects} subjects in the grid; agreement without a
+reference); or \code{"excluded"} when
 \code{stages} leaves it out. All but agreement, model recovery and posterior
 checks are required for a card to be called complete.
 }
@@ -125,11 +128,18 @@ defaults the rates are reported, not judged, unless the calibration
 uses them. \code{sbc_ecdf_prob} (0.95): the simultaneous band of SBC's
 ECDF-difference check no ranked variable may leave.
 \code{convergence_rate_min} (0.95): the share of recovery cells that pass
-\code{\link[=check_convergence]{check_convergence()}}. \code{coverage_level} (0.95): the nominal coverage
-every population parameter must reach within one Monte Carlo standard
-error, \code{sqrt(0.95 * 0.05 / n)}, in every design; the generating
-correlations are held to the same bar. \code{contraction_min} (0) and
-\code{z_mean_max} (2): the identifiability bars at the largest design.
+\code{\link[=check_convergence]{check_convergence()}}. \code{coverage_level} (0.95) and \code{coverage_alpha}
+(0.05): the coverage of every population parameter, its intervals
+pooled over the designs, must not fall below \code{coverage_level} by a
+one-sided binomial test at \code{coverage_alpha} divided by the number of
+parameters; the generating correlations are held to the same test.
+\code{contraction_min} (0) and \code{z_mean_max} (2): the identifiability bars at
+the largest design.
+\code{read_off_r_low} (0.80) and \code{read_off_n_subjects} (50): the data
+requirements read-off, the smallest \code{n_trials} at which every
+subject-varying parameter's person-level \code{r_low} reaches the bar at
+that many subjects; 0.80 is a convention, and the read-off at 0.70 and
+0.90 is reported beside it.
 \code{tolerance}: by metric, how far a number without a Monte Carlo
 standard error may move between two runs before
 \code{\link[=compare_validations]{compare_validations()}} flags it.

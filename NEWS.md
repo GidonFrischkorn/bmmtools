@@ -1,3 +1,30 @@
+# bmmtools (development version)
+
+* `render_card()` renders the validation card of a `run_validation()`
+  result to one self-contained HTML file: the headline, the run record
+  and the plan, each stage's verdict beside its criterion, a section per
+  stage, and the numbers that moved since an earlier run. Every number
+  on the card is read off the stored result; the template types none.
+  It needs the quarto package and the Quarto CLI. The recovery and
+  individual-differences criteria pool each parameter's intervals over
+  the designs and fail it by a one-sided binomial test at
+  `coverage_alpha` (0.05) over the number of parameters; held design by
+  design, a calibrated model failed them most of the time at 10
+  replications. The `ezdm` entry checks prior predictive mean response
+  times against a plausibility range of 0.15 to 5 s (#21).
+
+* `run_validation()` runs the data requirements stage: the smallest
+  number of trials at which every subject-varying parameter's
+  person-level correlation with its generating value has a lower bound
+  (`r_low`) of at least 0.80 at 50 subjects, read off the recovery grid
+  by `smallest_design()`, with the read-off at 0.70 and 0.90 beside it.
+  Both the bar and the number of subjects are criteria of the plan. Its
+  coverage condition is the recovery stage's pooled test: held design by
+  design, it changed or removed the read-off of a calibrated `ezdm`
+  model in 24 % to 56 % of runs at 10 replications. The stage is not
+  applicable to a model without a subject-varying parameter or a grid
+  without two numbers of trials at that many subjects (#21, #17).
+
 # bmmtools 0.3.0
 
 ## Breaking changes

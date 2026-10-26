@@ -11,7 +11,7 @@ card_numbers(result)
 }
 \value{
 A tibble with the columns \code{stage}, \code{condition} (the design as
-\code{"<subjects> x <trials>"}, the prior set, \code{"all"}, or \code{NA}), \code{level}
+\code{"<subjects> x <trials>"}, the prior set, \code{"all"}, \code{"<subjects> subjects"} for the data requirements read-off, or \code{NA}), \code{level}
 (the estimate level or the correlation estimator, or \code{NA}), \code{term},
 \code{metric}, \code{value} and \code{mcse}, the Monte Carlo standard error where
 one follows from the stored results: binomial for a rate, at the rate

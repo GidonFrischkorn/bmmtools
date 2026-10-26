@@ -67,6 +67,21 @@ test_that("the ezdm entry carries Milestone 31's generating values", {
   expect_null(entry$sbc$prior)
 })
 
+test_that("the ezdm prior check judges mean RT against a plausible range", {
+  # bmm 1.4.1's posterior_predict() gives mean RT only, and prior_check()
+  # knows no range for ezdm, so the entry gives one and says why
+  entry <- validation_defaults("ezdm")
+  expect_identical(entry$prior_check$range, c(0.15, 5))
+  expect_match(entry$prior_check$range_reason, "plausib")
+  expect_match(entry$prior_check$range_reason, "not a bound")
+  expect_null(validation_defaults("mixture2p")$prior_check$range_reason)
+  plan <- validation_plan("ezdm", seed = 1)
+  expect_identical(plan$prior_check$range, c(0.15, 5))
+  expect_identical(
+    plan$prior_check$range_reason, entry$prior_check$range_reason
+  )
+})
+
 test_that("validation_defaults takes a name or a model and is NULL without", {
   expect_identical(
     validation_defaults(plan_model()),
@@ -276,12 +291,13 @@ test_that("the stage table lists the eleven stages with their status", {
   # Milestone 22 has landed, so identifiability runs
   expect_identical(status[["identifiability"]], "planned")
   expect_identical(status[["individual_differences"]], "planned")
-  expect_identical(status[["data_requirements"]], "not built")
+  # #17 has landed (Milestone 24), so data requirements runs
+  expect_identical(status[["data_requirements"]], "planned")
   expect_identical(status[["model_recovery"]], "not built")
   expect_identical(status[["posterior_checks"]], "not built")
   expect_identical(status[["agreement"]], "not applicable")
   reason <- stats::setNames(stages$reason, stages$stage)
-  expect_identical(reason[["data_requirements"]], "not run (#17)")
+  expect_identical(reason[["data_requirements"]], NA_character_)
   expect_identical(reason[["model_recovery"]], "not run (#6)")
   expect_identical(reason[["posterior_checks"]], "not run (#20)")
   expect_identical(reason[["agreement"]], "no reference implementation")
@@ -301,6 +317,55 @@ test_that("one subject-varying parameter makes individual differences n/a", {
   two <- validation_plan(plan_model(), seed = 1)
   expect_identical(two$re_cor, "all")
   expect_identical(two$correlations, "model")
+})
+
+test_that("data requirements needs a varying parameter and trials to read", {
+  status_of <- function(plan) {
+    plan$stages$status[plan$stages$stage == "data_requirements"]
+  }
+  reason_of <- function(plan) {
+    plan$stages$reason[plan$stages$stage == "data_requirements"]
+  }
+  # one subject-varying parameter has a person-level correlation to read
+  one <- validation_plan(plan_model(), sds = c(kappa = 0.3), seed = 1)
+  expect_identical(status_of(one), "planned")
+
+  none <- validation_plan(plan_model(),
+    sds = c(kappa = 0, thetat = 0), seed = 1
+  )
+  expect_identical(status_of(none), "not applicable")
+  expect_identical(reason_of(none), "no subject-varying parameter")
+
+  # D83 reads off at 50 subjects, which this grid does not have
+  no_fifty <- validation_plan(plan_model(),
+    grid = data.frame(n_subjects = 20L, n_trials = c(30L, 100L)), seed = 1
+  )
+  expect_identical(status_of(no_fifty), "not applicable")
+  expect_identical(
+    reason_of(no_fifty), "the grid has no design with 50 subjects"
+  )
+
+  # one number of trials at 50 subjects: there is nothing to read along
+  flat <- validation_plan(plan_model(),
+    grid = data.frame(
+      n_subjects = c(20L, 50L, 20L), n_trials = c(30L, 30L, 100L)
+    ),
+    seed = 1
+  )
+  expect_identical(status_of(flat), "not applicable")
+  expect_identical(
+    reason_of(flat), "the grid has one number of trials at 50 subjects"
+  )
+
+  # the subjects it reads off at are a criterion
+  moved <- validation_plan(plan_model(),
+    grid = data.frame(n_subjects = 20L, n_trials = c(30L, 100L)),
+    criteria = list(read_off_n_subjects = 20), seed = 1
+  )
+  expect_identical(status_of(moved), "planned")
+  expect_identical(moved$criteria$read_off_n_subjects, 20)
+  expect_identical(moved$criteria$read_off_r_low, 0.80)
+  expect_identical(default_validation_criteria()$read_off_n_subjects, 50)
 })
 
 test_that("stages selects, always keeps the run record, and checks readers", {
@@ -369,7 +434,8 @@ test_that("print shows the model, the grid, the budget and the stages", {
   expect_true(any(grepl("n_subjects 20, 50; n_trials 30, 100, 300", lines)))
   expect_true(any(grepl("SBC: 100 simulations at 20 subjects x 50", lines)))
   expect_true(any(grepl("the plan's own prior", lines)))
-  expect_true(any(grepl("data_requirements +not built +not run \\(#17\\)", lines)))
+  expect_true(any(grepl("data_requirements +planned", lines)))
+  expect_true(any(grepl("model_recovery +not built +not run \\(#6\\)", lines)))
   expect_output(print(plan), "<bmmtools validation plan>")
   expect_invisible(print(plan))
 })

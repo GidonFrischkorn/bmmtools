@@ -18,9 +18,12 @@ have an MCSE, \code{TRUE} when \verb{|diff|} exceeds
 \code{2 * sqrt(mcse_old^2 + mcse_new^2)}; otherwise when it exceeds the
 new plan's tolerance for the metric (its \code{criteria$tolerance}, 0 by
 default, so any change of such a number is flagged; timings never
-are). A number present in one run only has \code{moved = NA}. The
-attributes \code{old_bmm} and \code{new_bmm} name the bmm versions of the two
-runs, and \code{n_compared} counts the numbers present in both.
+are). A number of both runs that is missing (\code{NA}) in one of them
+moved, such as a read-off that reaches its bar in one run only; a
+number present in one run only has \code{moved = NA}. The attributes
+\code{old_bmm} and \code{new_bmm} name the bmm versions of the two runs,
+\code{n_compared} counts the numbers present in both, and
+\code{mcse_multiplier} is the 2 of the rule.
 }
 \description{
 \ifelse{html}{\href{https://lifecycle.r-lib.org/articles/stages.html#experimental}{\figure{lifecycle-experimental.svg}{options: alt='[Experimental]'}}}{\strong{[Experimental]}}

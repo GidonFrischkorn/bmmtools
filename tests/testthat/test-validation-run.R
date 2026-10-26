@@ -4,12 +4,6 @@
 # draws are sequences, so its SBC diagnostics always fail: a run against
 # it is "complete, not validated" unless a test edits the result.
 
-skip_validation_run <- function() {
-  skip_if_not_installed("bmm")
-  skip_if_not_installed("SBC")
-  skip_on_cran() # every run fits through SBC: about 0.5 s each, 40 runs
-}
-
 #' Which stage a mock call belongs to, by its design point
 #'
 #' small_validation_plan() gives the prior check 3 subjects, the
@@ -45,13 +39,14 @@ test_that("a run gives every stage a status and keeps every result", {
     "identifiability", "individual_differences"
   )
   expect_identical(unname(status[ran]), rep("ok", length(ran)))
-  expect_identical(status[["data_requirements"]], "not built")
+  # the small plan's grid has no design at 50 subjects
+  expect_identical(status[["data_requirements"]], "not applicable")
   expect_identical(status[["agreement"]], "not applicable")
   expect_identical(status[["model_recovery"]], "not built")
   expect_identical(status[["posterior_checks"]], "not built")
   expect_identical(
     result$stages$message[result$stages$stage == "data_requirements"],
-    "not run (#17)"
+    "the grid has no design with 50 subjects"
   )
 
   # each stage's object is the stage function's, unchanged
@@ -647,7 +642,8 @@ test_that("a run in which every criterion holds is validated at its plan", {
     headline$text,
     sprintf("validated at plan 0.1.0 (hash %s)", substr(result$plan$hash, 1, 8))
   )
-  # the not-built data requirements stage does not count against it
+  # a stage that is not applicable (data requirements, without 50
+  # subjects in the grid) does not count against it
   expect_false("data_requirements" %in% headline$stages)
 })
 
@@ -689,9 +685,10 @@ test_that("each criterion fails on a result that misses it", {
   rec$ci_high[out] <- rec$true_value[out] + 2
   low$recovery <- rec
   row <- verdict_table(low)[verdict_table(low)$stage == "recovery", ]
-  expect_identical(row$value, 0)
+  # 2 of the 4 kappa intervals (2 designs x 2 replications) cover
+  expect_identical(row$value, 0.5)
   expect_false(row$pass)
-  expect_identical(row$note, "kappa at 6 x 20")
+  expect_identical(row$note, "kappa: 2 of 4 covered, p = 0.014")
 
   flat <- result
   flat$identifiability$contraction <- -0.1
@@ -718,22 +715,69 @@ test_that("a criterion that cannot be evaluated is named, not failed", {
   expect_identical(headline$text, "complete, not judged (stages Prior predictive)")
 })
 
-test_that("the coverage bar is nominal minus one MCSE at nominal", {
+test_that("coverage is pooled across designs and judged by a binomial test", {
   criteria <- default_validation_criteria()
+  expect_identical(criteria$coverage_alpha, 0.05)
   rows <- tibble::tibble(
-    term = c("a", "b"), condition = "x",
-    coverage = c(0.9, 0.85), n_replications = 10L
+    term = rep(c("a", "b"), each = 3L), condition = rep(c("x", "y", "z"), 2L),
+    coverage = c(0.8, 0.9, 1, 1, 1, 1), n_replications = 10L
   )
-  # 0.95 - sqrt(0.95 * 0.05 / 10) = 0.881
+  # a: 27 of 30, pbinom(27, 30, 0.95) = 0.188 > 0.05 / 2; the per-cell
+  # bar of 0.881 would have failed design x
+  out <- coverage_verdict("text", rows, "condition", criteria, "none")
+  expect_true(out$pass)
+  expect_identical(out$value, 0.9)
+  expect_true(is.na(out$note))
+
+  rows$coverage[1:3] <- c(0.6, 0.7, 0.8)
   out <- coverage_verdict("text", rows, "condition", criteria, "none")
   expect_false(out$pass)
-  expect_identical(out$note, "b at x")
+  expect_identical(out$value, 0.7)
+  expect_identical(out$note, "a: 21 of 30 covered, p = 1.07e-05")
+
+  # the correction is over parameters: 25 of 30 (p = 0.0156) fails one
+  # parameter at 0.05 and passes among four at 0.05 / 4 = 0.0125
+  one <- tibble::tibble(
+    term = "a", condition = c("x", "y", "z"),
+    coverage = c(0.8, 0.8, 0.9), n_replications = 10L
+  )
+  passes <- function(rows) {
+    coverage_verdict("text", rows, "condition", criteria, "none")$pass
+  }
+  expect_false(passes(one))
+  four <- dplyr::bind_rows(one, tibble::tibble(
+    term = rep(c("b", "c", "d"), each = 3L), condition = "x", coverage = 1,
+    n_replications = 10L
+  ))
+  expect_true(passes(four))
+  criteria$coverage_alpha <- 0.2
+  expect_false(passes(four))
+
+  # a design without coverage leaves the pool
+  gap <- one
+  gap$coverage[[1L]] <- NA
+  out <- coverage_verdict("text", gap, "condition", criteria, "none")
   expect_identical(out$value, 0.85)
-  rows$coverage[[2L]] <- 0.89
-  expect_true(coverage_verdict("text", rows, "condition", criteria, "none")$pass)
   empty <- coverage_verdict("text", rows[0, ], "condition", criteria, "none")
   expect_true(is.na(empty$pass))
   expect_identical(empty$note, "none")
+})
+
+test_that("the coverage criterion is stated as the pooled test", {
+  criteria <- default_validation_criteria()
+  text <- stage_criterion_text("recovery", NULL, criteria)
+  expect_identical(
+    text,
+    paste(
+      "95% interval coverage of every population parameter, pooled across",
+      "designs, not below 0.95 by a one-sided binomial test at 0.05 divided",
+      "by the number of parameters"
+    )
+  )
+  expect_match(
+    stage_criterion_text("individual_differences", NULL, criteria),
+    "every generating correlation, pooled across designs"
+  )
 })
 
 # compare_validations ------------------------------------------------------
@@ -837,6 +881,188 @@ test_that("print shows the headline and every stage", {
   expect_match(lines[[1L]], "mixture2p: complete, not validated")
   expect_match(lines[[2L]], "^Plan 0.1.0 \\(hash [0-9a-f]{8}\\), bmm ")
   expect_length(lines, 2L + 11L)
-  expect_true(any(grepl("data_requirements +not built .*not run \\(#17\\)", lines)))
+  expect_true(any(
+    grepl("data_requirements +not applicable .*50 subjects", lines)
+  ))
+  expect_true(any(grepl("model_recovery +not built .*not run \\(#6\\)", lines)))
   expect_output(print(result), "<bmmtools validation>")
+})
+
+# data requirements (D83, amended 2026-10-25) -------------------------------
+
+test_that("data requirements reads off r_low at 0.70, 0.80 and 0.90", {
+  skip_validation_run()
+  dir <- withr::local_tempdir()
+  # thetat is measured more precisely: its r_low is 0.96 at 10 trials
+  result <- mock_validation(
+    readoff_validation_plan(), dir,
+    validation_mock_fitter(subject_noise = c(kappa = 1.34, thetat = 0.5))
+  )
+  expect_identical(stage_status_of(result)[["data_requirements"]], "ok")
+
+  x <- result$data_requirements
+  expect_setequal(unique(x$term), c("kappa", "thetat"))
+  expect_identical(unique(x$n_subjects), 8L)
+  smallest_of <- function(term) {
+    at <- x$term == term
+    stats::setNames(as.double(x$smallest[at]), x$threshold[at])
+  }
+  expect_identical(smallest_of("kappa"), c("0.7" = 10, "0.8" = 20, "0.9" = 40))
+  expect_identical(smallest_of("thetat"), c("0.7" = 10, "0.8" = 10, "0.9" = 10))
+  expect_identical(
+    x$status[x$term == "kappa"],
+    c("met at the grid's smallest design", "met", "met")
+  )
+
+  numbers <- result$numbers[
+    result$numbers$stage == "data_requirements" &
+      result$numbers$metric != "seconds",
+  ]
+  expect_setequal(
+    unique(numbers$metric),
+    c("n_trials_at_r_low_0.7", "n_trials_at_r_low_0.8", "n_trials_at_r_low_0.9")
+  )
+  expect_identical(unique(numbers$condition), "8 subjects")
+  expect_identical(unique(numbers$level), "subject")
+  expect_true(all(is.na(numbers$mcse)))
+  # the answer is the largest read-off over the subject-varying terms
+  all_terms <- numbers[numbers$term == "all", ]
+  expect_identical(
+    stats::setNames(all_terms$value, all_terms$metric),
+    c(
+      n_trials_at_r_low_0.7 = 10, n_trials_at_r_low_0.8 = 20,
+      n_trials_at_r_low_0.9 = 40
+    )[all_terms$metric]
+  )
+
+  verdicts <- result$verdicts[result$verdicts$stage == "data_requirements", ]
+  expect_identical(nrow(verdicts), 2L)
+  expect_match(verdicts$criterion[[1L]], "r_low >= 0.8", fixed = TRUE)
+  expect_match(verdicts$criterion[[1L]], "8 subjects", fixed = TRUE)
+  expect_identical(verdicts$value[[1L]], 20)
+  expect_true(verdicts$pass[[1L]])
+  expect_match(verdicts$criterion[[2L]], "pooled", fixed = TRUE)
+  expect_true(verdicts$pass[[2L]])
+  expect_false("data_requirements" %in% result$headline$stages)
+})
+
+test_that("data requirements fails a parameter that never reaches the bar", {
+  skip_validation_run()
+  dir <- withr::local_tempdir()
+  # the mock's r_low peaks at 0.93
+  result <- mock_validation(
+    readoff_validation_plan(criteria = list(read_off_r_low = 0.95)), dir,
+    validation_mock_fitter()
+  )
+  x <- result$data_requirements
+  expect_setequal(x$threshold, c(0.7, 0.9, 0.95))
+  expect_identical(
+    unique(x$status[x$threshold == 0.95]), "not reached in this grid"
+  )
+  verdicts <- result$verdicts[result$verdicts$stage == "data_requirements", ]
+  expect_match(verdicts$criterion[[1L]], "r_low >= 0.95", fixed = TRUE)
+  expect_identical(verdicts$value[[1L]], NA_real_)
+  expect_false(verdicts$pass[[1L]])
+  expect_match(verdicts$note[[1L]], "kappa: not reached in this grid")
+  expect_match(verdicts$note[[1L]], "thetat: not reached in this grid")
+  expect_identical(result$headline$state, "not validated")
+  expect_true("data_requirements" %in% result$headline$stages)
+  numbers <- result$numbers[
+    result$numbers$stage == "data_requirements" &
+      result$numbers$term %in% "all",
+  ]
+  expect_identical(
+    numbers$value[numbers$metric == "n_trials_at_r_low_0.95"], NA_real_
+  )
+  expect_identical(numbers$value[numbers$metric == "n_trials_at_r_low_0.9"], 40)
+})
+
+test_that("data requirements judges coverage by the pooled test", {
+  skip_validation_run()
+  dir <- withr::local_tempdir()
+  result <- mock_validation(
+    readoff_validation_plan(), dir,
+    validation_mock_fitter(population_miss = TRUE)
+  )
+  verdicts <- result$verdicts[result$verdicts$stage == "data_requirements", ]
+  # the read-off is on r_low alone; the coverage leg fails on its own
+  expect_true(verdicts$pass[[1L]])
+  expect_identical(verdicts$value[[1L]], 20)
+  expect_false(verdicts$pass[[2L]])
+  expect_match(verdicts$note[[2L]], "kappa: 0 of 8 covered")
+  recovery <- result$verdicts[result$verdicts$stage == "recovery", ]
+  expect_identical(verdicts$value[[2L]], recovery$value)
+  expect_true("data_requirements" %in% result$headline$stages)
+})
+
+test_that("a new read-off bar reruns data requirements and reads the grid", {
+  skip_validation_run()
+  dir <- withr::local_tempdir()
+  mock <- validation_mock_fitter()
+  mock_validation(readoff_validation_plan(), dir, mock)
+  n <- mock$calls$n
+  again <- mock_validation(
+    readoff_validation_plan(criteria = list(read_off_r_low = 0.7)), dir, mock
+  )
+  expect_identical(mock$calls$n, n)
+  resumed <- stats::setNames(again$stages$resumed, again$stages$stage)
+  expect_true(resumed[["recovery"]])
+  expect_false(resumed[["data_requirements"]])
+  verdicts <- again$verdicts[again$verdicts$stage == "data_requirements", ]
+  expect_identical(verdicts$value[[1L]], 10)
+})
+
+test_that("data requirements lists a parameter it could not score", {
+  skip_validation_run()
+  dir <- withr::local_tempdir()
+  result <- mock_validation(
+    readoff_validation_plan(), dir,
+    validation_mock_fitter(flat_terms = "thetat")
+  )
+  x <- result$data_requirements
+  expect_setequal(unique(x$term), c("kappa", "thetat"))
+  expect_identical(
+    unique(x$status[x$term == "thetat"]),
+    "not scored: no person-level correlation"
+  )
+  expect_identical(unique(x$n_subjects), 8L)
+  verdicts <- result$verdicts[result$verdicts$stage == "data_requirements", ]
+  # every subject-varying parameter, or the read-off is not judged
+  expect_identical(verdicts$pass[[1L]], NA)
+  expect_identical(verdicts$value[[1L]], NA_real_)
+  expect_match(verdicts$note[[1L]], "thetat: not scored")
+  # not judged withholds "validated"; the mock's SBC already fails it,
+  # so the headline names the failed stages
+  expect_false(identical(result$headline$state, "validated"))
+})
+
+test_that("a read-off that reaches its bar in one run only has moved", {
+  row <- function(value, metric = "n_trials_at_r_low_0.8") {
+    tibble::tibble(
+      stage = "data_requirements", condition = "50 subjects",
+      level = "subject", term = "all", metric = metric, value = value,
+      mcse = NA_real_
+    )
+  }
+  lost <- compare_validations(row(40), row(NA_real_))
+  expect_true(lost$moved)
+  expect_identical(attr(lost, "n_compared"), 1L)
+  expect_true(compare_validations(row(NA_real_), row(40))$moved)
+  expect_false(compare_validations(row(NA_real_), row(NA_real_))$moved)
+  # a number of one run only is still not a move
+  added <- compare_validations(row(40), row(40, "n_trials_at_r_low_0.95"))
+  expect_identical(added$moved, c(NA, NA))
+  expect_identical(attr(lost, "mcse_multiplier"), 2)
+})
+
+test_that("verdicts of a plan stored before a criterion existed", {
+  skip_validation_run()
+  result <- mock_validation(
+    readoff_validation_plan(), withr::local_tempdir(),
+    validation_mock_fitter()
+  )
+  old <- result
+  old$plan$criteria[c("coverage_alpha", "read_off_r_low")] <- NULL
+  verdicts <- verdict_table(old)
+  expect_identical(verdicts, result$verdicts)
 })

@@ -40,7 +40,8 @@
 #'   `sampler`, `generator`, `cores_per_fit` and `thin_ranks` (see
 #'   [sbc()]). Named entries replace the entry's, the rest are kept.
 #' @param prior_check A named list for the prior predictive check:
-#'   `n_subjects`, `n_trials`, `n_draws`, `range`, `summary` and `sampler`
+#'   `n_subjects`, `n_trials`, `n_draws`, `range`, `range_reason` (why the
+#'   range is what it is, printed on the card), `summary` and `sampler`
 #'   (see [prior_check()]). Merged as `sbc` is.
 #' @param reference `NULL`, or a reference implementation's estimates for
 #'   the agreement stage: a data frame with `term` and `estimate` (and
@@ -74,10 +75,12 @@
 #' `computation`, `identifiability`, `individual_differences`,
 #' `data_requirements`, `agreement`, `model_recovery` and
 #' `posterior_checks`. A stage is `"planned"`; `"not built"` with the
-#' issue that will build it (data requirements, #17; model recovery, #6;
-#' posterior checks, #20); `"not applicable"` with the reason
-#' (individual differences with fewer than two subject-varying
-#' parameters; agreement without a reference); or `"excluded"` when
+#' issue that will build it (model recovery, #6; posterior checks, #20);
+#' `"not applicable"` with the reason (individual differences with fewer
+#' than two subject-varying parameters; data requirements without a
+#' subject-varying parameter, or without two numbers of trials at
+#' `read_off_n_subjects` subjects in the grid; agreement without a
+#' reference); or `"excluded"` when
 #' `stages` leaves it out. All but agreement, model recovery and posterior
 #' checks are required for a card to be called complete.
 #'
@@ -88,11 +91,18 @@
 #' uses them. `sbc_ecdf_prob` (0.95): the simultaneous band of SBC's
 #' ECDF-difference check no ranked variable may leave.
 #' `convergence_rate_min` (0.95): the share of recovery cells that pass
-#' [check_convergence()]. `coverage_level` (0.95): the nominal coverage
-#' every population parameter must reach within one Monte Carlo standard
-#' error, `sqrt(0.95 * 0.05 / n)`, in every design; the generating
-#' correlations are held to the same bar. `contraction_min` (0) and
-#' `z_mean_max` (2): the identifiability bars at the largest design.
+#' [check_convergence()]. `coverage_level` (0.95) and `coverage_alpha`
+#' (0.05): the coverage of every population parameter, its intervals
+#' pooled over the designs, must not fall below `coverage_level` by a
+#' one-sided binomial test at `coverage_alpha` divided by the number of
+#' parameters; the generating correlations are held to the same test.
+#' `contraction_min` (0) and `z_mean_max` (2): the identifiability bars at
+#' the largest design.
+#' `read_off_r_low` (0.80) and `read_off_n_subjects` (50): the data
+#' requirements read-off, the smallest `n_trials` at which every
+#' subject-varying parameter's person-level `r_low` reaches the bar at
+#' that many subjects; 0.80 is a convention, and the read-off at 0.70 and
+#' 0.90 is reported beside it.
 #' `tolerance`: by metric, how far a number without a Monte Carlo
 #' standard error may move between two runs before
 #' [compare_validations()] flags it.
@@ -189,6 +199,7 @@ validation_plan <- function(model,
 
   varying <- names(sds)[!is.na(sds) & sds > 0]
   individual <- length(varying) >= 2L
+  requirements <- data_requirements_reason(varying, grid, criteria)
   re_cor <- if (individual) "all" else "none"
   correlations <- if (individual) "model" else NULL
 
@@ -217,7 +228,7 @@ validation_plan <- function(model,
     seeds = c(recovery = seed, prior_predictive = seed + 1, sbc = seed + 2),
     owner = owner,
     version = version,
-    stages = plan_stages(stages, individual, reference),
+    stages = plan_stages(stages, individual, reference, requirements),
     bmmtools_version = package_version_string("bmmtools")
   )
   plan$hash <- plan_hash(plan)
@@ -462,9 +473,30 @@ check_plan_string <- function(x, arg, call = rlang::caller_env()) {
   x
 }
 
+#' Why the data requirements stage cannot run on a plan, or `NA`
+#'
+#' D83 reads the smallest `n_trials` off the person-level correlation at
+#' `criteria$read_off_n_subjects`: it needs a subject-varying parameter,
+#' that many subjects in the grid, and two numbers of trials there.
+#' @noRd
+data_requirements_reason <- function(varying, grid, criteria) {
+  n <- criteria$read_off_n_subjects
+  trials <- unique(grid$n_trials[grid$n_subjects == n])
+  if (length(varying) == 0L) {
+    "no subject-varying parameter"
+  } else if (length(trials) == 0L) {
+    sprintf("the grid has no design with %s subjects", format(n))
+  } else if (length(trials) == 1L) {
+    sprintf("the grid has one number of trials at %s subjects", format(n))
+  } else {
+    NA_character_
+  }
+}
+
 #' The stage table of a plan, before anything runs
 #' @noRd
 plan_stages <- function(stages, individual, reference,
+                        requirements = NA_character_,
                         call = rlang::caller_env()) {
   table <- validation_stage_table()
   known <- table$stage
@@ -508,6 +540,11 @@ plan_stages <- function(stages, individual, reference,
     at <- table$stage == "individual_differences"
     status[at] <- "not applicable"
     reason[at] <- "fewer than two subject-varying parameters"
+  }
+  if (!is.na(requirements)) {
+    at <- table$stage == "data_requirements"
+    status[at] <- "not applicable"
+    reason[at] <- requirements
   }
   if (is.null(reference)) {
     at <- table$stage == "agreement"

@@ -84,6 +84,12 @@
 #'   (`prior_sd = "fit"`).
 #' * `computation`, `identifiability`, `individual_differences`: tables
 #'   read off the recovery grid's cells and summary.
+#' * `data_requirements`: the read-off, [smallest_design()] of the
+#'   subject-level `r_low` along `n_trials` at the plan's
+#'   `read_off_n_subjects`, at `read_off_r_low` and at 0.70 and 0.90; one
+#'   row per subject-varying parameter and threshold with `n_subjects`,
+#'   `term`, `threshold`, `smallest` and `status`. It has no coverage
+#'   condition of its own (see [verdict_table()]).
 #' * `agreement`: [cross_check()] of the fit of the largest design's first
 #'   replication against the plan's reference.
 #'
@@ -234,15 +240,16 @@ check_validation_dir <- function(dir, call = rlang::caller_env()) {
   normalizePath(dir, mustWork = TRUE)
 }
 
-#' Read the `previous` argument into a result
+#' Read the `previous` argument (or render_card()'s `result`) into a result
 #' @noRd
-read_previous_validation <- function(previous, call = rlang::caller_env()) {
+read_previous_validation <- function(previous, arg = "previous",
+                                     call = rlang::caller_env()) {
   if (is.null(previous) || inherits(previous, "bmmtools_validation")) {
     return(previous)
   }
   if (!is.character(previous) || length(previous) != 1L || is.na(previous)) {
     cli::cli_abort(
-      "{.arg previous} must be a validation result, a path to one, or \\
+      "{.arg {arg}} must be a validation result, a path to one, or \\
        {.code NULL}, not {.obj_type_friendly {previous}}.",
       call = call
     )
@@ -490,6 +497,8 @@ stage_input_fields <- function(stage) {
       truth, "grid", "reps", "sampler", "convergence", "correlations"
     ),
     agreement = "reference",
+    # the read-off bar and the subjects it reads at
+    data_requirements = "criteria",
     character()
   )
 }
@@ -555,6 +564,7 @@ run_stage_body <- function(stage, plan, paths, dots, fitter, refit, results) {
     individual_differences = stage_individual_differences(
       plan, results$recovery
     ),
+    data_requirements = stage_data_requirements(plan, results$recovery),
     agreement = stage_agreement(plan, results$recovery),
     cli::cli_abort("No stage {.val {stage}} can be run.")
   )
@@ -760,6 +770,60 @@ stage_individual_differences <- function(plan, recovery) {
   out
 }
 
+#' The thresholds a card reads off at: the plan's, and 0.70 and 0.90
+#' beside it (D83)
+#' @noRd
+read_off_thresholds <- function(criteria) {
+  sort(unique(c(0.70, criteria$read_off_r_low, 0.90)))
+}
+
+#' The smallest number of trials at each read-off threshold
+#'
+#' D83 as amended 2026-10-25: read off `r_low` alone at the plan's
+#' subjects, with no per-design coverage condition; the coverage leg is
+#' the pooled test of the verdict.
+#' @noRd
+stage_data_requirements <- function(plan, recovery) {
+  n <- plan$criteria$read_off_n_subjects
+  rows <- summary(recovery)
+  rows <- rows[rows$level == "subject" & rows$n_subjects == n, , drop = FALSE]
+  columns <- c("n_subjects", "term", "threshold", "smallest", "status")
+  varying <- names(plan$sds)[!is.na(plan$sds) & plan$sds > 0]
+  scored <- any(!is.na(rows$r_low))
+  dplyr::bind_rows(lapply(
+    read_off_thresholds(plan$criteria),
+    function(threshold) {
+      found <- if (scored) {
+        out <- smallest_design(rows, c(r_low = threshold), by = "n_subjects")
+        tibble::as_tibble(unclass(out))[columns]
+      }
+      # smallest_design() leaves out a term without a correlation at any
+      # design; D83 asks for every subject-varying parameter, so it is
+      # listed, and not judged
+      missing <- setdiff(varying, found$term)
+      dplyr::bind_rows(found, tibble::tibble(
+        n_subjects = rep(as.integer(n), length(missing)), term = missing,
+        threshold = rep(threshold, length(missing)),
+        smallest = rep(NA_integer_, length(missing)),
+        status = rep("not scored: no person-level correlation", length(missing))
+      ))
+    }
+  ))
+}
+
+#' The read-off for all subject-varying terms at once: the largest, or
+#' `NA` when one term does not reach the threshold
+#' @noRd
+read_off_all_terms <- function(x) {
+  dplyr::bind_rows(lapply(split(x, x$threshold), function(rows) {
+    tibble::tibble(
+      n_subjects = rows$n_subjects[[1L]], term = "all",
+      threshold = rows$threshold[[1L]],
+      smallest = if (anyNA(rows$smallest)) NA else max(rows$smallest)
+    )
+  }))
+}
+
 #' @noRd
 stage_agreement <- function(plan, recovery) {
   cells <- attr(recovery, "cells")
@@ -826,7 +890,8 @@ validation_stage_rows <- function(plan, records) {
 #' @param result A `bmmtools_validation`.
 #'
 #' @return A tibble with the columns `stage`, `condition` (the design as
-#'   `"<subjects> x <trials>"`, the prior set, `"all"`, or `NA`), `level`
+#'   `"<subjects> x <trials>"`, the prior set, `"all"`, `"<subjects>
+#'   subjects"` for the data requirements read-off, or `NA`), `level`
 #'   (the estimate level or the correlation estimator, or `NA`), `term`,
 #'   `metric`, `value` and `mcse`, the Monte Carlo standard error where
 #'   one follows from the stored results: binomial for a rate, at the rate
@@ -846,6 +911,7 @@ card_numbers <- function(result) {
     numbers_computation(result$computation),
     numbers_identifiability(result$identifiability),
     numbers_individual_differences(result$individual_differences),
+    numbers_data_requirements(result$data_requirements),
     numbers_agreement(result$agreement)
   )
   out <- dplyr::bind_rows(c(list(empty_card_numbers()), pieces))
@@ -1092,6 +1158,29 @@ numbers_individual_differences <- function(x) {
 }
 
 #' @noRd
+numbers_data_requirements <- function(x) {
+  if (is.null(x) || nrow(x) == 0L) {
+    return(NULL)
+  }
+  rows <- dplyr::bind_rows(
+    x[c("n_subjects", "term", "threshold", "smallest")], read_off_all_terms(x)
+  )
+  tibble::tibble(
+    stage = "data_requirements",
+    condition = sprintf("%s subjects", format(rows$n_subjects)),
+    level = "subject",
+    term = rows$term,
+    # one at a time: format() pads a vector to a common width, which
+    # would rename a metric with the thresholds beside it
+    metric = paste0(
+      "n_trials_at_r_low_", vapply(rows$threshold, fmt, character(1))
+    ),
+    value = as.double(rows$smallest),
+    mcse = NA_real_
+  )
+}
+
+#' @noRd
 numbers_agreement <- function(x) {
   if (is.null(x)) {
     return(NULL)
@@ -1131,14 +1220,23 @@ numbers_agreement <- function(x) {
 #'   diagnostics.
 #' * computation: the share of converged cells at least
 #'   `convergence_rate_min`.
-#' * recovery: the coverage of every population parameter in every design
-#'   at least `coverage_level` minus one Monte Carlo standard error at
-#'   nominal, `sqrt(level * (1 - level) / n_replications)`.
+#' * recovery: the coverage of every population parameter, pooled over the
+#'   designs, not below `coverage_level` by a one-sided binomial test at
+#'   `coverage_alpha` divided by the number of parameters. The coverage of
+#'   each design is reported, not judged.
 #' * identifiability: at the largest design, every population parameter's
 #'   mean contraction above `contraction_min` and its mean z-score within
 #'   `z_mean_max` of 0.
 #' * individual differences: the coverage of every generating correlation
-#'   held to the recovery bar.
+#'   held to the same pooled test, divided by the number of correlations.
+#' * data requirements: every subject-varying parameter reaches `r_low >=
+#'   read_off_r_low` within the grid at `read_off_n_subjects` subjects,
+#'   the value being the largest read-off over the parameters; a
+#'   parameter the grid gave no person-level correlation is not judged.
+#'   Its coverage leg is the recovery criterion's pooled test, repeated as
+#'   a second row: a per-design coverage bar changed or removed a
+#'   calibrated `ezdm` model's read-off in 24 % to 56 % of runs at 10
+#'   replications.
 #' * agreement: reported, not judged.
 #'
 #' The ECDF band is simultaneous over the ranks of one variable; it is not
@@ -1149,7 +1247,9 @@ numbers_agreement <- function(x) {
 verdict_table <- function(result) {
   check_validation_result(result)
   stages <- result$stages
-  criteria <- result$plan$criteria
+  # a plan stored before a criterion existed is judged by its default
+  criteria <- default_validation_criteria()
+  criteria[names(result$plan$criteria)] <- result$plan$criteria
   rows <- lapply(seq_len(nrow(stages)), function(i) {
     stage <- stages$stage[[i]]
     status <- stages$status[[i]]
@@ -1196,6 +1296,18 @@ verdict_row <- function(criterion, value, pass, note = NA_character_) {
 #' @noRd
 fmt <- function(x) format(signif(x, 3), trim = TRUE)
 
+#' The pooled coverage test, in words
+#' @noRd
+pooled_test_text <- function(criteria, of = "parameters") {
+  sprintf(
+    paste(
+      "not below %s by a one-sided binomial test at %s divided by the",
+      "number of %s"
+    ),
+    fmt(criteria$coverage_level), fmt(criteria$coverage_alpha), of
+  )
+}
+
 #' The criterion of a stage that did not run, in words
 #' @noRd
 stage_criterion_text <- function(stage, result, criteria) {
@@ -1211,10 +1323,10 @@ stage_criterion_text <- function(stage, result, criteria) {
     ),
     recovery = sprintf(
       paste(
-        "%s%% interval coverage of every population parameter, in every",
-        "design, at least %s minus one MCSE"
+        "%s%% interval coverage of every population parameter, pooled",
+        "across designs, %s"
       ),
-      level, fmt(criteria$coverage_level)
+      level, pooled_test_text(criteria)
     ),
     computation = sprintf(
       "at least %s of the recovery cells pass check_convergence()",
@@ -1229,14 +1341,19 @@ stage_criterion_text <- function(stage, result, criteria) {
     ),
     individual_differences = sprintf(
       paste(
-        "%s%% interval coverage of every generating correlation, in every",
-        "design, at least %s minus one MCSE"
+        "%s%% interval coverage of every generating correlation, pooled",
+        "across designs, %s"
       ),
-      level, fmt(criteria$coverage_level)
+      level, pooled_test_text(criteria, "correlations")
     ),
-    data_requirements = paste(
-      "the smallest design with person-level r_low >= 0.80 at 50 subjects",
-      "(D83)"
+    data_requirements = sprintf(
+      paste(
+        "the smallest number of trials at which every subject-varying",
+        "parameter has person-level r_low >= %s at %s subjects (%s is",
+        "a convention, not a finding)"
+      ),
+      fmt(criteria$read_off_r_low), format(criteria$read_off_n_subjects),
+      fmt(criteria$read_off_r_low)
     ),
     agreement = "reported, not judged",
     model_recovery = "not defined yet",
@@ -1256,6 +1373,7 @@ stage_verdicts <- function(stage, result, criteria) {
     recovery = verdict_recovery(result, criteria),
     identifiability = verdict_identifiability(result, criteria),
     individual_differences = verdict_individual(result, criteria),
+    data_requirements = verdict_data_requirements(result, criteria),
     agreement = verdict_agreement(result),
     NULL
   )
@@ -1341,24 +1459,40 @@ verdict_computation <- function(result, criteria) {
   )
 }
 
-#' Coverage held to nominal minus one MCSE at nominal
+#' Coverage pooled across designs, judged by a binomial test per term
+#'
+#' A term fails when `pbinom(covered, n, level)` is below `coverage_alpha`
+#' over the number of terms. The per-design bar of 26.1 failed a
+#' calibrated model's stage two times in three at 10 replications
+#' (ARCHITECTURE § 26.0, amendment 3). `label` names the design column,
+#' which pooling no longer needs; it is kept for the callers.
 #' @noRd
 coverage_verdict <- function(text, rows, label, criteria, empty_note) {
   if (is.null(rows) || nrow(rows) == 0L || all(is.na(rows$coverage))) {
     return(verdict_row(text, NA_real_, NA, empty_note))
   }
-  level <- criteria$coverage_level
-  bar <- level - sqrt(level * (1 - level) / rows$n_replications)
-  low <- !is.na(rows$coverage) & rows$coverage < bar
+  rows <- rows[!is.na(rows$coverage), ]
+  # coverage leaves out a replication without an interval while
+  # n_replications counts it; such a replication is a failed fit, which
+  # the runner retries and the computation stage judges
+  covered <- round(rows$coverage * rows$n_replications)
+  terms <- unique(rows$term)
+  k <- tapply(covered, factor(rows$term, terms), sum)
+  n <- tapply(rows$n_replications, factor(rows$term, terms), sum)
+  p <- stats::pbinom(k, n, criteria$coverage_level)
+  low <- p < criteria$coverage_alpha / length(terms)
   note <- if (any(low)) {
     paste(
-      sprintf("%s at %s", rows$term[low], rows[[label]][low]),
+      sprintf(
+        "%s: %d of %d covered, p = %s", terms[low], k[low], n[low],
+        fmt(p[low])
+      ),
       collapse = "; "
     )
   } else {
     NA_character_
   }
-  verdict_row(text, min(rows$coverage, na.rm = TRUE), !any(low), note)
+  verdict_row(text, unname(min(k / n)), !any(low), note)
 }
 
 #' @noRd
@@ -1414,6 +1548,53 @@ verdict_individual <- function(result, criteria) {
     if (!is.null(x) && "condition" %in% names(x)) "condition" else "term",
     criteria, "not judged: no correlation was scored"
   )
+}
+
+#' The read-off and, as D83's coverage leg (amended 2026-10-25), the
+#' recovery stage's pooled coverage test
+#' @noRd
+verdict_data_requirements <- function(result, criteria) {
+  x <- result$data_requirements
+  x <- x[x$threshold == criteria$read_off_r_low, , drop = FALSE]
+  reached <- startsWith(x$status, "met")
+  # a term that does not reach the bar fails it; one the grid could not
+  # score (or, for a rate, cannot decide) is not judged
+  failed <- startsWith(x$status, "not reached")
+  pass <- if (any(failed)) {
+    FALSE
+  } else if (nrow(x) == 0L || !all(reached)) {
+    NA
+  } else {
+    TRUE
+  }
+  note <- if (any(!reached)) {
+    paste(
+      sprintf("%s: %s", x$term[!reached], x$status[!reached]),
+      collapse = "; "
+    )
+  } else if (nrow(x) == 0L) {
+    "not judged: no subject-varying parameter was scored"
+  } else {
+    NA_character_
+  }
+  value <- if (nrow(x) > 0L) read_off_all_terms(x)$smallest else NA_real_
+  read_off <- verdict_row(
+    stage_criterion_text("data_requirements", result, criteria), value, pass,
+    note
+  )
+  population <- labelled_summary(result$plan, result$recovery)
+  coverage <- coverage_verdict(
+    sprintf(
+      paste(
+        "%s%% interval coverage of every population parameter, pooled",
+        "across designs, %s (the recovery stage's test)"
+      ),
+      fmt(100 * criteria$coverage_level), pooled_test_text(criteria)
+    ),
+    population[population$level == "population", ], "condition", criteria,
+    "not judged: no population rows were scored"
+  )
+  dplyr::bind_rows(read_off, coverage)
 }
 
 #' @noRd
@@ -1505,9 +1686,12 @@ validation_headline <- function(result) {
 #'   `2 * sqrt(mcse_old^2 + mcse_new^2)`; otherwise when it exceeds the
 #'   new plan's tolerance for the metric (its `criteria$tolerance`, 0 by
 #'   default, so any change of such a number is flagged; timings never
-#'   are). A number present in one run only has `moved = NA`. The
-#'   attributes `old_bmm` and `new_bmm` name the bmm versions of the two
-#'   runs, and `n_compared` counts the numbers present in both.
+#'   are). A number of both runs that is missing (`NA`) in one of them
+#'   moved, such as a read-off that reaches its bar in one run only; a
+#'   number present in one run only has `moved = NA`. The attributes
+#'   `old_bmm` and `new_bmm` name the bmm versions of the two runs,
+#'   `n_compared` counts the numbers present in both, and
+#'   `mcse_multiplier` is the 2 of the rule.
 #'
 #' @export
 compare_validations <- function(old, new) {
@@ -1516,8 +1700,11 @@ compare_validations <- function(old, new) {
   keys <- c("stage", "condition", "level", "term", "metric")
   a <- numbers_of(old_result)
   b <- numbers_of(new_result)
+  a$in_old <- rep(TRUE, nrow(a))
+  b$in_new <- rep(TRUE, nrow(b))
   joined <- dplyr::full_join(
-    a[c(keys, "value", "mcse")], b[c(keys, "value", "mcse")],
+    a[c(keys, "value", "mcse", "in_old")],
+    b[c(keys, "value", "mcse", "in_new")],
     by = keys, suffix = c("_old", "_new"), na_matches = "na",
     relationship = "one-to-one"
   )
@@ -1530,15 +1717,20 @@ compare_validations <- function(old, new) {
   tol[is.na(tol)] <- tolerance[["default"]] %||% 0
   diff <- joined$value_new - joined$value_old
   with_mcse <- !is.na(joined$mcse_old) & !is.na(joined$mcse_new)
+  multiplier <- moved_mcse_multiplier()
   moved <- ifelse(
     with_mcse,
-    abs(diff) > 2 * sqrt(joined$mcse_old^2 + joined$mcse_new^2),
+    abs(diff) > multiplier * sqrt(joined$mcse_old^2 + joined$mcse_new^2),
     abs(diff) > tol
   )
   # a number present in one run only stays NA: it was added or dropped,
-  # which is not a move; a number missing in both did not move
+  # which is not a move; a number missing in both did not move; a number
+  # of both runs that has a value in one only did (a read-off that
+  # reaches its bar in one run and not in the other)
   both_missing <- is.na(joined$value_old) & is.na(joined$value_new)
   moved[both_missing] <- FALSE
+  in_both <- joined$in_old %in% TRUE & joined$in_new %in% TRUE
+  moved[in_both & xor(is.na(joined$value_old), is.na(joined$value_new))] <- TRUE
   out <- tibble::tibble(
     joined[keys],
     old = joined$value_old, new = joined$value_new, diff = diff,
@@ -1549,9 +1741,16 @@ compare_validations <- function(old, new) {
     out,
     old_bmm = bmm_version_of(old_result),
     new_bmm = bmm_version_of(new_result),
-    n_compared = sum(!is.na(out$moved))
+    n_compared = sum(!is.na(out$moved)),
+    mcse_multiplier = multiplier
   )
 }
+
+#' How many combined Monte Carlo standard errors a number must move by
+#' (D84); stored on the comparison, so the card prints it rather than
+#' typing it
+#' @noRd
+moved_mcse_multiplier <- function() 2
 
 #' @noRd
 validation_or_numbers <- function(x, arg, call = rlang::caller_env()) {
