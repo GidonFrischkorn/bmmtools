@@ -67,6 +67,66 @@ density_for <- function(model) {
   )
 }
 
+#' Refuse data the Stan route would refuse, where a density cannot tell
+#'
+#' A density adapter reads the data as bmm's data check leaves them, but
+#' the optim route never runs that check, and a density that quietly
+#' reads a value bmm refuses fits data the Stan route would not. So the
+#' few rules a density would otherwise paper over are applied here, once,
+#' before the first subject is fitted --- raised inside the optimiser they
+#' would become a large finite objective and a subject that failed to
+#' converge for a reason that is about the data.
+#'
+#' Only `sdt_ranking` has such a rule. bmm reads `NA` counts as 0 beyond a
+#' row's set size and refuses them within it (`check_data.sdt_ranking()`,
+#' measured 2026-10-25 on CRAN bmm 1.4.1 with the mock backend, for `m` as
+#' a number and as a column); [density_sdt_ranking()] has to read every
+#' `NA` as 0, so the refusal is made here. A missing rank column, or a
+#' missing column that `m` names, is refused first, by name, as bmm does.
+#'
+#' @param data The data `fit_ml()` was given.
+#' @param model A `bmmodel`.
+#' @param call The calling environment, for error messages.
+#'
+#' @return `data`, invisibly.
+#' @noRd
+check_density_data <- function(data, model, call = rlang::caller_env()) {
+  if (!identical(adapter_name(model), "sdt_ranking")) {
+    return(invisible(data))
+  }
+  vars <- model$other_vars
+  response <- unname(model$resp_vars$response)
+  absent <- setdiff(c(response, if (is.character(vars$m)) vars$m), names(data))
+  if (length(absent) > 0L) {
+    cli::cli_abort(
+      c(
+        "{.arg data} has no column{?s} {.val {absent}}.",
+        i = "The model reads its rank counts, and {.arg m} when it names \\
+             a column, from {.arg data}; bmm refuses such data too."
+      ),
+      call = call
+    )
+  }
+  counts <- as.matrix(as.data.frame(data)[response])
+  m <- if (is.character(vars$m)) data[[vars$m]] else vars$m
+  # `m` has one value per row, and col() compares it row by row
+  within <- is.na(counts) & col(counts) <= m
+  bad <- which(rowSums(within, na.rm = TRUE) > 0)
+  if (length(bad) > 0L) {
+    cli::cli_abort(
+      c(
+        "Rank counts must not be {.code NA} within a row's set size.",
+        x = "Not so in row{?s} {as.character(bad)} of {.arg data}.",
+        i = "bmm reads {.code NA} as 0 only in rank columns beyond a \\
+             row's {.arg m}, and refuses the data otherwise; \\
+             {.code method = \"optim\"} does the same."
+      ),
+      call = call
+    )
+  }
+  invisible(data)
+}
+
 #' Yes/no signal detection: one row per stimulus class
 #' @noRd
 density_sdt_yn <- function(pars, data, model) {
@@ -94,7 +154,9 @@ density_sdt_mafc <- function(pars, data, model) {
 #' Ranking: one row of rank counts
 #'
 #' `dsdt_ranking()` refuses `NA` counts, while bmm's data check reads `NA`
-#' beyond a row's set size as 0, so they are read as 0 here too. `m` comes
+#' beyond a row's set size as 0, so they are read as 0 here too. An `NA`
+#' within the set size never reaches this far: bmm refuses it, and so does
+#' [check_density_data()] before the first subject is fitted. `m` comes
 #' from its column when the model names one (D101); `sdratio` is passed as
 #' the ratio, as to the generator ([ranking_sdratio()]).
 #' @noRd

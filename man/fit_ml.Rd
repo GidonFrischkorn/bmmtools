@@ -67,10 +67,14 @@ for ML rows too.}
 still counts as converged.}
 
 \item{start}{Named link-scale start values for \code{method = "optim"}, one
-per free parameter. \code{NULL}, the default, starts at zero, which was
-measured to reach the same optimum as a start at the Stan mode on
-every subject of the reference run. Its names also choose the member
-of an alternative parameterization that is estimated.}
+per free parameter. \code{NULL}, the default, starts at zero. On 40
+subjects of \code{mixture2p} at 100 trials, a start at zero reached the
+same optimum as a start at the mean of the Laplace draws of the
+\code{"stan"} route, to 4.3e-07 on the link scale. Under
+\code{bmm::ezdm(version = "4par")} it does not: see the
+section "Four-parameter \code{ezdm}, one subject at a time". Its names
+also choose the member of an alternative parameterization that is
+estimated.}
 
 \item{nll}{A function of \verb{(pars, data, model)} returning the negative
 log-likelihood of one subject's \code{data} as a single number, where
@@ -167,6 +171,46 @@ drops out of \code{coverage} only.
 \code{rhat}, \code{ess_bulk} and \code{ess_tail} are always \code{NA}. Neither route
 produces MCMC draws, so the values \code{posterior} would return describe
 the approximation and not the estimate.
+}
+
+\section{Four-parameter \code{ezdm}, one subject at a time}{
+
+Under \code{bmm::ezdm(version = "4par")} one subject's row holds five
+statistics --- the mean and variance of the response times at each
+boundary, and \code{n_upper} --- for four parameters. A boundary reached
+fewer than twice leaves its two RT summaries \code{NA}, three statistics
+remain for four parameters, and no-pooling cannot identify that
+subject. On the \code{optim} route such a subject nearly always fails to
+converge: of 30 subjects simulated at drift 1.5, bound 1.5, ndt 0.3 and
+zr 0.7 with no spread between them (\code{seed = 1}), 23 failed at 25 trials
+and 6 at 100, exactly the subjects with fewer than two lower-boundary
+responses. Two or more responses at each boundary are necessary for
+identification but not sufficient for a good fit.
+At 400 trials every subject reached both boundaries and one still
+failed: from the default start at zero, \code{optim()} used up its 100 BFGS
+iterations without a success code, although it stood within 5e-05 on
+the link scale of the optimum that a start at the true values reaches.
+Nor does \code{converged} vouch for every subject that passes it. In the same
+run, subject 17 (15 lower-boundary responses) passed with drift -0.002
+against a true 1.5 and log bound 6.73 against a true 0.41, at a
+negative log-likelihood of 117.26 against -6.28 at the true values.
+That point is not an optimum. The gradient there is -50 on drift and
+15 on log bound, and lowering log bound by 1 lowers the negative
+log-likelihood to 107.56: BFGS stalled short of the optimum in an
+ill-conditioned valley and returned its success code all the same.
+Nelder-Mead started from that point with \code{maxit = 1000} reaches -8.10,
+the optimum that a start at the true values reaches; with the default
+\code{maxit} of 500 it stops at -6.24 without a success code. At 25 trials
+with SDs between subjects of 0.3 on \code{drift}, 0.2
+on \code{bound}, 0.2 on \code{ndt} and 0.3 on \code{zr} (\code{seed = 1}), one subject with
+no lower-boundary response passed at a drift of -1.36 against a true
+1.31, with Wald intervals 3308 wide on \code{bound} and on \code{zr}. SDs,
+estimates and widths are on the link scale. Give each subject enough
+trials to reach both boundaries and pass \code{start} near plausible
+values: started at the true values, all 30 subjects of the 400-trial
+run converged and subject 17 returned a drift of 1.35. Compare the
+estimates with a hierarchical fit by \code{\link[bmm:bmm]{bmm::bmm()}}, which pools across
+subjects. Both routes of \code{fit_ml()} are no-pooling fits.
 }
 
 \examples{
