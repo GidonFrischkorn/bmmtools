@@ -102,9 +102,23 @@ read_cache_rng_seeded <- function(meta) {
 #' as `NULL` does.
 #'
 #' @noRd
-fit_rng_seed <- function(seed) {
+fit_rng_seed <- function(seed, call = rlang::caller_env()) {
   if (is.null(seed) || (length(seed) == 1L && is.na(seed))) {
     return(NULL)
+  }
+  limit <- .Machine$integer.max
+  if (is.numeric(seed) && any(abs(seed) > limit, na.rm = TRUE)) {
+    value <- seed[!is.na(seed) & abs(seed) > limit][[1L]]
+    cli::cli_abort(
+      c(
+        "{.arg seed} must lie between {.val {-limit}} and {.val {limit}}, \\
+         not {format(value, scientific = FALSE)}.",
+        i = "R's random number generator takes no seed whose \\
+             absolute value exceeds {.code .Machine$integer.max}."
+      ),
+      seed = value,
+      call = call
+    )
   }
   seed
 }
@@ -485,21 +499,37 @@ cache_announce <- function(paths, lookup, refit) {
 #' the fitter is called under `withr::with_seed(seed)`, because bmm draws
 #' the initial values of every chain from R's generator inside the fit.
 #' The same `seed` therefore gives the same initial values and the same
-#' draws, with 1 or 4 `cores` (measured with the cmdstanr backend, which
-#' calls bmm's initial-value function in the R session; the rstan backend
-#' was not measured), and the caller's random number stream is left as
-#' it was. Without a `seed` (or with `NA`) nothing is
+#' draws, and the caller's random number stream is left as it was. This
+#' was measured with both backends, each of which calls bmm's
+#' initial-value function in the R session before it starts the chains
+#' (with brms's `future = TRUE` each chain calls it inside its own
+#' future instead, which was not measured): with cmdstanr on an `ezdm`
+#' cell with 1 or 4 `cores`, and with rstan
+#' 2.32.7 and cmdstanr 0.9.0 on a `mixture2p` fit (10 subjects of 30
+#' trials, 2 chains of 600 iterations, `cores = 2`) in two fresh R
+#' sessions (without the seeded fitter, the two rstan runs differed in
+#' initial values and draws). Without a `seed` (or with `NA`) nothing is
 #' seeded and the initial values are drawn from the caller's stream.
-#' Two things the seed does not fix: within-chain threading through
+#' A `seed` larger than `.Machine$integer.max` in absolute value is
+#' refused with an error when the fit is run, because R's generator
+#' takes no larger seed; a fit already cached under such a seed is still
+#' read back.
+#' Three things the seed does not fix: within-chain threading through
 #' `brms::threading()` with its default `static = FALSE`, whose chains
 #' differ between runs once the data are split into more than one
-#' partial sum (`static = TRUE` repeats), and the random number arithmetic
-#' of another platform or R version.
+#' partial sum (`static = TRUE` repeats); the caller's `RNGkind()`, which
+#' `withr::with_seed()` keeps, so a fit inside a future with
+#' `future.seed = TRUE` (L'Ecuyer-CMRG) draws other initial values than
+#' the same fit run sequentially under the default kind; and the random
+#' number arithmetic of another platform or R version.
 #'
 #' Fits cached before bmmtools seeded the initial values (0.3.0 and
 #' earlier) still match their key and are read back as they were; the
 #' attribute's `rng_seeded` is `NA` for them, and `TRUE` or `FALSE` for a
-#' fit run since.
+#' fit run since. Only the cache's meta file and this attribute record
+#' it: grid sidecars, [recovery_grid()] results and [run_validation()]
+#' records do not, so a grid resumed over fits cached by 0.3.0 or
+#' earlier mixes fits drawn both ways and its result cannot say which.
 #'
 #' @examples
 #' \dontrun{
@@ -536,6 +566,10 @@ fit_cached <- function(formula,
   if (lookup$reuse) {
     return(cache_read(paths, key, lookup))
   }
+  # checked after the lookup, so a fit cached under a seed R cannot take
+  # (cmdstanr can) is still read back (D110), and before anything is
+  # written
+  rng_seed <- fit_rng_seed(dots[["seed"]])
 
   cache_announce(paths, lookup, refit)
   dir.create(dirname(paths$rds), recursive = TRUE, showWarnings = FALSE)
@@ -550,7 +584,6 @@ fit_cached <- function(formula,
   # only the fitter call runs under the seed: bmm draws the initial values
   # from R's generator inside it (D111), and the caller's stream is
   # restored afterwards
-  rng_seed <- fit_rng_seed(dots[["seed"]])
   started <- Sys.time()
   fit <- with_seed_if(rng_seed, rlang::exec(
     fitter,

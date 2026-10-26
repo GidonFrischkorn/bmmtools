@@ -9,13 +9,21 @@
   caller's random number stream afterwards; so do `benchmark()` around
   each fit and `sbc()` around `SBC::compute_SBC()`. On an `ezdm` cell
   fitted with the cmdstanr backend the same `seed` now gives identical
-  initial values and identical draws, with 1 or 4 cores; the rstan
-  backend was not measured. Not covered: `brms::threading()` with its default
-  `static = FALSE` once the data are split (`static = TRUE` repeats), and
-  another platform's random number arithmetic. The cache key is
-  unchanged, so a fit cached by 0.3.0 or earlier is still read back as
-  it was; the cache's meta file and the fit's `bmmtools_cache` attribute
-  now record `rng_seeded`, which is `NA` for those fits.
+  initial values and identical draws, with 1 or 4 cores, and so does a
+  `mixture2p` fit with 2 cores under rstan 2.32.7 and cmdstanr 0.9.0,
+  run in two fresh R sessions. All three functions refuse to fit under a
+  `seed` larger than `.Machine$integer.max` in absolute value, which R's
+  generator does not take; `fit_cached()` still reads back a fit already
+  cached under one. Not covered: `brms::threading()` with its
+  default `static = FALSE` once the data are split (`static = TRUE`
+  repeats), the caller's `RNGkind()` (a future with `future.seed = TRUE`
+  uses L'Ecuyer-CMRG), and another platform's random number arithmetic.
+  In `benchmark()` with one data frame and a `seed`, every run is the
+  same fit, so the interval on the ratios reflects only timing noise. The
+  cache key is unchanged, so a fit cached by 0.3.0 or earlier is still
+  read back as it was; the cache's meta file and the fit's
+  `bmmtools_cache` attribute now record `rng_seeded`, which is `NA` for
+  those fits.
 
 * `render_card()` renders the validation card of a `run_validation()`
   result to one self-contained HTML file: the headline, the run record

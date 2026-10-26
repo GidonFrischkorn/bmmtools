@@ -1504,7 +1504,8 @@ grid_formula <- function(formula, row, i, model, re_cor, task_col,
 #'   the cell's seed fixes its simulated data, the initial values of its
 #'   chains and the sampler, so a rerun gives the same draws (see "Seed"
 #'   in [fit_cached()] for what it does not fix: dynamic within-chain
-#'   threading and another platform's arithmetic). `NULL` leaves
+#'   threading, the caller's `RNGkind()` and another platform's
+#'   arithmetic). `NULL` leaves
 #'   everything unseeded and records `NA`.
 #' @param subjects `"redraw"` draws new subject values in every
 #'   replication; `"fixed"` draws them once per row and reuses them, so

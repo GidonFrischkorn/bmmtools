@@ -580,3 +580,17 @@ test_that("each fit runs under the seed it is given (Milestone 34, D112)", {
   )
   expect_identical(get(".Random.seed", envir = globalenv()), before)
 })
+
+test_that("a seed beyond R's integer range aborts before any run", {
+  mock <- rng_bench_fitter()
+  expect_error(
+    benchmark(
+      list(a = mock$fitter),
+      data = two_sets(2L), runs = 1L, warmup_runs = 1L,
+      compile = FALSE, .metrics = mock_metrics(), seed = 3e9
+    ),
+    regexp = "integer.max|2147483647",
+    class = "rlang_error"
+  )
+  expect_length(mock$draws$values, 0L)
+})

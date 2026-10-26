@@ -1507,6 +1507,7 @@ check_sbc_args <- function(prior, seed, fitter, cache_mode, cache_location,
       call = call
     )
   }
+  fit_rng_seed(seed, call = call)
   if (!is.null(fitter) && !is.function(fitter)) {
     cli::cli_abort(
       "{.arg .fitter} must be a function, \\

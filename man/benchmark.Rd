@@ -32,7 +32,13 @@ paired ratios dependent.}
 them; \code{summary()} warns when the recorded settings differ. With a
 \code{seed}, each fit is also called under \code{withr::with_seed(seed)}, as in
 \code{\link[=fit_cached]{fit_cached()}}, so that the initial values bmm draws from R's
-random number generator are the same in every run.}
+random number generator are the same in every run. With one data
+frame for \code{data} and a \code{seed}, every run of an implementation is
+therefore the same fit, with the same draws and the same ESS; only
+the wall time varies, so the interval \code{summary()} gives for the
+ESS-per-second ratio measures timing noise of the machine, not
+variation between fits. To measure efficiency across fits, pass a
+list of data sets, one per pair.}
 
 \item{runs}{Recorded pairs per implementation.}
 

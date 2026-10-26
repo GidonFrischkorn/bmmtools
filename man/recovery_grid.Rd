@@ -129,7 +129,8 @@ cell's row and replication, so a cell is reproducible on its own:
 the cell's seed fixes its simulated data, the initial values of its
 chains and the sampler, so a rerun gives the same draws (see "Seed"
 in \code{\link[=fit_cached]{fit_cached()}} for what it does not fix: dynamic within-chain
-threading and another platform's arithmetic). \code{NULL} leaves
+threading, the caller's \code{RNGkind()} and another platform's
+arithmetic). \code{NULL} leaves
 everything unseeded and records \code{NA}.}
 
 \item{subjects}{\code{"redraw"} draws new subject values in every

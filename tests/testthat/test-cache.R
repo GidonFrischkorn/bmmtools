@@ -661,3 +661,50 @@ test_that("an NA seed, brms's own default, leaves the stream alone like NULL", {
   expect_identical(fit$draw, expected)
   expect_false(attr(fit, "bmmtools_cache")$rng_seeded)
 })
+
+test_that("a seed beyond R's range aborts before a fit or a write", {
+  dir <- withr::local_tempdir()
+  mock <- rng_mock_fitter()
+  file <- file.path(dir, "cell-01")
+
+  expect_error(
+    cache_call(mock, file, seed = 3e9),
+    regexp = "integer.max|2147483647",
+    class = "rlang_error"
+  )
+  expect_identical(mock$calls$n, 0L)
+  expect_length(mock$draws$values, 0L)
+  expect_length(list.files(dir, all.files = TRUE, no.. = TRUE), 0L)
+})
+
+test_that("a fit cached under a seed beyond R's range is still read back", {
+  # D110: cmdstanr took such a seed before Milestone 34, so a cache may
+  # hold one; the check runs on a refit only. The cache is written with the
+  # check disabled, as 0.3.0 wrote it.
+  dir <- withr::local_tempdir()
+  mock <- rng_mock_fitter()
+  file <- file.path(dir, "cell-01")
+  local({
+    local_mocked_bindings(fit_rng_seed = function(seed, ...) NULL)
+    suppressMessages(cache_call(mock, file, seed = 3e9))
+  })
+
+  fit <- suppressMessages(cache_call(mock, file, seed = 3e9))
+
+  expect_identical(mock$calls$n, 1L)
+  expect_true(attr(fit, "bmmtools_cache")$reused)
+})
+
+test_that("a seed at R's integer limit still fits", {
+  dir <- withr::local_tempdir()
+  for (seed in c(.Machine$integer.max, -.Machine$integer.max)) {
+    mock <- rng_mock_fitter()
+    file <- file.path(dir, paste0("cell-", sign(seed)))
+    suppressMessages(fit <- cache_call(mock, file, seed = seed))
+    expect_identical(mock$calls$n, 1L)
+    expect_identical(
+      mock$draws$values, withr::with_seed(seed, stats::runif(1L))
+    )
+    expect_true(file.exists(paste0(file, ".rds")))
+  }
+})

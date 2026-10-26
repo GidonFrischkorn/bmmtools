@@ -2017,3 +2017,18 @@ test_that("the data set fits are reproducible from the seed (Milestone 34, D112)
   expect_identical(first, second)
   expect_identical(get(".Random.seed", envir = globalenv()), before)
 })
+
+test_that("check_sbc_args refuses a seed beyond R's integer range", {
+  expect_error(
+    check_sbc_args(NULL, 3e9, NULL, "none", NULL),
+    regexp = "integer.max|2147483647",
+    class = "rlang_error"
+  )
+  expect_error(
+    check_sbc_args(NULL, -3e9, NULL, "none", NULL),
+    regexp = "integer.max|2147483647",
+    class = "rlang_error"
+  )
+  expect_null(check_sbc_args(NULL, .Machine$integer.max, NULL, "none", NULL))
+  expect_null(check_sbc_args(NULL, NULL, NULL, "none", NULL))
+})
