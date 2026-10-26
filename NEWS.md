@@ -46,6 +46,11 @@
   bmmtools does not know now gets no adapter rather than another
   version's, so a later version of `ezdm` asks for a `generator`.
 
+* `sbc()` now reads an `NA` count in `m3` data with numbers of options
+  as 0, as bmm does, and takes the row's number of trials as its total
+  over the other counts. It used to stop with an error that the row's
+  total was not a whole number of trials.
+
 * A new article, "Recovering the EZ diffusion model on the standard
   grid", reports a recovery study of the three-parameter `ezdm` under
   bmm 1.4.1: 20 or 50 subjects, 30, 100 or 300 trials, 10 replications
