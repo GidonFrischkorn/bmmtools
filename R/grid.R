@@ -41,6 +41,91 @@ grid_cell_table <- function(n_rows, reps, seed) {
   cells
 }
 
+#' Split a grid's cells into tasks for separate processes
+#'
+#' The cells of a [recovery_grid()] run, numbered as the grid numbers
+#' them, cut into `n` runs of consecutive cells for `recovery_grid(cells
+#' = )`. The grid orders its cells replication by replication, so a task
+#' of at least `nrow(grid)` cells spans every design row, and with `n` at
+#' most `reps` the tasks cost about the same whatever the rows cost. With
+#' more tasks than replications, a task holds only some rows and the
+#' tasks of the costly rows take longer.
+#'
+#' @param grid The grid that is passed to [recovery_grid()].
+#' @param reps The replications that are passed to [recovery_grid()].
+#' @param n The number of tasks, at most the number of cells.
+#'
+#' @return A list of `n` integer vectors that hold every cell exactly
+#'   once. Their lengths differ by at most one, and the longer ones come
+#'   first.
+#'
+#' @seealso [recovery_grid()], whose `cells` argument takes one element
+#'   of the list.
+#'
+#' @examples
+#' grid <- data.frame(n_subjects = c(20, 50), n_trials = c(30, 100))
+#' grid_tasks(grid, reps = 10, n = 4)
+#'
+#' @export
+grid_tasks <- function(grid, reps, n) {
+  check_grid(grid)
+  reps <- check_count(reps, "reps")
+  n <- check_count(n, "n")
+  n_cells <- nrow(grid) * reps
+  if (n > n_cells) {
+    cli::cli_abort(c(
+      "{.arg n} is {n}, but the grid has {n_cells} cell{?s}.",
+      i = "Ask for at most one task per cell."
+    ))
+  }
+  sizes <- n_cells %/% n + (seq_len(n) <= n_cells %% n)
+  unname(split(seq_len(n_cells), rep(seq_len(n), sizes)))
+}
+
+#' Check `cells`: `NULL`, `integer(0)`, or distinct cell numbers
+#' @noRd
+check_cells_arg <- function(cells, n_cells, call = rlang::caller_env()) {
+  if (is.null(cells)) {
+    return(NULL)
+  }
+  if (!is.numeric(cells) || any(!is.na(cells) & cells != round(cells))) {
+    cli::cli_abort(
+      "{.arg cells} must be whole cell numbers, not \\
+       {.obj_type_friendly {cells}}.",
+      call = call
+    )
+  }
+  if (anyNA(cells) || any(cells < 1L | cells > n_cells)) {
+    cli::cli_abort(
+      c(
+        "{.arg cells} must lie between 1 and {n_cells}, the cells of \\
+         this grid.",
+        i = "{.fn grid_tasks} splits them into tasks."
+      ),
+      call = call
+    )
+  }
+  if (anyDuplicated(cells) > 0L) {
+    cli::cli_abort("{.arg cells} must name each cell once.", call = call)
+  }
+  as.integer(cells)
+}
+
+#' The cells of a grid as `recovery_grid()` lists them
+#' @noRd
+cell_listing <- function(cells, grid, dir) {
+  tibble::tibble(
+    condition = sprintf("row-%d", cells$row),
+    replication = cells$rep,
+    n_subjects = as.integer(grid$n_subjects[cells$row]),
+    n_trials = as.integer(grid$n_trials[cells$row]),
+    seed = cells$seed,
+    file = paste0(vapply(seq_len(nrow(cells)), function(i) {
+      cell_paths(dir, cells$row[[i]], cells$rep[[i]])$fit
+    }, character(1)), ".rds")
+  )
+}
+
 #' @noRd
 check_grid <- function(grid, required = c("n_subjects", "n_trials"),
                        call = rlang::caller_env()) {
@@ -933,6 +1018,7 @@ run_cell <- function(sim, model, formula, prior, paths, seed, dots, fitter,
     {
       key <- cache_key(formula, sim$data, model, prior, fit_dots)$key
       extracted <- read_sidecar(paths$est, key, request)
+      reused <- !is.null(extracted)
       if (is.null(extracted)) {
         fit <- rlang::exec(fit_cached, !!!cache_args)
         extracted <- extract_cell(fit, sim, request)
@@ -978,7 +1064,8 @@ run_cell <- function(sim, model, formula, prior, paths, seed, dots, fitter,
         subject_means = extracted$subject_means,
         diagnostics = extracted$diagnostics %||% empty_diagnostics(),
         fit_seconds = extracted$fit_seconds %||% NA_real_,
-        sampler = extracted$sampler %||% cell_sampler(list())
+        sampler = extracted$sampler %||% cell_sampler(list()),
+        reused = reused
       )
     },
     error = function(e) {
@@ -1029,19 +1116,7 @@ write_grid_record <- function(dir, record) {
     tryCatch(readRDS(path), error = function(e) NULL)
   }
   if (!is.null(stored)) {
-    # `trial_design` is written only when given, so a design dropped on a
-    # rerun shows only in the stored record; every other field is always
-    # written, and comparing the union of all of them would flag every
-    # record from a version that wrote a field since removed
-    compare <- setdiff(
-      union(
-        names(record), intersect(names(stored), c("trial_design", "formula"))
-      ),
-      "created"
-    )
-    changed <- compare[!vapply(compare, function(name) {
-      identical(stored[[name]], record[[name]])
-    }, logical(1))]
+    changed <- grid_record_changes(stored, record)
     if (length(changed) == 0L) {
       return(invisible(path))
     }
@@ -1053,6 +1128,142 @@ write_grid_record <- function(dir, record) {
   dir.create(dir, recursive = TRUE, showWarnings = FALSE)
   write_atomic(path, function(tmp) saveRDS(record, tmp))
   invisible(path)
+}
+
+#' The fields of a grid record that differ from the stored one
+#' @noRd
+grid_record_changes <- function(stored, record) {
+  # `trial_design` is written only when given, so a design dropped on a
+  # rerun shows only in the stored record; every other field is always
+  # written, and comparing the union of all of them would flag every
+  # record from a version that wrote a field since removed
+  compare <- setdiff(
+    union(
+      names(record), intersect(names(stored), c("trial_design", "formula"))
+    ),
+    "created"
+  )
+  compare[!vapply(compare, function(name) {
+    identical(stored[[name]], record[[name]])
+  }, logical(1))]
+}
+
+#' Check a slice's call against the record its setup call wrote (D116)
+#'
+#' A slice never writes `grid.rds`: many may run at once, and the record
+#' is what every one of them is checked against. One whose call differs
+#' would write cells of another grid under this grid's names.
+#'
+#' @noRd
+check_grid_record <- function(dir, record, call = rlang::caller_env()) {
+  path <- file.path(dir, "grid.rds")
+  stored <- if (file.exists(path)) {
+    tryCatch(readRDS(path), error = function(e) NULL)
+  }
+  setup <- "Run the setup call, the same call with {.code cells = \\
+            integer(0)}, before any slice."
+  if (!file.exists(path)) {
+    cli::cli_abort(
+      c(
+        "{.file {path}} does not exist, so {.arg cells} has no grid to \\
+         take its cells from.",
+        i = setup
+      ),
+      call = call
+    )
+  }
+  if (!is.list(stored)) {
+    cli::cli_abort(
+      c("{.file {path}} cannot be read as a grid record.", i = setup),
+      call = call
+    )
+  }
+  if (is.null(stored$fit)) {
+    # a record written by a call without `cells` says nothing about the
+    # prior, model or fitter arguments, so no slice can be checked against it
+    cli::cli_abort(
+      c(
+        "{.file {path}} was not written by a setup call.",
+        i = setup
+      ),
+      call = call
+    )
+  }
+  # `cores` does not change what a fit draws (it is not in a cell's key)
+  stored$sampler$cores <- NULL
+  record$sampler$cores <- NULL
+  record <- c(
+    record,
+    list(
+      bmmtools_version = bmmtools_version(),
+      bmm = package_version_string("bmm"),
+      brms = package_version_string("brms")
+    )
+  )
+  changed <- grid_record_changes(stored, record)
+  if (length(changed) > 0L) {
+    cli::cli_abort(
+      c(
+        "This call differs from the one that set up {.file {dir}}: \\
+         {.val {changed}} differ{?s/}.",
+        i = if ("fit" %in% changed) {
+          "{.val fit} covers the prior, the model and formula of every \\
+           row, the fitter's arguments other than {.arg cores}, and \\
+           {.arg prior_sd}."
+        },
+        i = "A slice must be the setup call with only {.arg cells} \\
+             changed."
+      ),
+      call = call
+    )
+  }
+  invisible(path)
+}
+
+#' What decides the fits of a grid beyond its record's fields
+#'
+#' A hash of every row's formula and model, the prior, the fitter's
+#' arguments and `prior_sd`. `cores` is left out: it changes how fast a
+#' fit runs, not what it draws, and is not in a cell's cache key either,
+#' so a slice may run on fewer cores than the setup call named.
+#'
+#' @noRd
+grid_fit_key <- function(rows, formula_for, model_for, prior, dots,
+                         prior_sd) {
+  dots <- dots[setdiff(names(dots), c("cores", "refresh", "silent"))]
+  dots <- lapply(dots, function(x) if (is.function(x)) function_key(x) else x)
+  rlang::hash(list(
+    formulas = lapply(rows, function(i) formula_key(formula_for(i))),
+    models = lapply(rows, model_for),
+    prior = prior,
+    dots = dots[sort(names(dots))],
+    prior_sd = prior_sd
+  ))
+}
+
+#' The prior SDs a slice scores with: given, or the setup call's record
+#' @noRd
+slice_prior_sd <- function(prior_sd, dir, levels,
+                           call = rlang::caller_env()) {
+  if (!is.character(prior_sd)) {
+    return(prior_sd)
+  }
+  # subject rows have no contraction (D63), so no table was written
+  if (length(intersect(levels, c("population", "effect", "sd"))) == 0L) {
+    return(NULL)
+  }
+  stored <- read_prior_sd_record(dir)
+  if (is.null(stored)) {
+    cli::cli_abort(
+      c(
+        "{.file {prior_sd_record_path(dir)}} does not exist, so a slice \\
+         has no prior SDs to read.",
+        i = "Run the setup call with the same {.arg prior_sd} first."
+      ),
+      call = call
+    )
+  }
+  stored
 }
 
 #' Bind one table of every scored cell, labelled with its cell
@@ -1548,6 +1759,11 @@ grid_formula <- function(formula, row, i, model, re_cor, task_col,
 #' @param preflight Run the first cell once with one chain and 200
 #'   iterations into `<dir>/preflight` before the loop. Skipped when the
 #'   first cell already has a cached fit or a sidecar that can be used.
+#' @param cells Which cells this call runs, to split one grid over several
+#'   processes. `NULL`, the default, runs every cell. `integer(0)` is the
+#'   setup call: it runs no cell. Cell numbers (one element of
+#'   [grid_tasks()]) run those cells of the full grid. See "Running a grid
+#'   in several processes".
 #' @param ... Passed to [fit_cached()] and so to the fitter: `chains`,
 #'   `iter`, `warmup`, `backend`, `cores`, ...
 #' @param .fitter As in [fit_cached()].
@@ -1583,6 +1799,21 @@ grid_formula <- function(formula, row, i, model, re_cor, task_col,
 #'     `replication`, `status`, `elapsed`, `n_subjects`, `n_converged`,
 #'     `converged`, `file`) for the ML fit; see "Subject-wise ML".
 #'     `cells` stays one row per cell and describes the hierarchical fit.
+#'   * `run_info`: one row per call that reached its cells in `dir`
+#'     (this one included), in the order they started, read from
+#'     `<dir>/run-info/`: `call` (`"all"`, `"setup"` or `"slice"`),
+#'     `cells` (as text, `"1-3,7"`), `n_cells`, `n_reused` (cells whose
+#'     hierarchical results were read from their sidecar, not fitted),
+#'     `n_failed`, `started`, `ended` (`NA` for a process stopped while it
+#'     fitted), `pid`, the scheduler's
+#'     `scheduler`, `job_id`, `array_job_id`, `array_task_id` and
+#'     `cores_granted` (`NA` without one, as on a cloud VM), then every
+#'     [run_info()] column.
+#'
+#'   With cell numbers in `cells`, the object holds those cells only, and
+#'   [collect_grid()] reads the whole grid. The setup call returns,
+#'   invisibly, a tibble of every cell (`condition`, `replication`,
+#'   `n_subjects`, `n_trials`, `seed`, `file`).
 #'
 #' @details
 #' A cell whose fit errors is recorded with `status = "error"` and the
@@ -1623,6 +1854,39 @@ grid_formula <- function(formula, row, i, model, re_cor, task_col,
 #' otherwise, so a grid resumed in a new R session compiles once more;
 #' `options(cmdstanr_write_stan_file_dir = "<a directory that persists>")`
 #' avoids that. The same holds for [sbc()].
+#'
+#' @section Running a grid in several processes:
+#' A grid can be run as one setup call and then as slices, each in its
+#' own R process (one per core group of a large machine, or one per
+#' job), all writing into one `dir`:
+#'
+#' 1. The setup call, `cells = integer(0)`, runs once. It writes
+#'    `grid.rds`, runs the preflight, fits the priors of `prior_sd` and
+#'    writes `prior-sd.rds`, and simulates every cell. It fits no cell.
+#' 2. Each slice is the same call with `cells = grid_tasks(grid, reps,
+#'    n)[[k]]`. It checks its call against `grid.rds`, including the
+#'    prior, model, formula, fitter arguments and `prior_sd` the setup
+#'    call recorded, and stops when they differ or when no setup call
+#'    wrote `grid.rds`. It fits its cells only and writes neither record.
+#' 3. [collect_grid()] reads the cells of all slices as one grid.
+#'
+#' A cell has the seed and the files the full grid gives it, whichever
+#' slice runs it and in whatever order, so the slices together write the
+#' cells one call with `cells = NULL` writes. That needs a `seed`, and
+#' each slice in its own R process under R's default [RNGkind()]: a
+#' worker of a parallel backend may run another generator (L'Ecuyer-CMRG
+#' under `future.seed = TRUE`), and its fits would differ. Slices given by
+#' [grid_tasks()] share no cell; do not run the same cell in two
+#' processes at once. Start the slices after the setup call has returned:
+#' it simulates the cells last. A slice that is stopped and run again
+#' resumes, like any grid. A slice may name fewer `cores` than the setup
+#' call. Each process compiles the Stan model once
+#' (see "Backend"). Do not point `cmdstanr_write_stan_file_dir` at one
+#' directory for processes that start together: they would compile the
+#' same executable at the same time.
+#'
+#' The component form (a list of models) does not take `cells`, and
+#' neither does `smoke = TRUE`.
 #'
 #' @section Subject-wise ML:
 #' With `ml`, every cell is fitted twice on the same simulated data: the
@@ -1751,6 +2015,7 @@ recovery_grid <- function(model,
                           ml = FALSE,
                           smoke = FALSE,
                           preflight = TRUE,
+                          cells = NULL,
                           ...,
                           .fitter = NULL) {
   first_model <- grid_first_model(model, grid)
@@ -1767,6 +2032,11 @@ recovery_grid <- function(model,
     ))
   }
   if (is_component_list(first_model)) {
+    if (!is.null(cells)) {
+      cli::cli_abort(
+        "{.arg cells} is not supported for a grid of components."
+      )
+    }
     if (!is.null(prior_sd)) {
       cli::cli_abort(c(
         "{.arg prior_sd} is not supported for a grid of components yet.",
@@ -1812,10 +2082,29 @@ recovery_grid <- function(model,
   ml_args <- check_ml_arg(ml, extraction$levels)
   check_grid(grid)
   dots <- rlang::list2(...)
+  if (!is.null(cells) && isTRUE(smoke)) {
+    cli::cli_abort(c(
+      "{.arg cells} cannot be combined with {.code smoke = TRUE}.",
+      i = "A smoke run is one call on a smaller grid; run it before the \\
+           setup call."
+    ))
+  }
   setup <- grid_run_setup(grid, reps, dir, smoke, preflight)
   grid <- setup$grid
   reps <- setup$reps
   dir <- setup$dir
+  # D115: NULL runs every cell; integer(0) is the setup call; cell numbers
+  # run those cells of the full grid, under its seeds and file names
+  selected <- check_cells_arg(cells, nrow(grid) * reps)
+  # the run record's start (D117): the preflight and prior fits count
+  call_started <- Sys.time()
+  run_mode <- if (is.null(selected)) {
+    "all"
+  } else if (length(selected) == 0L) {
+    "setup"
+  } else {
+    "slice"
+  }
 
   models <- vector("list", nrow(grid))
   model_for <- function(i) {
@@ -1998,10 +2287,26 @@ recovery_grid <- function(model,
       formula_for(first)[model_for(first)$resp_vars$resp_cats]
     )
   }
-  write_grid_record(dir, record)
+  # what decides a cell's fit beyond the record's fields (prior, model,
+  # formula, the fitter's arguments, prior_sd): written by the setup call
+  # only, so that no grid.rds written without `cells` changes (D116)
+  if (!identical(run_mode, "all")) {
+    record$fit <- grid_fit_key(
+      seq_len(nrow(grid)), formula_for, model_for, prior, dots, prior_sd
+    )
+  }
+  # D116: the setup call (or a full run) writes the record; a slice only
+  # checks its call against it, and never runs the preflight
+  if (identical(run_mode, "slice")) {
+    check_grid_record(dir, record)
+    # before anything else that could refuse the slice
+    prior_sd <- slice_prior_sd(prior_sd, dir, extraction$levels)
+  } else {
+    write_grid_record(dir, record)
+  }
 
   first_paths <- cell_paths(dir, 1L, 1L)
-  run_first <- isTRUE(preflight) &&
+  run_first <- !identical(run_mode, "slice") && isTRUE(preflight) &&
     !file.exists(paste0(first_paths$fit, ".rds"))
   if (run_first && file.exists(first_paths$est)) {
     sims[[1L]] <- simulate_cell(1L)
@@ -2019,27 +2324,62 @@ recovery_grid <- function(model,
     elapsed <- run_preflight(
       sims[[1L]], model_for(1L), formula_for(1L), prior, dir, dots, .fitter
     )
-    cli::cli_inform(
+    cli::cli_inform(if (identical(run_mode, "setup")) {
+      "Preflight passed in {round(elapsed, 1)} s."
+    } else {
       "Preflight passed in {round(elapsed, 1)} s; running \\
        {nrow(cells)} cell{?s}."
-    )
+    })
   }
 
-  # before the cells, so that a prior that cannot be sampled alone fails
-  # before the long part rather than after it
-  if (is.character(prior_sd)) {
-    for (r in unique(cells$row)) {
-      i <- which(cells$row == r)[[1L]]
+  if (!identical(run_mode, "slice")) {
+    # before the cells, so that a prior that cannot be sampled alone fails
+    # before the long part rather than after it
+    if (is.character(prior_sd)) {
+      for (r in unique(cells$row)) {
+        i <- which(cells$row == r)[[1L]]
+        if (is.null(sims[[i]])) sims[[i]] <- simulate_cell(i)
+      }
+    }
+    prior_sd <- grid_prior_sd(
+      prior_sd, cells, sims, model_for, formula_for, prior, dir, dots,
+      .fitter, extraction$levels
+    )
+    write_prior_sd_record(dir, prior_sd)
+  }
+
+  if (identical(run_mode, "setup")) {
+    # every cell's data before any slice starts: slices then only fit, and
+    # a cell that reads another (subjects = "fixed") finds it on disk
+    for (i in seq_len(nrow(cells))) {
+      if (is.null(sims[[i]])) sims[[i]] <- simulate_cell(i)
+    }
+    listing <- cell_listing(cells, grid, dir)
+    close_run_record(open_run_record(dir, "setup", integer(0), call_started))
+    cli::cli_inform(c(
+      "Set up {nrow(cells)} cells in {.file {dir}}; none is fitted.",
+      i = "Run them with {.code cells = grid_tasks(grid, reps, n)[[k]]}, \\
+           one task per process."
+    ))
+    return(invisible(listing))
+  }
+
+  run <- if (identical(run_mode, "slice")) selected else seq_len(nrow(cells))
+  if (identical(run_mode, "slice")) {
+    # a cell can read its row's first replication (subjects = "fixed", the
+    # member a model's alternatives chose): that one comes first, from its
+    # file when the setup call wrote it
+    for (r in unique(cells$row[run])) {
+      i <- which(cells$row == r & cells$rep == 1L)
       if (is.null(sims[[i]])) sims[[i]] <- simulate_cell(i)
     }
   }
-  prior_sd <- grid_prior_sd(
-    prior_sd, cells, sims, model_for, formula_for, prior, dir, dots,
-    .fitter, extraction$levels
-  )
-  write_prior_sd_record(dir, prior_sd)
 
-  for (i in seq_len(nrow(cells))) {
+  # D117: which process ran which cells, written just before the first fit:
+  # a call that errored before it leaves none, and a process stopped while
+  # it fits leaves one whose `ended` is NA
+  run_record <- open_run_record(dir, run_mode, run, call_started)
+  for (i in run) {
     if (is.null(sims[[i]])) sims[[i]] <- simulate_cell(i)
     runs[[i]] <- run_cell(
       sims[[i]], model_for(cells$row[[i]]), formula_for(cells$row[[i]]),
@@ -2048,6 +2388,11 @@ recovery_grid <- function(model,
       ml = ml_args
     )
   }
+
+  runs <- runs[run]
+  sims <- sims[run]
+  cells <- cells[run, , drop = FALSE]
+  close_run_record(run_record, runs)
 
   status <- vapply(runs, function(r) r$status, character(1))
   failed <- which(status == "error")
@@ -2068,14 +2413,7 @@ recovery_grid <- function(model,
     prior_sd = prior_sd
   )
   attr(out, "cells") <- tibble::tibble(
-    condition = sprintf("row-%d", cells$row),
-    replication = cells$rep,
-    n_subjects = as.integer(grid$n_subjects[cells$row]),
-    n_trials = as.integer(grid$n_trials[cells$row]),
-    seed = cells$seed,
-    file = paste0(vapply(seq_len(nrow(cells)), function(i) {
-      cell_paths(dir, cells$row[[i]], cells$rep[[i]])$fit
-    }, character(1)), ".rds"),
+    cell_listing(cells, grid, dir),
     status = status,
     elapsed = vapply(runs, function(r) r$elapsed, numeric(1)),
     converged = vapply(runs, function(r) as.logical(r$converged), logical(1)),
@@ -2085,6 +2423,7 @@ recovery_grid <- function(model,
   if (!is.null(ml_args)) {
     attr(out, "ml_cells") <- ml_cell_table(runs, cells, dir, ml_args)
   }
+  attr(out, "run_info") <- read_run_records(dir)
   out
 }
 

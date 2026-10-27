@@ -261,6 +261,57 @@ test_that("recovery_grid() refuses a formula that names the other member", {
   expect_identical(mock$calls$n, 0L)
 })
 
+test_that("slices fit the member pars chose, as one sequential run does", {
+  # D115: a function `pars` names the member only through a simulated
+  # cell, which a slice holding replication 2 alone must read first
+  skip_if_no_alternatives()
+  skip_if_no_bmm_model("sdt_yn", density = TRUE)
+  run <- function(dir, mock, cells = NULL) {
+    # at 10 and 20 trials some MLEs run to the boundary, so the balance
+    # warning is the right answer here; only it is muffled
+    withCallingHandlers(
+      suppressMessages(recovery_grid(
+        alt_yn(), small_grid(),
+        pars = function(row) c(d = 1, bias = 0.1),
+        sds = c(d = 0.2, bias = 0.2),
+        dir = dir, seed = 4, reps = 2L, cells = cells,
+        ml = list(method = "optim"), .fitter = mock$fitter
+      )),
+      warning = function(w) {
+        if (grepl("same subjects", conditionMessage(w), fixed = TRUE)) {
+          invokeRestart("muffleWarning")
+        }
+      }
+    )
+  }
+  sidecars <- function(dir) {
+    files <- sort(list.files(dir, "-est\\.rds$"))
+    lapply(file.path(dir, files), function(path) {
+      x <- readRDS(path)
+      x[setdiff(names(x), "fit_seconds")]
+    })
+  }
+  sequential <- withr::local_tempdir()
+  sliced <- withr::local_tempdir()
+  run(sequential, formula_recorder())
+  run(sliced, formula_recorder(), cells = integer(0))
+  slices <- grid_tasks(small_grid(), 2L, 2L)
+  mocks <- list()
+  for (k in 2:1) {
+    mocks[[k]] <- formula_recorder()
+    run(sliced, mocks[[k]], cells = slices[[k]])
+  }
+
+  for (mock in mocks) {
+    expect_identical(mock$calls$n, 2L)
+    expect_true(all(vapply(
+      mock$seen$formulas, identical, logical(1), c("d", "bias")
+    )))
+  }
+  expect_length(sidecars(sliced), 4L)
+  expect_identical(sidecars(sliced), sidecars(sequential))
+})
+
 test_that("a grid's ML fit estimates the member pars chose", {
   skip_if_no_alternatives()
   skip_if_no_bmm_model("sdt_yn", density = TRUE)

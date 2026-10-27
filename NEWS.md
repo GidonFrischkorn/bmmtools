@@ -1,5 +1,28 @@
 # bmmtools (development version)
 
+* `recovery_grid()` can split one grid over several R processes (#19).
+  The setup call, `cells = integer(0)`, writes `grid.rds`, runs the
+  preflight and the prior fits of `prior_sd`, and simulates every cell,
+  but fits none. Each process then runs the same call with `cells` set
+  to one element of the new `grid_tasks(grid, reps, n)`, which cuts the
+  cells into `n` runs of consecutive cells. A cell keeps the seed and
+  the file names the full grid gives it, so the slices together write
+  the cells one sequential run writes, and `collect_grid()` reads them
+  as one grid. A slice checks its call against `grid.rds`, including
+  the prior, model, formula, fitter arguments and `prior_sd` the setup
+  call recorded, and stops if they differ or if there is no setup. A
+  slice may name fewer `cores`. It never writes `grid.rds` or
+  `prior-sd.rds`, and it never runs a preflight. The component form and
+  `smoke = TRUE` do not take `cells`.
+* Every `recovery_grid()` call that reaches its cells now leaves a
+  record in `<dir>/run-info/` (the component form does not), so a grid
+  run by several processes says which process ran which cells. `recovery_grid()` and `collect_grid()` return
+  these records as `attr(x, "run_info")`, one row per call. A row holds
+  the cells the call ran, how many sidecars it reused and how many fits
+  failed, its start and end (`NA` for a process stopped while it
+  fitted), the
+  scheduler job and array task when SLURM, PBS, LSF or SGE set them, and
+  every `run_info()` column. `run_info()` itself is unchanged.
 * `plot_design()` plots recovery across the designs of a grid: a metric
   against trials per subject on a log axis, one line per number of
   subjects and a panel per term (`type = "profile"`), for population

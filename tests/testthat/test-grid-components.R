@@ -553,3 +553,15 @@ test_that("a component sidecar has the moments when its extractor does not", {
   expect_true(has_current_columns(out$estimates))
   expect_identical(out$estimates$post_sd_link, NA_real_)
 })
+
+test_that("the component form refuses `cells`", {
+  # D115: a sliced run of a component grid is a stated limit
+  skip_if_not_installed("bmm")
+  dir <- withr::local_tempdir()
+  mock <- grid_mock_fitter()
+  expect_error(
+    suppressMessages(cg_run(dir, mock, cells = 1L)),
+    "component"
+  )
+  expect_identical(mock$calls$n, 0L)
+})

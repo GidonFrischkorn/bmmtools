@@ -36,7 +36,11 @@ or a \code{\link[=prior_check]{prior_check()}} --- which replaces it.}
 }
 \value{
 A \code{bmmtools_recovery} with the attributes \code{\link[=recovery_grid]{recovery_grid()}}
-gives it. \code{cells$elapsed} is \code{NA}: no cell was run, so none took
+gives it, \code{run_info} included: one row per call that reached its
+cells in \code{dir},
+so a grid run in slices by several processes says which process ran
+which cells. A directory written before bmmtools kept these records
+has no \code{run_info}. \code{cells$elapsed} is \code{NA}: no cell was run, so none took
 any time. \code{cells$fit_seconds} is the time each fit took when it was
 run, which is what a runtime table wants and what survives the trip
 between machines.

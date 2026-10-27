@@ -41,6 +41,7 @@ reference:
   - fit_ml
   - check_convergence
   - recovery_grid
+  - grid_tasks
   - collect_grid
   - run_info
 
