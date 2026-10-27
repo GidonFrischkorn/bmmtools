@@ -64,7 +64,78 @@ test_that("the ezdm entry carries Milestone 31's generating values", {
   expect_equal(entry$cors["bound", "drift"], 0.4)
   expect_equal(entry$cors["drift", "ndt"], 0)
   expect_identical(diag(entry$cors), c(drift = 1, bound = 1, ndt = 1))
-  expect_null(entry$sbc$prior)
+})
+
+test_that("the ezdm entry calibrates under a narrower prior and says why", {
+  # bmm's cauchy(0, 1) drift intercept and exponential SD priors draw data
+  # sets the sampler cannot fit (26.3, measured on 8 simulations)
+  entry <- validation_defaults("ezdm")
+  expect_identical(
+    entry$sbc$prior$prior,
+    c("normal(0, 2)", "normal(0, 0.5)", "normal(0, 0.3)", "normal(0, 0.3)")
+  )
+  expect_identical(entry$sbc$prior$class, c("Intercept", "sd", "sd", "sd"))
+  expect_identical(entry$sbc$prior$dpar, c("drift", "drift", "bound", "ndt"))
+  expect_match(entry$sbc$prior_reason, "cauchy(0, 1)", fixed = TRUE)
+  expect_match(entry$sbc$prior_reason, "treedepth")
+  # a changed entry is a new entry version
+  expect_identical(entry$version, "0.2.0")
+  plan <- validation_plan("ezdm", seed = 1)
+  expect_identical(plan$sbc$prior, entry$sbc$prior)
+  expect_identical(plan$sbc$prior_reason, entry$sbc$prior_reason)
+})
+
+test_that("a prior given without a reason does not inherit the entry's", {
+  # the card prints the reason: an inherited one would describe a prior
+  # that did not run
+  plan <- validation_plan("ezdm", seed = 1, sbc = list(prior = NULL))
+  expect_null(plan$sbc$prior)
+  expect_null(plan$sbc$prior_reason)
+  own <- data.frame(prior = "normal(0, 1)", class = "Intercept", dpar = "drift")
+  plan <- validation_plan("ezdm", seed = 1, sbc = list(prior = own))
+  expect_identical(plan$sbc$prior, own)
+  expect_null(plan$sbc$prior_reason)
+  plan <- validation_plan(
+    "ezdm",
+    seed = 1, sbc = list(prior = own, prior_reason = "mine")
+  )
+  expect_identical(plan$sbc$prior_reason, "mine")
+  # a change to another sbc field keeps the entry's prior and its reason
+  plan <- validation_plan("ezdm", seed = 1, sbc = list(n_sims = 5L))
+  expect_identical(
+    plan$sbc$prior_reason, validation_defaults("ezdm")$sbc$prior_reason
+  )
+})
+
+test_that("every row of an entry's SBC prior names a parameter of the model", {
+  skip_if_not_installed("bmm")
+  skip_if_not_installed("brms")
+  for (name in names(validation_defaults())) {
+    plan <- validation_plan(name, seed = 1)
+    prior <- plan$sbc$prior
+    if (is.null(prior)) next
+    data <- validation_data(plan, plan$sbc$n_subjects, plan$sbc$n_trials, 1)
+    known <- as.data.frame(
+      bmm::default_prior(validation_formula(plan), data, plan$model)
+    )
+    for (column in c("coef", "dpar", "nlpar")) {
+      if (is.null(prior[[column]])) prior[[column]] <- ""
+    }
+    target <- function(df) paste(df$class, df$coef, df$dpar, df$nlpar)
+    expect_true(
+      all(target(prior) %in% target(known)),
+      label = paste(name, "prior targets", toString(target(prior)))
+    )
+  }
+})
+
+test_that("the ezdm SBC prior becomes a brmsprior on the dpars", {
+  skip_if_not_installed("brms")
+  prior <- as_brms_prior(validation_defaults("ezdm")$sbc$prior)
+  expect_s3_class(prior, "brmsprior")
+  expect_identical(prior$dpar, c("drift", "drift", "bound", "ndt"))
+  expect_identical(prior$class, c("Intercept", "sd", "sd", "sd"))
+  expect_identical(prior$prior[[1L]], "normal(0, 2)")
 })
 
 test_that("the ezdm prior check judges mean RT against a plausible range", {

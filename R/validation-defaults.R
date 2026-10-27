@@ -122,9 +122,9 @@ generic_validation_defaults <- function() {
 #' The entries bmmtools ships
 #'
 #' A prior is written as a plain data frame with the columns of
-#' `brms::set_prior()` (`prior`, `class`, `coef`, `nlpar`), so the table
-#' can be read and printed without brms; the runner turns it into a
-#' `brmsprior` when it fits.
+#' `brms::set_prior()` (`prior`, `class`, `coef`, `nlpar` or `dpar`), so
+#' the table can be read and printed without brms; the runner turns it
+#' into a `brmsprior` when it fits.
 #'
 #' @noRd
 validation_entries <- function() {
@@ -162,6 +162,21 @@ validation_entries <- function() {
   ezdm$cors <- diag(3L)
   dimnames(ezdm$cors) <- list(terms, terms)
   ezdm$cors["drift", "bound"] <- ezdm$cors["bound", "drift"] <- 0.4
+  ezdm$sbc$prior <- data.frame(
+    prior = c(
+      "normal(0, 2)", "normal(0, 0.5)", "normal(0, 0.3)", "normal(0, 0.3)"
+    ),
+    class = c("Intercept", "sd", "sd", "sd"),
+    coef = "",
+    dpar = c("drift", "drift", "bound", "ndt")
+  )
+  ezdm$sbc$prior_reason <- paste(
+    "bmm's default priors, a cauchy(0, 1) drift intercept and exponential",
+    "SD priors, drew data sets the sampler could not fit (drift -31, an SD",
+    "of 2 on log bound; of 8 fits, 4 diverged and 5 hit the maximum",
+    "treedepth, measured 2026-10-27), so the calibration runs under a",
+    "normal drift intercept and half-normal SDs."
+  )
   # bmm 1.4.1's posterior_predict() gives mean RT only, and prior_check()
   # knows no range for ezdm (ARCHITECTURE § 26.0, amendment 4)
   ezdm$prior_check$range <- c(0.15, 5)
@@ -171,7 +186,8 @@ validation_entries <- function() {
     "for ezdm give mean RT only, not accuracy."
   )
   ezdm$owner <- "Gidon Frischkorn"
-  ezdm$version <- "0.1.0"
+  # 0.2.0: the narrowed SBC prior (0.1.0 shipped with 0.3.0 without one)
+  ezdm$version <- "0.2.0"
 
   list(mixture2p = mixture2p, ezdm = ezdm)
 }
@@ -216,7 +232,9 @@ validation_entries <- function() {
 #'   and the card prints it.
 #' * `ezdm` (three parameters): `drift = 1.5`, `bound = 0`,
 #'   `ndt = log(0.3)`, SDs 0.3, 0.2 and 0.2, a correlation of 0.4 between
-#'   drift and bound.
+#'   drift and bound. Its calibration also runs under a narrower prior,
+#'   because bmm's `cauchy(0, 1)` drift intercept and exponential SD
+#'   priors draw data sets the sampler cannot fit.
 #'
 #' Each entry names its `owner`, who changes its values by pull request;
 #' the card prints the owner and the plan version.

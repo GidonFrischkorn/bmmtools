@@ -34,6 +34,17 @@
   read back as it was; the cache's meta file and the fit's
   `bmmtools_cache` attribute now record `rng_seeded`, which is `NA` for
   those fits.
+* The `ezdm` entry of `validation_defaults()` now runs its calibration
+  (SBC) under a narrower prior than bmm's: `normal(0, 2)` on the drift
+  intercept and half-normal SDs (0.5 on drift, 0.3 on bound and
+  non-decision time). Under bmm's `cauchy(0, 1)` drift intercept and
+  exponential SD priors, of 8 calibration fits 4 diverged, 5 hit the
+  maximum tree depth and 3 failed the card's convergence criterion, on
+  data sets such as a drift of -31; the entry records the reason, and
+  the card prints it. The entry's version is now 0.2.0. A `prior` passed
+  to `validation_plan(sbc = )` without a `prior_reason` no longer
+  inherits the entry's reason, so the card does not explain a prior that
+  did not run.
 
 * `render_card()` renders the validation card of a `run_validation()`
   result to one self-contained HTML file: the headline, the run record

@@ -48,7 +48,9 @@ bmm's default SD prior on log \code{kappa} draws values at which
 and the card prints it.
 \item \code{ezdm} (three parameters): \code{drift = 1.5}, \code{bound = 0},
 \code{ndt = log(0.3)}, SDs 0.3, 0.2 and 0.2, a correlation of 0.4 between
-drift and bound.
+drift and bound. Its calibration also runs under a narrower prior,
+because bmm's \code{cauchy(0, 1)} drift intercept and exponential SD
+priors draw data sets the sampler cannot fit.
 }
 
 Each entry names its \code{owner}, who changes its values by pull request;

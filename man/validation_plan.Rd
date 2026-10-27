@@ -54,7 +54,9 @@ here changes the entries it names and keeps the others.}
 \code{brms::set_prior()}, or \code{NULL} for bmm's defaults), \code{prior_reason}
 (why it is not bmm's default, printed on the card), \code{level},
 \code{sampler}, \code{generator}, \code{cores_per_fit} and \code{thin_ranks} (see
-\code{\link[=sbc]{sbc()}}). Named entries replace the entry's, the rest are kept.}
+\code{\link[=sbc]{sbc()}}). Named entries replace the entry's, the rest are kept,
+except that a \code{prior} given without a \code{prior_reason} drops the
+entry's reason.}
 
 \item{prior_check}{A named list for the prior predictive check:
 \code{n_subjects}, \code{n_trials}, \code{n_draws}, \code{range}, \code{range_reason} (why the

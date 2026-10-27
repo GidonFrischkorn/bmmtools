@@ -38,7 +38,9 @@
 #'   `brms::set_prior()`, or `NULL` for bmm's defaults), `prior_reason`
 #'   (why it is not bmm's default, printed on the card), `level`,
 #'   `sampler`, `generator`, `cores_per_fit` and `thin_ranks` (see
-#'   [sbc()]). Named entries replace the entry's, the rest are kept.
+#'   [sbc()]). Named entries replace the entry's, the rest are kept,
+#'   except that a `prior` given without a `prior_reason` drops the
+#'   entry's reason.
 #' @param prior_check A named list for the prior predictive check:
 #'   `n_subjects`, `n_trials`, `n_draws`, `range`, `range_reason` (why the
 #'   range is what it is, printed on the card), `summary` and `sampler`
@@ -181,7 +183,13 @@ validation_plan <- function(model,
   grid <- check_plan_grid(grid %||% base$grid)
   reps <- check_count(reps %||% base$reps, "reps")
   sampler <- merge_plan_list(base$sampler, sampler, "sampler")
+  given_sbc <- names(sbc)
   sbc <- merge_plan_list(base$sbc, sbc, "sbc")
+  # the card prints the reason, so a prior given without one does not
+  # inherit the entry's, which explains a prior that did not run
+  if ("prior" %in% given_sbc && !"prior_reason" %in% given_sbc) {
+    sbc["prior_reason"] <- list(NULL)
+  }
   sbc$sampler <- merge_plan_list(
     base$sbc$sampler, sbc$sampler, "sbc$sampler"
   )
