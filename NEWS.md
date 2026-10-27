@@ -14,6 +14,16 @@
   slice may name fewer `cores`. It never writes `grid.rds` or
   `prior-sd.rds`, and it never runs a preflight. The component form and
   `smoke = TRUE` do not take `cells`.
+* A launcher for split grids ships in `inst/templates/vm/`. You copy
+  the files and edit `grid-args.R`, which holds the grid's call once.
+  `launch.sh` runs the setup call, then starts K slices in the background
+  under `nohup`, each logging to a file that ends with `EXIT <status>`.
+  It sets K to the machine's cores divided by chains × threads and
+  refuses a larger K without `--force`. `--status` shows each slice as
+  finished, running or stopped, `--rerun k` restarts one, and a launch
+  is refused while a slice of the last one still runs. The new article
+  "Running a grid on a cloud VM" walks through it, including a SLURM
+  array sketch.
 * Every `recovery_grid()` call that reaches its cells now leaves a
   record in `<dir>/run-info/` (the component form does not), so a grid
   run by several processes says which process ran which cells. `recovery_grid()` and `collect_grid()` return

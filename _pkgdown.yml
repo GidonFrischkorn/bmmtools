@@ -136,6 +136,7 @@ articles:
   - articles/correlation-recovery
   - articles/prior-check
   - articles/hierarchical-vs-ml
+  - articles/grid-on-a-vm
 
 - title: For model developers
   navbar: For model developers
