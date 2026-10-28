@@ -29,8 +29,9 @@ calibration's prior (or bmm's defaults when the calibration uses
 them) at most \code{prior_bound_rate_max}; not judged for a response
 without a known range.
 \item SBC: no ranked variable outside the \code{sbc_ecdf_prob} simultaneous
-ECDF band, and no fit with a high Rhat, a low rank ESS or missing
-diagnostics.
+ECDF band, and no failed check (a high Rhat, a low rank ESS or
+missing diagnostics) in any fit. The value is the number of failed
+checks, so a fit that fails two counts twice.
 \item computation: the share of converged cells at least
 \code{convergence_rate_min}.
 \item recovery: the coverage of every population parameter, pooled over the

@@ -35,7 +35,10 @@
 #' @param ... Passed to the fitter of every stage, after the plan's
 #'   sampler lists, so an argument given here wins (`backend`, `iter`,
 #'   `refresh`, ...). The arguments [sbc()] refuses in its `...`, such as
-#'   `cores`, do not reach the calibration.
+#'   `cores`, do not reach the calibration. A `prior`, or an abbreviation
+#'   of it such as `pri`, is refused, here and in the plan's sampler lists:
+#'   the calibration's prior is the plan's `sbc$prior`, and the recovery
+#'   stage fits under bmm's default priors.
 #' @param .fitter The fitting function of every stage, `bmm::bmm()` by
 #'   default. Tests inject a stand-in so that nothing is compiled.
 #'
@@ -127,6 +130,23 @@ run_validation <- function(plan,
                            .fitter = NULL) {
   check_validation_plan(plan)
   refit <- rlang::arg_match(refit)
+  # the dots are checked before the directory is made, so a refused call
+  # leaves nothing behind
+  dots <- rlang::list2(...)
+  if (length(dots) > 0L && !rlang::is_named(dots)) {
+    cli::cli_abort(c(
+      "Every argument in {.arg ...} must be named.",
+      i = "They are passed on to the fitter by name."
+    ))
+  }
+  check_validation_dots(dots)
+  # a plan read back from an older write_plan(), or edited by hand, never
+  # went through validation_plan()'s check of its sampler lists
+  check_plan_sampler_prior(plan$sampler, "plan$sampler")
+  check_plan_sampler_prior(plan$sbc$sampler, "plan$sbc$sampler")
+  check_plan_sampler_prior(
+    plan$prior_check$sampler, "plan$prior_check$sampler"
+  )
   dir <- check_validation_dir(dir)
   if (!is.null(workers)) {
     cli::cli_abort(c(
@@ -141,13 +161,6 @@ run_validation <- function(plan,
     )
   }
   previous <- read_previous_validation(previous)
-  dots <- rlang::list2(...)
-  if (length(dots) > 0L && !rlang::is_named(dots)) {
-    cli::cli_abort(c(
-      "Every argument in {.arg ...} must be named.",
-      i = "They are passed on to the fitter by name."
-    ))
-  }
 
   started <- Sys.time()
   info <- run_info()
@@ -483,6 +496,57 @@ run_validation_stage <- function(stage, row, reads, plan, dir, dots, fitter,
   list(status = status, result = result)
 }
 
+#' Arguments `run_validation()` refuses in its `...`
+#'
+#' A `prior` would reach the recovery fits only, which the card says fit
+#' under bmm's default priors, and the prior check and the calibration
+#' pass a prior of their own, so it would collide there ("formal argument
+#' 'prior' matched by multiple actual arguments"). An abbreviation such
+#' as `pri` is refused too: `bmm::bmm()` takes `prior` before `...`, so R
+#' matches it there partially.
+#'
+#' @noRd
+validation_refused_dots <- function() {
+  c(
+    prior = "the calibration's prior belongs in the plan, as \\
+             {.code sbc$prior} of {.fn validation_plan}; the recovery \\
+             stage fits under bmm's default priors"
+  )
+}
+
+#' The names among `x` that are `prior` or an abbreviation of it
+#' @noRd
+prior_abbreviations <- function(x) {
+  x <- x %||% character()
+  x[!is.na(x) & nzchar(x) & startsWith("prior", x)]
+}
+
+#' @noRd
+check_validation_dots <- function(dots, call = rlang::caller_env()) {
+  refused <- validation_refused_dots()
+  given <- names(dots)
+  offending <- c(
+    intersect(given, setdiff(names(refused), "prior")),
+    prior_abbreviations(given)
+  )
+  if (length(offending) == 0L) {
+    return(invisible(dots))
+  }
+  why <- refused[ifelse(offending %in% names(refused), offending, "prior")]
+  bullets <- stats::setNames(
+    paste0("{.arg ", offending, "}: ", why),
+    rep("x", length(offending))
+  )
+  cli::cli_abort(
+    c(
+      "{.fn run_validation} refuses {cli::qty(length(offending))}\\
+       {?this/these} argument{?s} in {.arg ...}: {.val {offending}}.",
+      bullets
+    ),
+    call = call
+  )
+}
+
 #' The fields of a plan each stage reads
 #' @noRd
 stage_input_fields <- function(stage) {
@@ -517,12 +581,12 @@ stage_input_hash <- function(plan, stage, dots, fitter = NULL) {
   )
   parts <- list(
     stage = stage,
-    fields = plan_key(unclass(plan)[fields]),
+    fields = plan_key(without_plan_reasons(unclass(plan)[fields])),
     seed = if (!is.null(seed_name)) plan$seeds[[seed_name]],
     dots = plan_key(dots),
     # the prior check reads the calibration's prior, nothing else of it
     sbc_prior = if (identical(stage, "prior_predictive")) {
-      plan_key(plan$sbc$prior)
+      plan_key(plan$sbc[["prior"]])
     },
     # a new bmm, brms, Stan toolchain or bmmtools reruns the stage: the
     # card is regenerated on each release (D81), and a stage read from
@@ -629,13 +693,13 @@ stage_prior_predictive <- function(plan, paths, dots, fitter, refit) {
   data <- validation_data(
     plan, pc$n_subjects, pc$n_trials, plan$seeds[["prior_predictive"]]
   )
-  sbc_prior <- as_brms_prior(plan$sbc$prior)
+  sbc_prior <- as_brms_prior(plan$sbc[["prior"]])
   prior <- if (!is.null(sbc_prior)) list(default = NULL, sbc = sbc_prior)
   args <- c(
     list(
       model = plan$model, formula = validation_formula(plan), data = data,
       prior = prior, summary = pc$summary, n_draws = pc$n_draws,
-      range = pc$range, file = file.path(paths$dir, "fit"),
+      range = pc[["range"]], file = file.path(paths$dir, "fit"),
       refit = if (identical(refit, "always")) "always" else "on_change",
       seed = plan$seeds[["prior_predictive"]]
     ),
@@ -654,7 +718,7 @@ stage_sbc <- function(plan, paths, dots, fitter, refit) {
   args <- c(
     list(
       model = plan$model, formula = validation_formula(plan), data = data,
-      prior = as_brms_prior(s$prior), n_sims = s$n_sims,
+      prior = as_brms_prior(s[["prior"]]), n_sims = s$n_sims,
       level = s$level %||% c("population", "sd"), generator = s$generator
     ),
     sampler,
@@ -1216,8 +1280,9 @@ numbers_agreement <- function(x) {
 #'   them) at most `prior_bound_rate_max`; not judged for a response
 #'   without a known range.
 #' * SBC: no ranked variable outside the `sbc_ecdf_prob` simultaneous
-#'   ECDF band, and no fit with a high Rhat, a low rank ESS or missing
-#'   diagnostics.
+#'   ECDF band, and no failed check (a high Rhat, a low rank ESS or
+#'   missing diagnostics) in any fit. The value is the number of failed
+#'   checks, so a fit that fails two counts twice.
 #' * computation: the share of converged cells at least
 #'   `convergence_rate_min`.
 #' * recovery: the coverage of every population parameter, pooled over the
@@ -1438,8 +1503,9 @@ verdict_sbc <- function(result, criteria) {
     verdict_row(
       sprintf(
         paste(
-          "no fit with Rhat above %s, rank ESS ratio below %s, or missing",
-          "diagnostics"
+          "no failed check in any fit (Rhat above %s, rank ESS ratio below",
+          "%s, or missing diagnostics); the value counts failed checks, not",
+          "fits"
         ),
         fmt(d$rhat_max), fmt(d$ess_to_rank_min)
       ),

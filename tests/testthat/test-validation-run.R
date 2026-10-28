@@ -302,6 +302,143 @@ test_that("an SBC result without bmmtools' record or band is not judged", {
   expect_match(rows$note[[1L]], "^not judged: no ECDF band: ")
 })
 
+test_that("a prior in ... is refused before anything runs", {
+  # a prior given here reached the recovery fits only, and collided with
+  # the prior the prior check and the calibration pass themselves
+  skip_if_not_installed("bmm")
+  mock <- validation_mock_fitter()
+  # an abbreviation reaches bmm::bmm()'s `prior` by partial matching; a
+  # plan that runs recovery only is refused too
+  plans <- list(
+    all = small_validation_plan(),
+    recovery = small_validation_plan(stages = "recovery")
+  )
+  for (plan in plans) {
+    for (name in c("prior", "pri")) {
+      dir <- file.path(withr::local_tempdir(), "run")
+      dots <- stats::setNames(list("normal(0, 1)"), name)
+      error <- expect_error(
+        rlang::exec(
+          run_validation, plan, dir, !!!dots,
+          .fitter = mock$fitter
+        ),
+        "sbc$prior",
+        fixed = TRUE
+      )
+      expect_match(conditionMessage(error), name, fixed = TRUE)
+      # refused before the directory is made
+      expect_false(dir.exists(dir))
+    }
+  }
+  expect_identical(mock$calls$n, 0L)
+})
+
+test_that("a plan edited to carry a prior in a sampler list is refused", {
+  # a plan read back from an older write_plan(), or edited by hand, never
+  # went through validation_plan()'s check
+  skip_if_not_installed("bmm")
+  mock <- validation_mock_fitter()
+  edits <- list(
+    `plan$sampler` = function(plan) {
+      plan$sampler$prior <- "normal(0, 1)"
+      plan
+    },
+    `plan$sbc$sampler` = function(plan) {
+      plan$sbc$sampler$prior <- "normal(0, 1)"
+      plan
+    },
+    `plan$prior_check$sampler` = function(plan) {
+      plan$prior_check$sampler$pri <- "normal(0, 1)"
+      plan
+    }
+  )
+  for (arg in names(edits)) {
+    plan <- edits[[arg]](small_validation_plan())
+    dir <- file.path(withr::local_tempdir(), "run")
+    error <- expect_error(
+      run_validation(plan, dir, .fitter = mock$fitter),
+      "sbc$prior",
+      fixed = TRUE
+    )
+    expect_match(conditionMessage(error), paste0("`", arg, "`"), fixed = TRUE)
+    expect_false(dir.exists(dir))
+  }
+  expect_identical(mock$calls$n, 0L)
+})
+
+test_that("a name that contains prior but does not abbreviate it is taken", {
+  # `sample_prior` is a brms argument, not `prior`: a refusal that matched
+  # any name containing "prior" would refuse it
+  skip_validation_run()
+  plan <- validation_plan(
+    bmm::mixture2p(resp_error = "y"),
+    seed = 1, sampler = list(sample_prior = "no")
+  )
+  expect_identical(plan$sampler$sample_prior, "no")
+  mock <- validation_mock_fitter()
+  result <- collect_warnings(mock_validation(
+    small_validation_plan(stages = "recovery"), withr::local_tempdir(),
+    mock,
+    sample_prior = "no"
+  ))$value
+  expect_s3_class(result, "bmmtools_validation")
+  expect_true(mock$calls$n > 0L)
+})
+
+test_that("a run directory keyed with the reasons reruns two stages once", {
+  # before the reasons left the stage keys, they were hashed with the
+  # fields; a directory written then has those keys in its status files
+  skip_validation_run()
+  mock <- validation_mock_fitter()
+  dir <- withr::local_tempdir()
+  plan <- small_validation_plan()
+  mock_validation(plan, dir, mock)
+  old_key <- function(stage) {
+    local_mocked_bindings(without_plan_reasons = function(fields) fields)
+    stage_input_hash(plan, stage, list(), mock$fitter)
+  }
+  changed <- c("prior_predictive", "sbc")
+  for (stage in changed) {
+    paths <- validation_stage_paths(dir, stage)
+    status <- read_stage_status(paths)
+    # the stored key is the one this version computes, and the old one
+    # differs from it
+    expect_identical(
+      status$input_hash, stage_input_hash(plan, stage, list(), mock$fitter)
+    )
+    expect_false(identical(status$input_hash, old_key(stage)))
+    status$input_hash <- old_key(stage)
+    write_stage_status(paths, status)
+  }
+  never <- mock_validation(plan, dir, mock, refit = "never")
+  status <- stats::setNames(never$stages$status, never$stages$stage)
+  expect_identical(unname(status[changed]), c("stale", "stale"))
+  expect_identical(status[["recovery"]], "ok")
+  expect_true(never$stages$resumed[never$stages$stage == "recovery"])
+
+  again <- mock_validation(plan, dir, mock, refit = "on_change")
+  ran <- again$stages$status == "ok" & !again$stages$resumed &
+    again$stages$stage != "run_record"
+  expect_setequal(again$stages$stage[ran], changed)
+})
+
+test_that("the SBC criterion counts failed checks and says so", {
+  skip_validation_run()
+  result <- mock_validation(
+    small_validation_plan(), withr::local_tempdir(), validation_mock_fitter()
+  )
+  meta <- attr(result$sbc, "bmmtools_sbc")
+  # one fit failing on Rhat and on rank ESS: two checks, one fit
+  meta$diagnostics[c("n_high_rhat", "n_low_ess_to_rank", "n_missing")] <-
+    list(1L, 1L, 0L)
+  attr(result$sbc, "bmmtools_sbc") <- meta
+  row <- verdict_sbc(result, result$plan$criteria)[2L, ]
+  expect_identical(row$value, 2)
+  expect_false(row$pass)
+  expect_match(row$criterion, "counts failed checks, not fits", fixed = TRUE)
+  expect_no_match(row$criterion, "no fit with", fixed = TRUE)
+})
+
 test_that("a stage that reads a failed stage is skipped, not failed", {
   skip_validation_run()
   # the grid's simulation cannot be generated: that stops recovery_grid()

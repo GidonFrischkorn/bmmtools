@@ -32,19 +32,30 @@
 #' @param reps Replications per design.
 #' @param sampler A named list passed to the fitter of every recovery cell
 #'   (`chains`, `iter`, `warmup`, `cores`, `backend`, ...). A list given
-#'   here changes the entries it names and keeps the others.
+#'   here changes the entries it names and keeps the others. It may not
+#'   set `prior` or an abbreviation of it (`pri`), nor may `sbc$sampler`
+#'   or `prior_check$sampler`: the calibration's prior is `sbc$prior`, and
+#'   the recovery stage fits under bmm's default priors.
 #' @param sbc A named list for the calibration: `n_subjects`, `n_trials`,
 #'   `n_sims`, `prior` (a `brmsprior`, a data frame with the columns of
 #'   `brms::set_prior()`, or `NULL` for bmm's defaults), `prior_reason`
 #'   (why it is not bmm's default, printed on the card), `level`,
 #'   `sampler`, `generator`, `cores_per_fit` and `thin_ranks` (see
 #'   [sbc()]). Named entries replace the entry's, the rest are kept,
-#'   except that a `prior` given without a `prior_reason` drops the
-#'   entry's reason.
+#'   except that a `prior` other than the entry's, given without a
+#'   `prior_reason`, drops the entry's reason. The prior is compared as
+#'   given, column order and types included: a `brmsprior` with the same
+#'   rows as an entry's data frame, the entry's columns in another order,
+#'   or a factor column counts as another prior. A `prior_reason` without
+#'   a `prior` is an error.
 #' @param prior_check A named list for the prior predictive check:
 #'   `n_subjects`, `n_trials`, `n_draws`, `range`, `range_reason` (why the
 #'   range is what it is, printed on the card), `summary` and `sampler`
-#'   (see [prior_check()]). Merged as `sbc` is.
+#'   (see [prior_check()]). Merged as `sbc` is: a `range` other than the
+#'   entry's, given without a `range_reason`, drops the entry's reason,
+#'   and a `range_reason` without a `range` is an error. The range is
+#'   compared as given, names included, so `c(lo = 0.15, hi = 5)` counts
+#'   as another range than the entry's `c(0.15, 5)`.
 #' @param reference `NULL`, or a reference implementation's estimates for
 #'   the agreement stage: a data frame with `term` and `estimate` (and
 #'   optionally `ci_low`, `ci_high`) on the natural scale, as
@@ -111,9 +122,10 @@
 #'
 #' @section Seeds:
 #' The recovery grid runs under `seed`, the prior check under `seed + 1`
-#' and the calibration under `seed + 2`. The seeds and the owner are left
-#' out of the plan's hash, so the hash changes only when what is planned
-#' changes.
+#' and the calibration under `seed + 2`. The seeds, the owner and the
+#' reasons (`sbc$prior_reason`, `prior_check$range_reason`) are left out
+#' of the plan's hash and of the stages' keys, so the hash changes only
+#' when what is planned changes, and rewording a reason reruns nothing.
 #'
 #' @seealso [run_validation()], [validation_defaults()].
 #'
@@ -185,20 +197,52 @@ validation_plan <- function(model,
   sampler <- merge_plan_list(base$sampler, sampler, "sampler")
   given_sbc <- names(sbc)
   sbc <- merge_plan_list(base$sbc, sbc, "sbc")
-  # the card prints the reason, so a prior given without one does not
-  # inherit the entry's, which explains a prior that did not run
-  if ("prior" %in% given_sbc && !"prior_reason" %in% given_sbc) {
-    sbc["prior_reason"] <- list(NULL)
+  given_pc <- names(prior_check)
+  prior_check <- merge_plan_list(base$prior_check, prior_check, "prior_check")
+  # the card prints the reasons, so a prior or range other than the
+  # entry's, given without a reason, does not inherit the entry's, which
+  # explains a prior that did not run or a range that is not judged; the
+  # entry's own given again keeps it
+  sbc <- drop_inherited_reason(sbc, base$sbc, given_sbc, "prior")
+  prior_check <- drop_inherited_reason(
+    prior_check, base$prior_check, given_pc, "range"
+  )
+  sbc["prior_reason"] <- list(
+    check_plan_reason(sbc[["prior_reason"]], "sbc$prior_reason")
+  )
+  prior_check["range_reason"] <- list(check_plan_reason(
+    prior_check[["range_reason"]], "prior_check$range_reason"
+  ))
+  if (is.null(sbc[["prior"]]) && !is.null(sbc[["prior_reason"]])) {
+    cli::cli_abort(c(
+      "{.arg sbc} gives a {.field prior_reason} but no {.field prior}.",
+      i = "The reason says why the calibration's prior is not bmm's \\
+           default, and the card prints it; without a prior the \\
+           calibration runs under bmm's defaults. Give the prior, or \\
+           leave out the reason."
+    ))
+  }
+  no_range <- is.null(prior_check[["range"]])
+  if (no_range && !is.null(prior_check[["range_reason"]])) {
+    cli::cli_abort(c(
+      "{.arg prior_check} gives a {.field range_reason} but no \\
+       {.field range}.",
+      i = "The reason says why the range is what it is, and the card \\
+           prints it under the prior check. Give the range, or leave out \\
+           the reason."
+    ))
   }
   sbc$sampler <- merge_plan_list(
     base$sbc$sampler, sbc$sampler, "sbc$sampler"
   )
-  prior_check <- merge_plan_list(base$prior_check, prior_check, "prior_check")
+  check_plan_sampler_prior(sampler, "sampler")
+  check_plan_sampler_prior(sbc$sampler, "sbc$sampler")
+  check_plan_sampler_prior(prior_check$sampler, "prior_check$sampler")
   check_plan_design(sbc, "sbc")
   check_plan_design(prior_check, "prior_check")
   sbc$n_sims <- check_count(sbc$n_sims, "sbc$n_sims")
   prior_check$n_draws <- check_count(prior_check$n_draws, "prior_check$n_draws")
-  check_plan_prior(sbc$prior)
+  check_plan_prior(sbc[["prior"]])
   reference <- check_plan_reference(reference %||% base$reference)
   convergence <- check_convergence_arg(convergence)
   criteria <- merge_plan_criteria(criteria)
@@ -401,6 +445,68 @@ merge_plan_list <- function(base, given, arg, call = rlang::caller_env()) {
   out <- base %||% list()
   for (name in names(given)) out[name] <- list(given[[name]])
   out
+}
+
+#' Drop the entry's reason for a field the call changed without one
+#'
+#' `field` is `"prior"` or `"range"`, its reason `<field>_reason`; the
+#' field counts as changed when it is given and differs from the entry's
+#' as `plan_key()` stores it.
+#' @noRd
+drop_inherited_reason <- function(merged, base, given, field) {
+  reason <- paste0(field, "_reason")
+  changed <- field %in% given &&
+    !identical(plan_key(merged[[field]]), plan_key(base[[field]]))
+  if (changed && !reason %in% given) merged[reason] <- list(NULL)
+  merged
+}
+
+#' A sampler list may not carry a prior
+#'
+#' In `sampler` it would reach every recovery fit, which the card says fit
+#' under bmm's defaults; in the calibration's or the prior check's sampler
+#' it collides with the prior the stage passes itself. An abbreviation
+#' (`pri`) reaches `bmm::bmm()`'s `prior` by partial matching.
+#' @noRd
+check_plan_sampler_prior <- function(x, arg, call = rlang::caller_env()) {
+  offending <- prior_abbreviations(names(x))
+  if (length(offending) == 0L) {
+    return(invisible(x))
+  }
+  cli::cli_abort(
+    c(
+      "{.arg {arg}} may not set {.arg prior} or an abbreviation of it: \\
+       {.val {offending}}.",
+      x = validation_refused_dots()[["prior"]]
+    ),
+    call = call
+  )
+}
+
+#' A reason printed on the card: `NULL`, or one string with something in it
+#' @noRd
+check_plan_reason <- function(x, arg, call = rlang::caller_env()) {
+  if (is.null(x)) {
+    return(NULL)
+  }
+  string <- is.character(x) && length(x) == 1L && !is.na(x)
+  if (!string || !nzchar(trimws(x))) {
+    # nolint next: object_usage_linter. Used by cli's glue interpolation.
+    what <- if (string) {
+      "a blank string"
+    } else {
+      cli::format_inline("{.obj_type_friendly {x}}")
+    }
+    cli::cli_abort(
+      c(
+        "{.arg {arg}} must be a single non-empty string or {.code NULL}, \\
+         not {what}.",
+        i = "The card prints it as a sentence; {.code NULL} prints none."
+      ),
+      call = call
+    )
+  }
+  x
 }
 
 #' @noRd
@@ -621,8 +727,8 @@ plan_stages <- function(stages, individual, reference,
 #'
 #' Formulas enter deparsed and functions as their text, as in the cache
 #' key, so that an environment never changes the hash. The seeds, the
-#' owner, the version string and the bmmtools version are left out
-#' (D84): the hash answers whether what is planned changed.
+#' owner, the version string, the bmmtools version and the reasons are
+#' left out (D84): the hash answers whether what is planned changed.
 #'
 #' @noRd
 plan_hash_input <- function(plan) {
@@ -630,7 +736,23 @@ plan_hash_input <- function(plan) {
     "seed", "seeds", "owner", "version", "bmmtools_version", "hash",
     "defaults"
   )
-  plan_key(unclass(plan)[setdiff(names(plan), excluded)])
+  fields <- unclass(plan)[setdiff(names(plan), excluded)]
+  plan_key(without_plan_reasons(fields))
+}
+
+#' Plan fields without their reasons
+#'
+#' `sbc$prior_reason` and `prior_check$range_reason` are prose printed on
+#' the card; they say why, not what is run, so neither the plan's hash nor
+#' a stage's key reads them.
+#'
+#' @noRd
+without_plan_reasons <- function(fields) {
+  if (is.list(fields$sbc)) fields$sbc["prior_reason"] <- NULL
+  if (is.list(fields$prior_check)) {
+    fields$prior_check["range_reason"] <- NULL
+  }
+  fields
 }
 
 #' Reduce a plan field to what can be hashed reproducibly
@@ -687,7 +809,7 @@ format.bmmtools_validation_plan <- function(x, ...) {
     stages$order, stages$stage, stages$status,
     ifelse(is.na(stages$reason), "", paste0(" ", stages$reason))
   )
-  sbc_prior <- if (is.null(x$sbc$prior)) {
+  sbc_prior <- if (is.null(x$sbc[["prior"]])) {
     "bmm's default priors"
   } else {
     "the plan's own prior"

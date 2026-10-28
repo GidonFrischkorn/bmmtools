@@ -132,9 +132,93 @@ md_table(data.frame(
 ```{r stages}
 #| results: asis
 bar <- plan$criteria$read_off_r_low
+# the calibration's prior as the plan stored it, a data frame or a
+# brmsprior: unclassed, its columns are read without brms. [[ ]] reads a
+# field by its full name, where $ would match `prior_reason` partially
+sbc_prior <- plan$sbc[["prior"]]
+sbc_reason <- plan$sbc[["prior_reason"]]
+prior_table <- function(prior) {
+  columns <- unclass(prior)[intersect(
+    c(
+      "prior", "class", "coef", "group", "resp", "dpar", "nlpar", "lb",
+      "ub"
+    ),
+    names(prior)
+  )]
+  out <- as.data.frame(
+    lapply(columns, function(v) text(as.character(v))),
+    stringsAsFactors = FALSE
+  )
+  keep <- vapply(out, function(col) any(col != "–"), logical(1))
+  keep[intersect(c("prior", "class"), names(out))] <- TRUE
+  out[, keep, drop = FALSE]
+}
+# the plan's own prior: its rows and its reason, or the words that none
+# was given
+prior_rows_lines <- function(whose) {
+  cat(
+    "\n", whose, ": these rows, in place of bmm's defaults for the",
+    " parameters they name.\n",
+    sep = ""
+  )
+  md_table(prior_table(sbc_prior))
+  why <- if (is.null(sbc_reason)) {
+    "No reason was given for this prior."
+  } else {
+    sbc_reason
+  }
+  cat("\n", why, "\n", sep = "")
+}
+# the calibration's section describes its prior when the calibration was
+# planned to run: it ran, or it failed, was skipped or is stale; not when
+# it is excluded, not applicable or not built
+sbc_status <- stages$status[stages$stage == "sbc"]
+sbc_listed <- length(sbc_status) == 1L &&
+  sbc_status %in% c("ok", "failed", "skipped", "stale")
+# a stale stage's result was made from other inputs, so the plan's prior
+# may not be the one it ran under: the card says whose prior it shows
+sbc_prior_lines <- function(stale = FALSE) {
+  whose <- "The calibration's prior"
+  if (stale) {
+    cat(
+      "\nThis result was made from other inputs or software versions than",
+      " the current plan's, so the prior below may not be the one it ran",
+      " under.\n",
+      sep = ""
+    )
+    whose <- "The current plan's prior"
+  }
+  if (is.null(sbc_prior)) {
+    cat("\n", whose, ": bmm's default priors.\n", sep = "")
+  } else {
+    prior_rows_lines(whose)
+  }
+  cat(
+    "\nA calibration speaks for the region of its prior only; the recovery",
+    " stage fits under bmm's default priors.\n",
+    sep = ""
+  )
+}
+# the set the prior check's verdict is judged under, as
+# verdict_prior_predictive() picks it: the calibration's prior when the
+# check drew under it, bmm's defaults otherwise; said only when the
+# verdict was judged
+pp_pass <- verdicts$pass[verdicts$stage == "prior_predictive"]
+pp_drew_sbc <- "sbc" %in% unclass(result$prior_predictive)[["prior"]]
+judged_under <- if (length(pp_pass) == 0L || all(is.na(pp_pass))) {
+  "The draws were not judged; the verdicts table gives the reason."
+} else if (pp_drew_sbc) {
+  paste0(
+    "The verdict is judged on the draws under the calibration's prior",
+    # without a section that lists the prior, this one does, below
+    if (sbc_listed) " (listed in the calibration's section)",
+    "; the draws under bmm's default priors are reported, not judged."
+  )
+} else {
+  "The verdict is judged on the draws under bmm's default priors."
+}
 reasons <- list(
-  prior_predictive = plan$prior_check$range_reason,
-  sbc = plan$sbc$prior_reason,
+  prior_predictive = c(plan$prior_check[["range_reason"]], judged_under),
   # D83: the bar is a convention, and the card says so
   data_requirements = if (!is.null(bar)) {
     paste0(
@@ -153,6 +237,12 @@ for (i in seq_len(nrow(stages))) {
     why <- text(stages$reason[[i]])
     if (identical(why, "–")) why <- text(stages$message[[i]])
     cat("*", status, "*: ", why, "\n", sep = "")
+    # what the calibration was planned under, when it was planned to run:
+    # a failed, skipped or stale stage, not one that is excluded, not
+    # applicable or not built
+    if (identical(stage, "sbc") && sbc_listed) {
+      sbc_prior_lines(identical(status, "stale"))
+    }
     next
   }
   cat("Ran in ", fmt(stages$seconds[[i]]), " seconds",
@@ -160,7 +250,12 @@ for (i in seq_len(nrow(stages))) {
     ".\n",
     sep = ""
   )
-  if (!is.null(reasons[[stage]])) cat("\n", reasons[[stage]], "\n", sep = "")
+  for (reason in reasons[[stage]]) cat("\n", reason, "\n", sep = "")
+  # the prior the check drew under, when no calibration section lists it
+  if (identical(stage, "prior_predictive") && pp_drew_sbc && !sbc_listed) {
+    prior_rows_lines("The calibration's prior")
+  }
+  if (identical(stage, "sbc")) sbc_prior_lines()
   table <- wide(numbers[numbers$stage == stage, , drop = FALSE])
   if (!is.null(table)) md_table(table)
 }
