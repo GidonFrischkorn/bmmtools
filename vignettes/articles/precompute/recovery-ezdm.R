@@ -73,8 +73,9 @@ correlations <- with_design(summary(attr(out, "correlations")))
 
 ## ---- convergence
 cells <- attr(out, "cells")
-# the package default (Rhat <= 1.05, bulk and tail ESS >= 400, at most
-# 10 divergences, over every variable) and the stricter Rhat <= 1.01
+# the package default (Rhat <= 1.05, bulk ESS >= 400, at most 10
+# divergences, over every variable; tail ESS is reported, not gated) and
+# the stricter Rhat <= 1.01
 cells$converged_101 <- cells$converged & cells$max_rhat <= 1.01
 convergence <- with_design(aggregate(
   cbind(converged, converged_101, fit_seconds, min_ess_bulk) ~ condition,
@@ -203,3 +204,7 @@ results <- list(
   minutes = as.double(difftime(Sys.time(), started, units = "mins"))
 )
 saveRDS(results, "vignettes/articles/assets/recovery-ezdm.rds")
+# the variable each fit's lowest ESS and largest R-hat sit on, read from
+# the fits just saved under fits_dir; the script keeps its own objects
+# inside local()
+source("vignettes/articles/precompute/recovery-ezdm-diagnostics.R")
