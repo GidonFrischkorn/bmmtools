@@ -41,6 +41,12 @@ result$run_record$hostname <- NA_character_
 cells <- attr(result$recovery, "cells")
 cells$file <- relative(cells$file)
 attr(result$recovery, "cells") <- cells
+# a recovery grid that records its run (#19) keeps its own copy
+grid_info <- attr(result$recovery, "run_info")
+if (!is.null(grid_info)) {
+  grid_info$hostname <- NA_character_
+  attr(result$recovery, "run_info") <- grid_info
+}
 files <- attr(result$prior_predictive, "files")
 files[] <- relative(files)
 attr(result$prior_predictive, "files") <- files
