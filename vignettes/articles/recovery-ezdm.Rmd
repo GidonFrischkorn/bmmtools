@@ -33,6 +33,14 @@ script_url <- paste0(
   "https://github.com/GidonFrischkorn/bmmtools/blob/main/", script
 )
 fmt <- function(x, digits = 2) formatC(x, format = "f", digits = digits)
+# after "at most" or "at least", round outward, so that the printed
+# digits still bound the value
+fmt_up <- function(x, digits = 2) {
+  fmt(ceiling(x * 10^digits - 1e-9) / 10^digits, digits)
+}
+fmt_down <- function(x, digits = 2) {
+  fmt(floor(x * 10^digits + 1e-9) / 10^digits, digits)
+}
 library(bmmtools)
 ```
 
@@ -94,6 +102,41 @@ failing <- cells[!cells$converged, ]
 n_fail <- nrow(failing)
 n_fail_30 <- sum(failing$n_trials == 30)
 fail_on_cor <- sum(grepl("^cor_", failing$min_ess_bulk_parameter))
+passing <- cells[cells$converged, ]
+pass_on_cor <- sum(grepl("^cor_", passing$min_ess_bulk_parameter))
+pass_on_pop <- sum(grepl("^b_", passing$min_ess_bulk_parameter))
+# the lowest bulk ESS over all variables, and over all but lp__ and lprior
+on_lp <- cells$min_ess_bulk_variable %in% c("lp__", "lprior")
+n_fail_bulk <- sum(grepl("ess_bulk", failing$failed))
+n_fail_div <- sum(grepl("divergent", failing$failed))
+# the verdicts follow the thresholds the text states; tail ESS is not gated
+gate_as_stated <- identical(
+  grepl("ess_bulk", cells$failed), cells$min_ess_bulk < 400
+) && identical(
+  grepl("divergent", cells$failed), cells$n_divergent > 10
+) && identical(
+  grepl("rhat", cells$failed), cells$max_rhat > 1.05
+) && !any(grepl("tail", cells$failed))
+# the tile figure: share passing per design; the cost figure: mean seconds
+pass_share <- tapply(
+  cells$converged, list(cells$n_subjects, cells$n_trials), mean
+)
+secs <- tapply(
+  cells$fit_seconds, list(cells$n_subjects, cells$n_trials), mean
+)
+# the two figures read the cells stored on `out`; they must agree with these
+fig_cells <- as.data.frame(attr(out, "cells"))
+fig_cells_n <- nrow(fig_cells)
+fig_cells <- fig_cells[match(
+  paste(cells$condition, cells$replication),
+  paste(fig_cells$condition, fig_cells$replication)
+), ]
+shared_cells <- intersect(names(fig_cells), names(cells))
+cells_agree <- fig_cells_n == nrow(cells) &&
+  all(c("converged", "failed", "status", "fit_seconds") %in% shared_cells) &&
+  all(vapply(shared_cells, function(column) {
+    identical(fig_cells[[column]], cells[[column]])
+  }, logical(1)))
 # coverage pooled over every design, per level and term: does the Wilson
 # interval of the 95 % and of the 50 % intervals contain the nominal rate?
 pooled <- do.call(rbind, lapply(
@@ -117,23 +160,109 @@ pop_rows <- rows[rows$level == "population", ]
 ndt_rows <- pop_rows[pop_rows$term == "ndt", ]
 ndt_50 <- sum(ndt_rows$covered_50)
 ndt_95 <- sum(ndt_rows$covered)
+n_pool <- nrow(ndt_rows)
+# the pooled figure shows two Wilson intervals per level and term
+n_pooled <- 2 * nrow(pooled)
+ndt_p <- stats::binom.test(ndt_50, n_pool, 0.5)$p.value
+# the most covered 95 % intervals of n_pool at which the Wilson interval
+# still excludes 0.95, and how often coverage of 0.90 or 0.85 gives that
+k_flag <- max(Filter(function(k) wilson(k, n_pool)[[2]] < 0.95, 0:n_pool))
+# population bias: its ±1 MCSE bar, as plot_design() draws it, and the
+# share of cells whose bar misses zero when there is no bias (t, 9 df)
+pop_true <- tapply(pop_rows$true_value, pop_rows$term, unique)
+bias_rel <- max(abs(pop$bias) / abs(pop_true[pop$term]))
+bias_se <- sqrt(pmax(pop$rmse^2 - pop$bias^2, 0) / (pop$n - 1))
+n_clear <- sum(abs(pop$bias) > bias_se)
+p_clear <- 2 * stats::pt(-1, reps - 1)
+# the coverage condition: the smallest count that passes, and the chance
+# that calibrated intervals pass it, per term and for all three terms
+k_pass <- min(Filter(
+  function(k) abs(k / reps - 0.95) <= res$coverage_mcse, 0:reps
+))
+p_pass <- 1 - stats::pbinom(k_pass - 1, reps, 0.95)
+n_terms <- length(unique(pop$term))
 # 20 against 50 subjects, matched on trials and term
 paired <- function(x, column) {
   a <- x[x$n_subjects == 20, ]
   b <- x[x$n_subjects == 50, ]
   b <- b[match(paste(a$n_trials, a$term), paste(b$n_trials, b$term)), ]
-  data.frame(term = a$term, at_20 = a[[column]], at_50 = b[[column]])
+  data.frame(
+    term = a$term, n_trials = a$n_trials,
+    at_20 = a[[column]], at_50 = b[[column]]
+  )
 }
 width <- paired(pop, "ci_width")
 rmse <- paired(pop, "rmse")
 r_pair <- paired(subj, "r")
+# the standard error of each 20 - 50 difference in r: that of each r from
+# its interval (Fisher z, symmetric there), taken to r by the delta method
+r_lo <- paired(subj, "r_low")
+r_hi <- paired(subj, "r_high")
+se_r <- function(r, lo, hi) {
+  (1 - r^2) * (atanh(hi) - atanh(lo)) / (2 * stats::qnorm(0.975))
+}
+r_pair$se <- sqrt(
+  se_r(r_pair$at_20, r_lo$at_20, r_hi$at_20)^2 +
+    se_r(r_pair$at_50, r_lo$at_50, r_hi$at_50)^2
+)
+r_pair$ratio <- abs(r_pair$at_20 - r_pair$at_50) / r_pair$se
+r_se_max <- r_pair[which.max(r_pair$se), ]
 # the bound coverage of 50 subjects at 30 and 100 trials, as a count
 bound_k <- round(pick(pop, 50, 30, "bound")$coverage * reps)
+# population cells at that count or lower, and the chance that calibrated
+# intervals give one
+p_low <- stats::pbinom(bound_k, reps, 0.95)
+n_low <- sum(round(pop$coverage * reps) <= bound_k)
 # the SD row with the largest bias, and the SD rows lowest at 300 trials
 sd_worst <- sds[which.max(abs(sds$bias)), ]
 sd_300 <- sds[sds$n_trials == 300, ]
 sd_low <- sd_300[sd_300$coverage == min(sd_300$coverage), ]
 sd_low <- sd_low[order(sd_low$term, sd_low$n_subjects), ]
+# the SD intervals pooled over terms and subjects, per number of trials, and
+# on which side of the truth those that miss at 300 trials lie
+sd_rows <- rows[rows$level == "sd", ]
+sd_rows$n_trials <- res$design$n_trials[
+  match(sd_rows$condition, res$design$condition)
+]
+sd_k <- tapply(sd_rows$covered, sd_rows$n_trials, sum)
+sd_n <- tapply(sd_rows$covered, sd_rows$n_trials, length)
+sd_miss_300 <- sd_rows[sd_rows$n_trials == 300 & !sd_rows$covered, ]
+n_miss_300 <- nrow(sd_miss_300)
+# the chance that all of them miss on the same side, if each side is as
+# likely as the other (the two-sided sign test)
+sd_sign_p <- stats::binom.test(n_miss_300, n_miss_300, 0.5)$p.value
+# the same, counting the fits the misses come from
+miss_fits <- table(paste(sd_miss_300$condition, sd_miss_300$replication))
+n_fit_300 <- length(miss_fits)
+sd_sign_p_fits <- stats::binom.test(n_fit_300, n_fit_300, 0.5)$p.value
+# the SDs' bias: its mean per number of trials, its sign from 100 trials
+# on, and its size relative to the interval width at 100 and 300 trials
+sd_mean_bias <- tapply(sds$bias, sds$n_trials, mean)
+sd_100up <- sds[sds$n_trials >= 100, ]
+sd_ratio <- function(t) {
+  d <- sds[sds$n_trials == t, ]
+  d <- d[match(
+    paste(sd_300$n_subjects, sd_300$term), paste(d$n_subjects, d$term)
+  ), ]
+  d$bias / d$ci_width
+}
+sd_miss_cells <- sd_300$coverage < 1
+# contraction: from each fit's link-scale posterior SD and the prior SD
+contr_rows <- rows[rows$level %in% c("population", "sd"), ]
+contr_prior <- res$prior_sd$prior_sd_link[match(
+  paste(contr_rows$level, contr_rows$term),
+  paste(res$prior_sd$level, res$prior_sd$term)
+)]
+contr_link <- isTRUE(all.equal(
+  1 - (contr_rows$post_sd_link / contr_prior)^2, contr_rows$contraction
+))
+contr_min <- min(c(pop$contraction, sds$contraction), na.rm = TRUE)
+# ndt's natural scale: its bias, RMSE and width against the largest of the
+# three parameters, per row of the population figure
+ndt_small <- all(vapply(c("bias", "rmse", "ci_width"), function(column) {
+  v <- abs(pop[[column]])
+  max(v[pop$term == "ndt"]) < max(v) / 5
+}, logical(1)))
 # how far the converged-only summary moves r_low
 conv_subj <- res$families_converged$subject
 r_low_shift <- max(abs(
@@ -148,9 +277,21 @@ in_sample <- tapply(
   cor_rows$sample_value, paste(cor_rows$condition, cor_rows$term), mean
 )
 cors$in_sample <- in_sample[paste(cors$condition, cors$term)]
+# the correlation figure summarises the stored correlation rows; the prose,
+# its alt text and the table read `cors`. They must agree.
+live_cor <- as.data.frame(summary(attr(out, "correlations")))
+live_cor_n <- nrow(live_cor)
+live_cor <- live_cor[match(
+  paste(cors$condition, cors$term), paste(live_cor$condition, live_cor$term)
+), ]
+cor_columns <- c(
+  "rejection_rate", "ci_width", "coverage", "mean_estimate", "bias"
+)
+cors_agree <- live_cor_n == nrow(cors) && isTRUE(all.equal(
+  as.matrix(live_cor[cor_columns]), as.matrix(cors[cor_columns]),
+  check.attributes = FALSE
+))
 target <- cors[cors$true_value == 0.4, ]
-# posterior SD over prior SD at the smallest contraction
-sd_ratio <- sqrt(1 - min(pop$contraction, na.rm = TRUE))
 readoff <- readoff[order(readoff$n_subjects, readoff$threshold), ]
 pair_label <- c(
   bound__drift = "drift – bound", bound__ndt = "bound – ndt",
@@ -161,10 +302,11 @@ pair_label <- c(
 live <- summary(out)
 agrees <- function(stored, columns, level) {
   l <- as.data.frame(live)[live$level == level, ]
+  same_rows <- nrow(l) == nrow(stored)
   l <- l[match(
     paste(stored$condition, stored$term), paste(l$condition, l$term)
   ), ]
-  isTRUE(all.equal(
+  same_rows && isTRUE(all.equal(
     as.matrix(l[columns]), as.matrix(stored[columns]),
     check.attributes = FALSE
   ))
@@ -188,6 +330,46 @@ same_answer <- function(column, coverage_check) {
     identical(unname(pkg), as.numeric(hand[[column]]))
   }, logical(1)))
 }
+# drift's r_low answer is larger than bound's and ndt's, at every threshold
+# and number of subjects ("not reached" counting as larger than any)
+drift_decides <- all(vapply(c(0.7, 0.8, 0.9), function(t) {
+  d <- smallest_design(
+    live[live$level %in% c("subject", "population"), ], c(r_low = t),
+    coverage_check = FALSE
+  )
+  a <- ifelse(is.na(d$smallest), Inf, d$smallest)
+  all(vapply(split(seq_len(nrow(d)), d$n_subjects), function(i) {
+    a[i][d$term[i] == "drift"] > max(a[i][d$term[i] != "drift"])
+  }, logical(1)))
+}, logical(1)))
+# drift has the lowest r and model reliability at every design
+drift_lowest <- all(vapply(split(seq_len(nrow(subj)), subj$condition),
+  function(i) {
+    is_drift <- subj$term[i] == "drift"
+    r <- subj$r[i]
+    m <- rel$reliability_model[i]
+    r[is_drift] < min(r[!is_drift]) && m[is_drift] < min(m[!is_drift])
+  }, logical(1)
+))
+# the model's reliability against the truth's, from 100 trials on
+gap_100_20 <- rel$reliability_gap[rel$n_trials >= 100 & rel$n_subjects == 20]
+gap_100_50 <- rel$reliability_gap[rel$n_trials >= 100 & rel$n_subjects == 50]
+gap_30 <- rel$reliability_gap[rel$n_trials == 30]
+# the correlation figure: the share excluding zero of the pairs at 0
+null_max <- max(cors$rejection_rate[cors$true_value == 0])
+target_max_50 <- max(target$rejection_rate[target$n_subjects == 50])
+miss_k <- round((1 - target_max_50) * reps)
+# the largest 20 - 50 difference in r
+r_big <- r_pair[which.max(abs(r_pair$at_20 - r_pair$at_50)), ]
+# the small scatter figure, on its own rows: the mean CrI width over the SD
+# of the generating values, per parameter
+first_small <- out$level == "subject" & out$replication == 1 &
+  out$condition == design_of(20, 30)
+small <- as.data.frame(out[first_small, ])
+small_width <- tapply(small$ci_high - small$ci_low, small$term, mean) /
+  tapply(small$true_value, small$term, stats::sd)
+# drift's population posterior SD, which has no contraction
+drift_post_sd <- pop_rows$post_sd_link[pop_rows$term == "drift"]
 # the prose below states these; a regenerated asset must still satisfy them
 stopifnot(
   reps == 10,
@@ -203,7 +385,7 @@ stopifnot(
   !pick(pop, 50, 100, "bound")$coverage_ok,
   all(pop$coverage_ok[pop$n_trials == 300]),
   all(abs(pop$bias) < 0.05),
-  all(subj$r[subj$term == "drift"] < subj$r[subj$term == "bound"]),
+  drift_lowest,
   pick(subj, 50, 100, "drift")$r_low < 0.8,
   pick(subj, 50, 300, "drift")$r_low >= 0.8,
   all(cells$status == "ok"),
@@ -211,7 +393,9 @@ stopifnot(
   n_fail_30 > n_fail / 2, fail_on_cor > n_fail / 2,
   all(grepl("^(cor|sd)_", failing$min_ess_bulk_parameter)),
   ndt_95 == nrow(ndt_rows), !pooled$nominal_50[pop_ndt],
-  all(pooled$nominal_95[!pop_ndt] & pooled$nominal_50[!pop_ndt]),
+  all(pooled$nominal_95), all(pooled$nominal_50[!pop_ndt]),
+  ndt_50 / n_pool > 0.5, ndt_p < 0.05 / n_pooled,
+  wilson(n_pool, n_pool)[[1]] < 0.95,
   all(width$at_20 > width$at_50),
   all(rmse$at_20[rmse$term == "drift"] > rmse$at_50[rmse$term == "drift"]),
   max(abs(r_pair$at_20 - r_pair$at_50)) < 0.05,
@@ -222,12 +406,87 @@ stopifnot(
     max(target$rejection_rate[target$n_subjects == 50]),
   pick(target, 20, 300)$rejection_rate ==
     max(target$rejection_rate[target$n_subjects == 20]),
-  pick(subj, 50, 300, "drift")$r >= 0.9,
+  # drift's r at 50 x 300 meets 0.90 only in the sixth decimal, as printed
+  pick(subj, 50, 300, "drift")$r >= 0.900001,
+  pick(subj, 50, 300, "drift")$r < 0.90001,
+  grepl("^0\\.90000[1-9]$", fmt(pick(subj, 50, 300, "drift")$r, 6)),
   pick(subj, 50, 300, "drift")$r_low < 0.9,
+  # the population and SD scales the text names
+  all(rows$scale[rows$level %in% c("population", "subject")] == "natural"),
+  all(rows$scale[rows$level == "sd"] == "link"),
+  all(live$scale[live$level %in% c("population", "subject")] == "natural"),
+  all(live$scale[live$level == "sd"] == "link"),
+  # the gate and the convergence and cost figures
+  gate_as_stated, pass_on_cor > n_pass / 2,
+  # the gate's lowest bulk ESS lands on lp__ or lprior in some fits; the
+  # counts in the text leave those two out and are otherwise the same
+  any(on_lp),
+  !any(cells$min_ess_bulk_parameter %in% c("lp__", "lprior")),
+  identical(
+    cells$min_ess_bulk_parameter[!on_lp], cells$min_ess_bulk_variable[!on_lp]
+  ),
+  cells_agree,
+  max(pass_share[, "30"]) < min(pass_share[, colnames(pass_share) != "30"]),
+  all(apply(secs, 1, diff) > 0), all(secs["50", ] > secs["20", ]),
+  # bias and coverage of the population means
+  all(pop$n == reps),
+  stats::pbinom(n_clear - 1, nrow(pop), p_clear, lower.tail = FALSE) > 0.05,
+  stats::pbinom(n_low - 1, nrow(pop), p_low, lower.tail = FALSE) > 0.05,
+  k_pass == 9,
+  identical(pop$coverage_ok, abs(pop$coverage - 0.95) <= res$coverage_mcse),
+  round(min(sd_300$coverage) * reps) == bound_k,
+  # contraction on the link scale; none for drift's population mean, whose
+  # Cauchy prior has no SD, and a value for every other row
+  contr_link,
+  all(is.na(pop$contraction[pop$term == "drift"])),
+  !anyNA(pop$contraction[pop$term != "drift"]), !anyNA(sds$contraction),
+  !any(res$prior_sd$term[res$prior_sd$level == "population"] == "drift"),
+  length(drift_post_sd) == nrow(cells), !anyNA(drift_post_sd),
+  ndt_small,
+  # the SDs at 300 trials: fewer covered than at 30 and at 100, which tie;
+  # every miss above the truth, two of them from one fit
+  sd_n[["30"]] == sd_n[["300"]], sd_n[["100"]] == sd_n[["300"]],
+  sd_k[["30"]] == sd_k[["100"]], sd_k[["300"]] < sd_k[["30"]],
+  n_miss_300 > 0, all(sd_miss_300$ci_low > sd_miss_300$true_value),
+  max(miss_fits) == 2, sum(miss_fits == 2) == 1,
+  # a small positive bias, zero or above in every cell from 100 trials on,
+  # and larger relative to the width at 300 than at 100 where 300 misses
+  all(sd_mean_bias > 0), all(sd_100up$bias >= 0),
+  nrow(sd_300) == 6, any(sd_miss_cells),
+  all((sd_ratio(300) > sd_ratio(100))[sd_miss_cells]),
+  # one more covered bound interval at 50 x 100 would pass the condition,
+  # and drift and ndt pass it there already
+  abs((bound_k + 1) / reps - 0.95) <= res$coverage_mcse,
+  pick(pop, 50, 100, "drift")$coverage_ok,
+  pick(pop, 50, 100, "ndt")$coverage_ok,
+  # subject parameters and the read-off
+  drift_decides,
+  # 20 against 50 subjects: the largest standard error of the difference in
+  # r is drift's at 30 trials
+  r_se_max$term == "drift", r_se_max$n_trials == 30,
+  max(r_pair$ratio) < stats::qnorm(0.975),
+  r_big$at_20 > r_big$at_50,
+  # with 20 subjects the model's reliability is nowhere above the truth's
+  # by more than 0.001 from 100 trials on
+  max(gap_100_20) <= 0.001,
+  # drift's r at 50 x 300 is the 300 under "using r" at 0.90
+  smallest(50, 0.9, "smallest_point") == 300,
+  # the small scatter figure: drift's intervals the widest relative to the
+  # spread of the generating values
+  small_width[["drift"]] > max(small_width[names(small_width) != "drift"]),
+  identical(
+    vapply(c(0.7, 0.8, 0.9), function(t) smallest(20, t, "smallest"), 1),
+    vapply(c(0.7, 0.8, 0.9), function(t) smallest(50, t, "smallest"), 1)
+  ),
+  # the correlation of 0.4: missed at 50 x 300, pulled towards zero at 20 x 30
+  miss_k > 0, null_max < target_max_50,
+  pick(target, 20, 30)$mean_estimate > 0,
+  pick(target, 20, 30)$mean_estimate < pick(target, 20, 30)$in_sample,
   agrees(pop, c("bias", "rmse", "coverage", "ci_width"), "population"),
   agrees(sds, c("bias", "rmse", "coverage", "ci_width"), "sd"),
   agrees(subj, c("r", "r_low", "r_high"), "subject"),
-  agrees(rel, "reliability_model", "subject")
+  agrees(rel, "reliability_model", "subject"),
+  cors_agree
 )
 ```
 
@@ -241,7 +500,8 @@ them, and the estimates were compared with the values that generated
 the data. A researcher planning an EZ diffusion study can read from it
 how well each parameter is recovered with 20 or 50 subjects and 30, 100
 or 300 trials per subject, and how many trials per person an analysis of
-individual differences needs. It does not say how many subjects a study
+individual differences needs at the generating values used here. It does
+not say how many subjects a study
 of group means or of correlations between parameters needs; it shows
 only what 20 and 50 subjects give.
 
@@ -257,15 +517,17 @@ card for `ezdm` will replace this page
 **Reading the figures.** Most figures below are drawn by
 `plot_design()`: a quantity on the y axis, the number of trials on a log
 x axis, one line for 20 and one for 50 subjects, and one panel per
-parameter. Each panel has its own y axis. A point is the mean over a
+parameter. Each row of panels has its own y axis, shared by the panels
+in it. A point is the mean over a
 design's ten replications, and its bar shows how precisely ten
-replications pin that mean down. For bias, RMSE and interval width the
-bar is ±1 *Monte Carlo standard error* (MCSE), the SD over the
-replications divided by √10. For coverage and other shares the bar is a
-95 % *Wilson interval*: the range of true shares that the observed count
-is consistent with. It stays between 0 and 1 and is not empty at 10 of
+replications pin that mean down. For bias and interval width the bar is
+±1 *Monte Carlo standard error* (MCSE), the SD over the replications
+divided by √10; for RMSE it is ±1 MCSE of the mean squared error,
+divided by twice the RMSE (the delta method). For coverage and other
+shares the bar is a 95 % *Wilson interval*: the range of true shares
+that the observed count is consistent with. It stays between 0 and 1 and is not empty at 10 of
 10: ten covered intervals out of ten are consistent with a true coverage
-as low as `r fmt(wilson(10, 10)[[1]])`, the lower end of the bar. A
+as low as `r fmt_up(wilson(10, 10)[[1]], 3)`, the lower end of the bar. A
 dashed line marks the target where there is one: zero for bias, the
 nominal 0.95 for coverage. The help page of `plot_design()` states the
 source of every bar. The numbers behind each figure are in a table under
@@ -328,23 +590,28 @@ one.
 <summary>What the gate checks</summary>
 
 The gate checks every parameter of the fit, the between-subject
-correlations and each person's values included. *R-hat* compares the
+correlations and each person's values included, and also `lp__` and
+`lprior`, the log posterior and the log prior. *R-hat* compares the
 chains and should be close to 1; the gate allows at most 1.05. The
 *effective sample size* (ESS) counts how many independent draws the
-chains are worth, in the bulk and in the tails of the posterior; the
-gate asks for at least 400. *Divergent transitions* are steps where the
-sampler failed; the gate allows at most 10.
+chains are worth; the gate asks for at least 400 in the bulk of the
+posterior. The ESS in its tails is reported, not gated. *Divergent
+transitions* are steps where the sampler failed; the gate allows at
+most 10.
 
 </details>
 
 `r n_pass` of the `r nrow(cells)` fits pass; `r n_pass_101` pass if
 R-hat must also be at most 1.01. Of the `r n_fail` fits that fail,
-`r n_fail_30` are at 30 trials. In `r fail_on_cor` of the
-`r n_fail`, the parameter whose ESS is lowest is one of the
-between-subject correlations; in none is it a population mean. The
-results below use every fit; using only those that pass changes no
+`r n_fail_30` are at 30 trials; `r n_fail_bulk` fail on bulk ESS and
+`r n_fail_div` on divergences. Leaving out `lp__` and `lprior`, the
+lowest bulk ESS sits on a between-subject correlation in most fits,
+failing or not (`r fail_on_cor` of `r n_fail`, and `r pass_on_cor` of
+the `r n_pass` that pass), and on a population mean in none that fails
+and in `r pass_on_pop` of those that pass.
+The results below use every fit; using only those that pass changes no
 `r_low` value (the lower end of the interval of r, defined with the
-subject parameters) by more than `r fmt(r_low_shift, 3)`.
+subject parameters) by more than `r fmt_up(r_low_shift, 3)`.
 
 ```{r cost, fig.width = 5, fig.height = 2.8, fig.alt = "Seconds per fit against the number of trials, one line for 20 and one for 50 subjects; both rise with trials, and 50 subjects take longer at every number of trials."}
 plot_design(out, metric = "fit_seconds")
@@ -353,8 +620,8 @@ plot_design(out, metric = "fit_seconds")
 A point is the mean seconds per fit of a design. Fitting took
 `r fmt(res$minutes_fitting, 1)` minutes in all (bmm `r bmm_version`,
 CmdStan `r res$toolchain[["cmdstan"]]`), between
-`r fmt(min(cells$fit_seconds), 1)` and
-`r fmt(max(cells$fit_seconds), 1)` seconds per fit.
+`r fmt_down(min(cells$fit_seconds), 1)` and
+`r fmt_up(max(cells$fit_seconds), 1)` seconds per fit.
 
 <details>
 <summary>The convergence numbers per design</summary>
@@ -382,56 +649,92 @@ knitr::kable(
 
 ## Population means
 
-```{r population, fig.height = 6.5, fig.alt = "Bias, RMSE, coverage and credible interval width of the population means of drift, bound and ndt, against the number of trials, one line for 20 and one for 50 subjects."}
+```{r population, fig.height = 6.5, fig.alt = "Bias, RMSE, coverage and credible interval width of the population means of drift, bound and ndt, on the natural scale (seconds for ndt), against the number of trials, one line for 20 and one for 50 subjects."}
 plot_design(out)
 ```
 
 For each fit the estimate is the posterior median. *Bias* is the mean,
 over the ten replications, of estimate minus generating value; *RMSE* is
 the root of the mean squared difference; *CrI width* is the mean width
-of the 95 % credible interval (CrI); all three are on the link scale.
+of the 95 % credible interval (CrI); all three are on the natural
+scale, seconds for `ndt`. Because `ndt` is in seconds, its panels in
+these three rows look flat on the y axis each row shares; do not compare
+them with drift's by height.
 *Coverage* is the share of the replications whose 95 % CrI contains the
 generating value. Intervals of the right width contain it 95 % of the
 time; intervals that contain it less often are too narrow, and ones that
-contain it more often are too wide.
+contain it more often are too wide. For a Bayesian interval at fixed
+generating values this holds only approximately (exactly only on average
+over the prior); the approximation is close here because the data
+outweigh the prior,
+with a mean contraction of at least `r fmt_down(contr_min, 2)` in the
+tables below and, for drift's population mean, which has none, a
+posterior SD of at most `r fmt_up(max(drift_post_sd), 2)` against the
+Cauchy prior's scale of 1.
 
-The population means are recovered without visible bias: at most
-`r fmt(max(abs(pop$bias)), 3)` in absolute value. More subjects narrow
+The population means show no bias of practical size: at most
+`r fmt_up(max(abs(pop$bias)), 3)` in absolute value, and at most
+`r fmt_up(100 * bias_rel, 1)` % of the generating value. In
+`r n_clear` of the `r nrow(pop)` cells the ±1 MCSE bar misses zero;
+with no bias at all, `r fmt(nrow(pop) * p_clear, 1)` would on average
+if the estimates are normal around the truth.
+More subjects narrow
 the intervals at every design and, for drift, lower the RMSE. Coverage
 is where ten replications show their limit. The CrI of `bound` covered
 in `r bound_k` of `r reps` replications with 50 subjects at both 30 and
 100 trials. The Wilson interval of `r bound_k` of `r reps` runs from
-`r interval(bound_k, reps)`, ending just below 0.95: weak evidence, at
-two designs, that these intervals are too narrow. Pooled over all six
+`r interval(bound_k, reps)`, ending just below 0.95. Across the
+`r nrow(pop)` cells that is no more than chance gives: intervals of the
+right width cover in `r bound_k` or fewer of `r reps` with probability
+`r fmt(p_low, 3)`, so `r fmt(nrow(pop) * p_low, 2)` of the
+`r nrow(pop)` cells are expected to cover that rarely, and this run has
+`r n_low`. Pooled over all six
 designs, `bound`'s intervals cover at a rate whose interval contains
 0.95 (the pooled coverage figure below).
 
-```{r pooled, fig.height = 3.4, fig.alt = "Coverage of the 50 % and 95 % intervals of each parameter, pooled over all designs, for population means and between-subject SDs, with 95 % Wilson intervals and a dashed line at the nominal rate. Population ndt sits above the nominal rate in both."}
+```{r pooled, fig.height = 3.4, fig.alt = "Coverage of the 50 % and 95 % intervals of each parameter, pooled over all designs, for population means and between-subject SDs, with 95 % Wilson intervals and a dashed line at the nominal rate. Every Wilson interval contains its nominal rate except that of the 50 % intervals of population ndt, which cover more often."}
 plot_design(out, type = "coverage")
 ```
 
-This figure pools the six designs, so each parameter has 60 intervals,
-enough to see what one design cannot. Besides the 95 % interval, every
-fit also reported a 50 % interval, a second check of the width: it
-should contain the truth half of the time. Population means are in the
-upper row, between-subject SDs in the lower. For every parameter and
-level but one,
-the Wilson interval of the pooled rate contains its nominal value, at
-50 % and at 95 %. Population `ndt` is the exception: its 50 % intervals cover in
-`r ndt_50` of `r nrow(ndt_rows)` (Wilson interval
-`r interval(ndt_50, nrow(ndt_rows))`, which excludes 0.50) and its
-95 % intervals in all `r ndt_95`. Its intervals are wider than their
-nominal mass. This run is the only evidence for it so far: it has not
-been checked on a second set of simulated data.
+This figure pools the six designs, so each parameter has `r n_pool`
+intervals, on the assumption that all six share one coverage. Besides
+the 95 % interval, every fit also reported a 50 % interval, a second
+check of the width: it should contain the truth half of the time.
+Population means are in the upper row, between-subject SDs in the
+lower. For the 95 % intervals, `r n_pool` are still few: their Wilson
+interval excludes 0.95 only at `r k_flag` or fewer covered, which a
+true coverage of 0.90 gives with probability
+`r fmt(stats::pbinom(k_flag, n_pool, 0.9))` and one of 0.85 with
+`r fmt(stats::pbinom(k_flag, n_pool, 0.85))`. Even at `r n_pool` of
+`r n_pool` it reaches down to `r fmt_up(wilson(n_pool, n_pool)[[1]], 3)`,
+so it cannot show intervals that are too wide.
+
+Every pooled Wilson interval contains its nominal value but one:
+population `ndt`'s 50 % intervals cover in `r ndt_50` of `r n_pool`
+(Wilson interval `r interval(ndt_50, n_pool)`, which excludes 0.50).
+With `r n_pooled` intervals in the figure, one such miss is no surprise:
+if each missed by chance one time in 20, independently, at least one
+would with probability `r fmt(1 - 0.95^n_pooled)`. But the exact
+binomial p-value of `r ndt_50` of `r n_pool` at 0.50 is
+`r fmt(ndt_p, 4)`, below 0.05 / `r n_pooled` =
+`r fmt(0.05 / n_pooled, 4)`. The 95 % intervals of population `ndt`
+cover in all `r ndt_95`; they come from the same posteriors, so they are
+not a second finding. Its 50 % intervals are wider than their nominal
+mass.
+This run is the only evidence for it so far: the second run mentioned
+above used the same simulated data, so it cannot confirm it.
 
 <details>
 <summary>The population numbers per design</summary>
 
-*Contraction* is 1 − (posterior SD / prior SD)²: near 1 when the data
-determine the estimate and near 0 when the posterior is still the prior.
-For `bound` and `ndt` it is at least
-`r fmt(min(pop$contraction, na.rm = TRUE), 3)`, a posterior SD at most
-`r fmt(sd_ratio, 2)` times the prior SD. `drift` has none, because its
+*Contraction* is 1 − (posterior SD / prior SD)², both on the link scale,
+unlike the other columns: near 1 when the data determine the estimate
+and near 0 when the posterior is still the prior.
+Averaged over the replications, as in the table, it is at least
+`r fmt_down(min(pop$contraction, na.rm = TRUE), 3)` for `bound` and
+`ndt`: a posterior variance, on average, at most
+`r fmt_up(100 * (1 - min(pop$contraction, na.rm = TRUE)), 1)` % of the
+prior variance. `drift` has none, because its
 default prior on the population value is a Cauchy distribution, which
 has no SD.
 
@@ -452,17 +755,36 @@ knitr::kable(data.frame(
 
 ## Between-subject SDs
 
-```{r sd, fig.height = 6.5, fig.alt = "Bias, RMSE, coverage and credible interval width of the between-subject SDs of drift, bound and ndt, against the number of trials, one line for 20 and one for 50 subjects."}
+```{r sd, fig.height = 6.5, fig.alt = "Bias, RMSE, coverage and credible interval width of the between-subject SDs of drift, bound and ndt, on the link scale, against the number of trials, one line for 20 and one for 50 subjects."}
 plot_design(out, level = "sd")
 ```
 
-The SDs are read the same way, on the link scale. Their bias is at most
-`r fmt(max(abs(sds$bias)), 3)`, for `r sd_worst$term` at
+The SDs are read the same way, but on the link scale. Their bias is at
+most `r fmt_up(max(abs(sds$bias)), 3)`, for `r sd_worst$term` at
 `r sd_worst$n_subjects` subjects and `r sd_worst$n_trials` trials. Their
 coverage drops to `r covered(min(sd_300$coverage))` at 300 trials
 (`r paste0(sd_low$term, " with ", sd_low$n_subjects, " subjects", collapse = ", ")`),
 with the same wide Wilson interval as above; pooled over the designs,
-every SD's interval contains the nominal rate (the figure above).
+every SD's interval contains the nominal rate (the figure above). Over
+the three SDs and both numbers of subjects, `r sd_k[["300"]]` of
+`r sd_n[["300"]]` intervals cover at 300 trials, against
+`r sd_k[["30"]]` at 30 and at 100, and all `r n_miss_300` that miss at
+300 lie above the truth, their lower ends by at most
+`r fmt_up(max(sd_miss_300$ci_low - sd_miss_300$true_value), 3)`. If
+misses fell above and below equally often, all `r n_miss_300` would fall
+on one side with probability `r fmt(sd_sign_p, 4)`. That treats the
+misses as independent, but two of them come from one fit; counting the
+`r n_fit_300` fits instead gives 2 × 0.5^`r n_fit_300`^ =
+`r fmt(sd_sign_p_fits, 3)`. This was found by looking at the results,
+not tested in advance. It fits a small positive bias: the mean bias of
+the SDs is `r fmt(sd_mean_bias[["30"]], 3)`,
+`r fmt(sd_mean_bias[["100"]], 3)` and `r fmt(sd_mean_bias[["300"]], 3)`
+at 30, 100 and 300 trials, and zero or above in all
+`r nrow(sd_100up)` cells from 100 trials on. Relative to the interval
+width, the bias is larger at 300 trials than at 100 in all
+`r sum(sd_miss_cells)` cells with a miss at 300. Ten replications cannot
+settle this, and the pooled figure, which assumes one coverage for all
+six designs, cannot show it.
 
 <details>
 <summary>The SD numbers per design</summary>
@@ -499,24 +821,34 @@ is what an analysis of individual differences needs.
 - *Reliability (model)* answers the same question without the truth, so
   a study can compute it on its own data: `var(m) / (var(m) + mean(v))`,
   with `m` the posterior means of the people and `v` their posterior
-  variances, per replication and then averaged. Its bars are too short
-  to see.
+  variances, per replication and then averaged.
 - *Coverage* is the share of all people's 95 % CrIs that contain their
   generating value. It stays within
-  `r fmt(max(abs(subj$coverage - 0.95)), 3)` of 0.95 at every design.
+  `r fmt_up(max(abs(subj$coverage - 0.95)), 3)` of 0.95 at every design.
 
 `bound` and `ndt` are recovered well from 30 trials on
-(r ≥ `r fmt(min(subj$r[subj$term != "drift"]))`). `drift` is the hard
+(r ≥ `r fmt_down(min(subj$r[subj$term != "drift"]))`). `drift` is the hard
 parameter: with 50 subjects its r is
 `r fmt(pick(subj, 50, 30, "drift")$r)` at 30 trials,
 `r fmt(pick(subj, 50, 100, "drift")$r)` at 100 and
 `r fmt(pick(subj, 50, 300, "drift")$r)` at 300. More people do not make
-each person's estimate better: at no design does r differ by more than
-`r fmt(max(abs(r_pair$at_20 - r_pair$at_50)), 3)` between 20 and 50
-subjects. From 100 trials on, the reliability from the model differs
-from the squared correlation with the truth (in the table below) by at
-most `r fmt(max(abs(rel$reliability_gap[rel$n_trials >= 100])), 3)`, so
-on real data of that size it says how well the people are ranked.
+each person's estimate detectably better: r is higher with 20 subjects
+than with 50 in `r sum(r_pair$at_20 > r_pair$at_50)` of the
+`r nrow(r_pair)` comparisons at equal trials, the largest difference
+included, and at no design does r differ by more than `r fmt_up(max(abs(r_pair$at_20 - r_pair$at_50)), 3)` between
+20 and 50 subjects, or by more than
+`r fmt_up(max(r_pair$ratio), 1)` standard errors of the difference. Ten
+replications would miss a true gain of less than 1.96 such standard
+errors more often than they would detect it, and that standard error is
+up to `r fmt_up(r_se_max$se, 3)`, for drift at 30 trials. From 100
+trials on, with 20 subjects, the reliability from the model is nowhere
+above the squared correlation with the truth (in the table below) by
+more than 0.001, and below it by at most
+`r fmt_up(max(-gap_100_20), 3)`; with 50 it differs from it by at most
+`r fmt_up(max(abs(gap_100_50)), 3)`. At 30 trials the
+gap reaches `r fmt(max(abs(gap_30)), 3)`. So on data of that size
+from this model, it says how well the people are ranked, a little
+pessimistically with 20 subjects.
 
 The two figures below show the first replication of the smallest and of
 the largest design: each person's estimate against their generating
@@ -524,7 +856,7 @@ value, on the natural scale (seconds for `ndt`), with the 95 % CrI. The
 dashed line is where estimate and truth are equal. These panels are in
 alphabetical order.
 
-```{r scatter-small, echo = FALSE, fig.height = 2.8, fig.alt = "Estimated against generating subject values for bound, drift and ndt with 20 subjects and 30 trials, one replication; the points scatter widely around the diagonal, most for drift."}
+```{r scatter-small, echo = FALSE, fig.height = 2.8, fig.alt = "Estimated against generating subject values for bound, drift and ndt with 20 subjects and 30 trials, one replication; relative to the spread of the generating values, the intervals are widest for drift."}
 first <- out$level == "subject" & out$replication == 1
 plot_recovery(out[first & out$condition == design_of(20, 30), ])
 ```
@@ -559,7 +891,7 @@ knitr::kable(data.frame(
 
 ## The correlation between drift and boundary
 
-```{r correlation, fig.height = 6.5, fig.alt = "Bias, coverage, credible interval width and the share of intervals excluding zero for the three between-subject correlations, against the number of trials, one line for 20 and one for 50 subjects. Only the drift-bound pair, generated at 0.4, has a share excluding zero well above zero."}
+```{r correlation, fig.height = 6.5, fig.alt = paste0("Bias, coverage, credible interval width and the share of intervals excluding zero for the three between-subject correlations, against the number of trials, one line for 20 and one for 50 subjects. The two pairs generated at 0 have a share excluding zero of at most ", fmt_up(null_max, 1), " at every design; the drift-bound pair, generated at 0.4, reaches ", fmt(max(target$rejection_rate), 1), ".")}
 plot_design(out, level = "correlation")
 ```
 
@@ -577,11 +909,13 @@ The CrIs of the 0.4 correlation contain it in nine or ten of the ten
 replications at every design, but they are
 `r fmt(min(target$ci_width))` to `r fmt(max(target$ci_width))` wide, so
 they say little about its size. They exclude zero in at most
-`r fmt(max(target$rejection_rate[target$n_subjects == 50]), 1)` of the
+`r fmt_up(target_max_50, 1)` of the
 replications with 50 subjects and
-`r fmt(max(target$rejection_rate[target$n_subjects == 20]), 1)` with 20,
-both at 300 trials: even then, a study with 50 people misses a
-correlation of 0.4 between drift and boundary about one time in three.
+`r fmt_up(max(target$rejection_rate[target$n_subjects == 20]), 1)` with 20,
+both at 300 trials: even then, a study with 50 people missed a
+correlation of 0.4 between drift and boundary in `r miss_k` of
+`r reps` replications (Wilson interval of the miss rate
+`r interval(miss_k, reps)`).
 With 20 subjects and 30 trials the estimate is pulled towards zero
 (`r fmt(pick(target, 20, 30)$mean_estimate)` against an in-sample
 `r fmt(pick(target, 20, 30)$in_sample)`, the mean correlation of the
@@ -617,10 +951,14 @@ One more condition: at that design, the coverage of every population
 mean must lie within one MCSE of 0.95, with the MCSE taken at 0.95,
 `sqrt(0.95 × 0.05 / 10)` = `r fmt(res$coverage_mcse, 3)`. With ten
 replications, 9 or 10 covered intervals out of 10 pass (0.90 is 0.05
-from 0.95), and 8 fails (0.80 is 0.15 from it). A design at which the
-population intervals are too narrow would be a poor recommendation,
-however well it ranks people. `smallest_design()` applies this rule to
-a grid summary:
+from 0.95), and 8 or fewer fail (0.80 is 0.15 from it). Intervals of
+exactly the right width pass with probability `r fmt(p_pass, 3)`, so a
+design whose `r n_terms` population means all have such intervals fails
+the condition with probability `r fmt(1 - p_pass^n_terms)`, if the
+`r n_terms` pass independently. A failure is weak evidence that the
+intervals are too narrow, but a design at which they are would be a
+poor recommendation, however well it ranks people. `smallest_design()`
+applies this rule to a grid summary:
 
 ```{r readoff-code, eval = FALSE}
 s <- summary(out)
@@ -634,7 +972,9 @@ smallest_design(
 It answers per parameter. The table below gives, for each number of
 subjects and threshold, the largest answer over the three parameters,
 the one that holds for every parameter. The column *using r* applies the
-threshold to r instead of r_low, without the coverage condition. Where
+threshold to r instead of r_low, without the coverage condition; the
+script computes it itself, because `smallest_design()` does not take r
+as a target. Where
 it is smaller, either r meets the threshold but ten replications are too
 few to be sure that it does, or the coverage condition moved the answer
 up.
@@ -652,12 +992,18 @@ knitr::kable(data.frame(
 With 50 subjects and bmm `r bmm_version`, a study needs
 **`r smallest(50, 0.8)` trials** per person for an r_low of at least
 0.80 on every parameter. The grid has nothing between its trial counts,
-so "300" means more than 100 and at most 300. `drift` decides the r_low
+so "300" means more than 100 and at most 300. The answers in this
+section hold at the generating values of this study, chiefly drift's
+between-subject SD of `r res$sds[["drift"]]` on the link scale: r and
+the reliability compare how much people differ with how precisely each
+is estimated, so where people differ more or less, the answer can
+change. `drift` decides the r_low
 part of each answer: at 100 trials its r_low is
 `r fmt(pick(subj, 50, 100, "drift")$r_low)`, at 300
 `r fmt(pick(subj, 50, 300, "drift")$r_low)`. That is also why 0.90 is
-not reached: drift's r of `r fmt(pick(subj, 50, 300, "drift")$r)` at
-300 trials meets it (the 300 under *using r*), its r_low does not. The
+not reached: drift's r at 300 trials,
+`r fmt(pick(subj, 50, 300, "drift")$r, 6)`, meets it only in the sixth
+decimal (the 300 under *using r*), and its r_low does not. The
 0.80 answer is safe on
 r_low but not on coverage: `bound` covered in
 `r covered(pick(pop, 50, 300, "bound")$coverage)` replications at that
@@ -669,14 +1015,16 @@ alone it is `r smallest(50, 0.7, "smallest")` trials. But at that
 design `bound` covered in
 `r covered(pick(pop, 50, 100, "bound")$coverage)`, so the rule moves on
 to `r smallest(50, 0.7)` trials. With one more covered interval the
-answer would have been 100, and the second run of this script (see "The
-run"), with different starting values, gave exactly that. Read it as
-"100 or 300".
+answer would have been `r smallest(50, 0.7, "smallest")`, and the
+second run of this script (see "The run"), with different starting
+values, gave exactly that. Read it as "100 or 300".
 
-The number of subjects hardly matters for these answers: with 20
-subjects they are `r smallest(20, 0.7)` trials at 0.70 and
-`r smallest(20, 0.8)` at 0.80. More people narrow the interval of r and
-of the population estimates; they do not measure each person better.
+The number of subjects does not change the r_low part of these
+answers: by r_low alone, 20 subjects need
+`r smallest(20, 0.7, "smallest")` trials at 0.70 and
+`r smallest(20, 0.8, "smallest")` at 0.80, as 50 do. More people
+narrow the interval of r and of the population estimates; they do not
+measure each person detectably better.
 At the 0.80 threshold, r alone would say 100 trials with 20 subjects: drift's
 r there is `r fmt(pick(subj, 20, 100, "drift")$r)`, but its r_low is
 `r fmt(pick(subj, 20, 100, "drift")$r_low)`.
