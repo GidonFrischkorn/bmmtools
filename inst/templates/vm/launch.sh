@@ -20,6 +20,9 @@
 # Run it from the directory that grid-args.R's `dir` is relative to.
 
 set -u
+# an exported CDPATH can send cd to another directory of the same name,
+# and makes cd print the directory, so $(cd ... && pwd) gives two lines
+unset CDPATH
 here="$(cd "$(dirname "$0")" && pwd)"
 slice="$here/grid-slice.R"
 

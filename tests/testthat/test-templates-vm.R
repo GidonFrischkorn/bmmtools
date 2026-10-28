@@ -361,6 +361,20 @@ test_that("launch.sh runs the setup call, then one logged slice per k", {
   )
 })
 
+test_that("launch.sh runs its slices under an exported CDPATH", {
+  skip_without_launcher()
+  withr::local_path(R.home("bin"), action = "prefix")
+  withr::local_envvar(CDPATH = ".")
+  root <- withr::local_tempdir()
+  launcher <- stub_launcher(root)
+  # the relative form that the article uses; run_launcher() runs from root
+  launcher$launch <- file.path("my vm", "launch.sh")
+  out <- run_launcher(root, launcher, "--force", "-k", "2")
+  expect_null(attr(out, "status"))
+  expect_identical(exit_line(launcher, 1L), "EXIT 0")
+  expect_identical(exit_line(launcher, 2L), "EXIT 0")
+})
+
 test_that("launch.sh sets K from the cores, not from OpenMP's settings", {
   skip_without_launcher()
   withr::local_path(R.home("bin"), action = "prefix")
