@@ -5,7 +5,9 @@
 #   Rscript grid-slice.R grid-args.R <k> <n>   slice k of n
 #
 # launch.sh calls it; it can also be run by hand, or from a scheduler's
-# job script with k from the array index.
+# job script with k from the array index. launch.sh adds one argument
+# after setup and after <k> <n>, a mark by which it finds the process
+# with ps; it is not read here.
 
 args <- commandArgs(trailingOnly = TRUE)
 if (length(args) < 2L) {
@@ -28,11 +30,15 @@ if (identical(args[[2L]], "info")) {
   } else {
     threads
   }
-  # whole numbers in full: launch.sh compares them, and 3e+05 is no number
+  # whole numbers in full: launch.sh compares them, and 3e+05 is no number.
+  # The dir as R reads it, so that a `~` in it is the same folder to the
+  # shell. On a line of its own that launch.sh finds by its marker, even
+  # after a grid-args.R that printed without a newline.
   cat(
+    "\nlaunch-info:",
     format(chains * threads, scientific = FALSE),
     format(nrow(grid_args$grid) * reps, scientific = FALSE),
-    grid_args$dir, "\n"
+    normalizePath(path.expand(grid_args$dir), mustWork = FALSE), "\n"
   )
   quit(save = "no", status = 0L)
 }

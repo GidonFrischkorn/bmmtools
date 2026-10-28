@@ -102,29 +102,60 @@ slices as fit, so 32 cores and 4 chains give 8 slices. `-k` sets the
 number yourself. The launcher refuses a number that would put more
 chains than cores on the machine unless you add `--force`.
 
-The setup call runs in the foreground. If it fails, nothing else
-starts. The slices run in the background under `nohup`, so they go on
-after the SSH session ends. Each one writes `<dir>/logs/slice-<k>.log`,
-which ends with a line `EXIT <status>` when the process finishes:
-`EXIT 0` when every cell has a fit, `EXIT 1` when some failed. To see
-how far they are:
+The setup call runs in the foreground and logs to
+`<dir>/logs/setup.log`. If it fails, nothing else starts, and stopping
+the launcher stops the setup call too. It also stops when the SSH
+session ends, and simulating a large grid can take a while, so start
+the launcher inside `tmux` or `screen`. The slices run in the
+background under `nohup`, so they go on after the SSH session ends.
+Each one writes `<dir>/logs/slice-<k>.log`, which ends with a line
+`EXIT <status>` when the process finishes: `EXIT 0` when every cell
+has a fit, `EXIT 1` when some failed. To see how far they are:
 
 ```bash
 bash vm/launch.sh --status vm/grid-args.R
 ```
 
-`--status` prints the number of cells with a result and, for each
-slice, its exit line, `running` with its process id, or `stopped
-without an exit line` for a process that is gone without one (the
-machine restarted, or something killed it hard). The launcher refuses
-to start while a slice of its last launch still runs, so two processes
-never fit the same cell.
+`--status` prints the state of the setup call, the number of cells
+with a result and, for each slice, its exit line, `running` with its
+process id, or `stopped without an exit line` for a process that is
+gone without one (the machine restarted, or something killed it hard).
+A recorded process id that another process has taken since, as after a
+restart or by a slice of another grid, does not count as running. This
+needs a working `ps`, as does stopping every process a slice's R
+started (below). Without one the launcher says so: it then counts a
+slice as running while a process group with its recorded id is live,
+and the setup call while a process with its recorded id is. A `kill`
+of a slice still stops its R and the processes R started in the
+slice's process group. Only processes in a session of their own
+survive it, such as the Stan chains that cmdstanr starts through
+processx.
 
-To stop a slice, send its process id from `<dir>/logs/pids` a `kill`.
-The R process stops with it, and the log gets its exit line. If the
-slices die when you log out, the machine ends a user's processes at
-logout (`KillUserProcesses=yes` in systemd's `logind.conf`), which
-`nohup` does not prevent; check that setting first.
+The launcher runs one launch at a time. It refuses to start while
+another launch sets up or starts the same grid, and while a slice of
+its last launch still runs, so two launches do not fit the same cells
+at once. It cannot see slices that you start by hand.
+
+To stop a slice, send its process id from `<dir>/logs/pids` a plain
+`kill`. The slice's R process and the processes R started, such as the
+Stan chains, stop with it, and the log gets its exit line. A `kill -9`
+stops only the process you name and leaves no exit line. Its R fits
+on, so `--status` still shows the slice as running, with a note that
+the process is gone and the `kill` command, with the ids of its R and
+of what R started, that stops the rest. Without a working `ps` the
+note gives `kill -- -<id>` instead, which stops the processes of the
+slice's process group, its R among them, but not those in a session of
+their own. A `kill -9` on the launcher during the setup call leaves the
+setup running: a new launch is refused until it ends, and no slices
+start from it. `--status` then shows the `kill` command that stops the
+setup and what it started.
+Without a working `ps` it names only the setup's own process, and what
+the setup started in a session of its own outlives that `kill`.
+
+If the slices die when you log out, the machine ends a user's
+processes at logout (`KillUserProcesses=yes` in systemd's
+`logind.conf`), which `nohup` does not prevent; check that setting
+first.
 
 ## When a slice stops
 
@@ -138,9 +169,9 @@ bash vm/launch.sh --rerun 3 vm/grid-args.R
 
 This runs slice 3 of the last launch in the background, as the launcher
 first did, and does not repeat the setup call. The slice skips the
-cells that have results and fits the rest. With a `seed`,
-a refitted cell draws the same chains it would have drawn the first
-time.
+cells that have results and fits the rest. A refitted cell draws the
+same chains it would have drawn the first time: a split run always has
+a `seed`.
 
 ## Bringing the results home
 
@@ -170,12 +201,14 @@ would compile the same executable at the same time.
 ## Several machines
 
 Run the setup call on one machine and copy the grid directory to the
-others. Install the same versions of R, bmm, brms and bmmtools on every
-machine: `grid.rds` records the packages, and a slice on a machine with
-other versions stops. Then give each machine its share of the slices,
-for example slices 1–8 of 16 on the first and 9–16 on the second. The
-launcher always runs all of its slices, so here you start them by hand,
-one `Rscript` per slice, with the same total on every machine:
+others. Install the same versions of bmmtools, bmm and brms on every
+machine: `grid.rds` records these three, and a slice on a machine with
+other versions of them stops. Keep R and CmdStan the same too. The
+check does not cover them, but each slice's run record shows what it
+ran on. Then give each machine its share of the slices, for example
+slices 1–8 of 16 on the first and 9–16 on the second. The launcher
+always runs all of its slices, so here you start them by hand, one
+`Rscript` per slice, with the same total on every machine:
 
 ```bash
 nohup Rscript vm/grid-slice.R vm/grid-args.R 9 16 > slice-9.log 2>&1 &
@@ -205,6 +238,7 @@ a job of its own that the array waits for:
 ```bash
 Rscript vm/grid-slice.R vm/grid-args.R setup
 ```
- The run records fill
-in `scheduler`, `job_id`, `array_task_id` and `cores_granted` from the
-scheduler's environment (SLURM, PBS, LSF or SGE).
+
+The run records fill in `scheduler`, `job_id`, `array_task_id` and
+`cores_granted` from the scheduler's environment (SLURM, PBS, LSF or
+SGE).

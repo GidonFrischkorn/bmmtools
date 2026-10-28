@@ -31,9 +31,20 @@
   It sets K to the machine's cores divided by chains × threads and
   refuses a larger K without `--force`. `--status` shows each slice as
   finished, running or stopped, `--rerun k` restarts one, and a launch
-  is refused while a slice of the last one still runs. The new article
-  "Running a grid on a cloud VM" walks through it, including a SLURM
-  array sketch.
+  is refused while a slice of the last one still runs. One launch runs
+  at a time: a lock in `<dir>/logs/` refuses a second launch while one
+  sets up or starts the same grid, or while the setup call of a launch
+  killed with `kill -9` still runs, and a lock whose launch and setup
+  are both gone is taken over. Stopping the launcher stops its setup
+  call. A slice counts as running while its R process does, also after a
+  `kill -9` on its recorded pid. Where `ps` works, a pid that another
+  process has taken since (as after a restart, or by another grid's
+  slice) does not count, and a `kill` of a slice's pid stops its R and
+  the processes R started, Stan chains included; without a working `ps`
+  the launcher says so. `--status` also reports the setup call, a `~` in
+  `dir` is expanded as R expands it, and unknown options are refused.
+  The new article "Running a grid on a cloud VM" walks through it,
+  including a SLURM array sketch.
 * Every `recovery_grid()` call that reaches its cells now leaves a
   record in `<dir>/run-info/` (the component form does not), so a grid
   run by several processes says which process ran which cells.
