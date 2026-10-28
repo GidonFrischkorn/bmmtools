@@ -254,6 +254,40 @@ test_that("a slice of another grid stops and leaves the record alone", {
   expect_length(list.files(dir, "-est\\.rds$"), 0L)
 })
 
+test_that("a slice under another bmmtools, bmm or brms stops", {
+  # D116: the record names the versions the setup call ran under, and a
+  # slice on others would write cells of another build under its names
+  skip_if_not_installed("bmm")
+  dir <- withr::local_tempdir()
+  suppressMessages(cells_run(dir, grid_mock_fitter(), cells = integer(0)))
+  before <- unname(tools::md5sum(file.path(dir, "grid.rds")))
+  mock <- grid_mock_fitter()
+  slice <- function() suppressMessages(cells_run(dir, mock, cells = 1:2))
+  installed <- package_version_string
+  other_version <- function(pkg) {
+    function(name) if (identical(name, pkg)) "9.9.9" else installed(name)
+  }
+
+  expect_error(
+    testthat::with_mocked_bindings(
+      slice(),
+      bmmtools_version = function() "9.9.9"
+    ),
+    "bmmtools_version"
+  )
+  for (pkg in c("bmm", "brms")) {
+    err <- expect_error(testthat::with_mocked_bindings(
+      slice(),
+      package_version_string = other_version(pkg)
+    ))
+    expect_match(conditionMessage(err), "differs from the one that set up")
+    expect_match(conditionMessage(err), paste0("\"", pkg, "\""), fixed = TRUE)
+  }
+  expect_identical(mock$calls$n, 0L)
+  expect_identical(unname(tools::md5sum(file.path(dir, "grid.rds"))), before)
+  expect_length(list.files(dir, "-est\\.rds$"), 0L)
+})
+
 # I5: resume -------------------------------------------------------------------
 
 test_that("a slice run again fits only the cells it has no sidecar for", {
@@ -402,6 +436,100 @@ test_that("a record a call without `cells` wrote cannot be sliced", {
   )
 })
 
+test_that("a full run over a setup call's record leaves nothing to slice", {
+  # a full run is not checked against the setup call and may change what
+  # the slices are checked against (here the prior, and with it
+  # prior-sd.rds), so it drops the setup call's check from grid.rds
+  skip_if_not_installed("bmm")
+  skip_if_not_installed("brms")
+  dir <- withr::local_tempdir()
+  setup <- function() {
+    suppressMessages(cells_run(dir, cells_prior_fitter(),
+      cells = integer(0), prior_sd = "fit"
+    ))
+  }
+  setup()
+  other_prior <- brms::prior(normal(0, 1), class = "b", nlpar = "kappa")
+  suppressMessages(expect_message(
+    cells_run(dir, cells_prior_fitter(), prior_sd = "fit", prior = other_prior),
+    "Rewriting"
+  ))
+  expect_null(readRDS(file.path(dir, "grid.rds"))$fit)
+
+  mock <- cells_prior_fitter()
+  expect_error(
+    suppressMessages(cells_run(dir, mock, cells = 1:2, prior_sd = "fit")),
+    "not written by a setup call"
+  )
+  expect_identical(mock$calls$n, 0L)
+  # the setup call run again makes the directory one to slice again
+  setup()
+  out <- suppressMessages(cells_run(dir, mock, cells = 1:2, prior_sd = "fit"))
+  expect_identical(nrow(attr(out, "cells")), 2L)
+})
+
+test_that("a full run with the setup call's arguments keeps the slices", {
+  # the full run's own key equals the setup call's, so grid.rds is left
+  # as it is and a slice (or a rerun of one) is still checked against it
+  skip_if_not_installed("bmm")
+  dir <- withr::local_tempdir()
+  suppressMessages(cells_run(dir, cells_prior_fitter(),
+    cells = integer(0), prior_sd = "fit"
+  ))
+  record <- file.path(dir, "grid.rds")
+  before <- unname(tools::md5sum(record))
+  suppressMessages(expect_no_message(
+    cells_run(dir, cells_prior_fitter(), prior_sd = "fit"),
+    message = "Rewriting"
+  ))
+  expect_identical(unname(tools::md5sum(record)), before)
+  # fewer cores change no key, so they keep the slices too
+  suppressMessages(cells_run(dir, cells_prior_fitter(),
+    prior_sd = "fit", cores = 1
+  ))
+  expect_false(is.null(readRDS(record)$fit))
+  mock <- cells_prior_fitter()
+  out <- suppressMessages(cells_run(dir, mock, cells = 1:2, prior_sd = "fit"))
+  expect_identical(nrow(attr(out, "cells")), 2L)
+  expect_identical(mock$prior_calls$n, 0L)
+})
+
+test_that("a full run leaves a setup record without `fit` untouched", {
+  # I7 for a record from before `fit` was written: the full run's own key
+  # is not stored back into it, and the file does not change
+  skip_if_not_installed("bmm")
+  dir <- withr::local_tempdir()
+  suppressMessages(cells_run(dir, grid_mock_fitter(), cells = integer(0)))
+  record <- file.path(dir, "grid.rds")
+  stored <- readRDS(record)
+  expect_false(is.null(stored$fit))
+  stored$fit <- NULL
+  saveRDS(stored, record)
+  before <- unname(tools::md5sum(record))
+  suppressMessages(expect_no_message(
+    cells_run(dir, grid_mock_fitter()),
+    message = "Rewriting"
+  ))
+  expect_identical(unname(tools::md5sum(record)), before)
+  expect_false("fit" %in% names(readRDS(record)))
+})
+
+test_that("a full run leaves a record written without `cells` untouched", {
+  # I7: what a call without `cells` wrote does not change, byte for byte
+  skip_if_not_installed("bmm")
+  dir <- withr::local_tempdir()
+  suppressMessages(cells_run(dir, grid_mock_fitter()))
+  record <- file.path(dir, "grid.rds")
+  before <- unname(tools::md5sum(record))
+  mtime <- file.mtime(record)
+  suppressMessages(expect_no_message(
+    cells_run(dir, grid_mock_fitter()),
+    message = "Rewriting"
+  ))
+  expect_identical(unname(tools::md5sum(record)), before)
+  expect_identical(file.mtime(record), mtime)
+})
+
 test_that("subject-level slices need no prior SDs", {
   # with no level that has a contraction, the setup call writes no
   # prior-sd.rds, and its slices must not ask for one
@@ -451,4 +579,26 @@ test_that("cells must name cells of the grid, each once", {
   expect_error(run("1"), "whole")
   expect_error(run(1:2, smoke = TRUE), "smoke")
   expect_identical(mock$calls$n, 0L)
+})
+
+test_that("cells needs a seed, refused before anything is written", {
+  # without one a cell's data and fit depend on what its process ran
+  # before it, so the slices would not write the cells of one grid
+  skip_if_not_installed("bmm")
+  dir <- file.path(withr::local_tempdir(), "grid")
+  mock <- grid_mock_fitter()
+  # `NA`, `Inf` and text leave the cells unseeded as `NULL` does, and a
+  # longer seed is recycled over the cells; `TRUE` is no number either
+  seeds <- list(NULL, NA, NA_real_, Inf, -Inf, NaN, "a", c(1, 2), TRUE)
+  for (seed in seeds) {
+    for (cells in list(integer(0), 1:2)) {
+      expect_error(
+        suppressMessages(cells_run(dir, mock, cells = cells, seed = seed)),
+        "needs a single number as `seed`",
+        fixed = TRUE
+      )
+    }
+  }
+  expect_identical(mock$calls$n, 0L)
+  expect_false(dir.exists(dir))
 })

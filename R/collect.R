@@ -139,13 +139,12 @@ check_collected <- function(stored, levels, correlations,
 #'
 #' @return A `bmmtools_recovery` with the attributes [recovery_grid()]
 #'   gives it, `run_info` included: one row per call that reached its
-#'   cells in `dir`,
-#'   so a grid run in slices by several processes says which process ran
-#'   which cells. A directory written before bmmtools kept these records
-#'   has no `run_info`. `cells$elapsed` is `NA`: no cell was run, so none took
-#'   any time. `cells$fit_seconds` is the time each fit took when it was
-#'   run, which is what a runtime table wants and what survives the trip
-#'   between machines.
+#'   cells in `dir`, so a grid run in slices by several processes says
+#'   which process ran which cells. A directory written before bmmtools
+#'   kept these records has no `run_info`. `cells$elapsed` is `NA`: no
+#'   cell was run, so none took any time. `cells$fit_seconds` is the time
+#'   each fit took when it was run, which is what a runtime table wants
+#'   and what survives the trip between machines.
 #'
 #' @seealso [recovery_grid()], which writes what this reads.
 #'

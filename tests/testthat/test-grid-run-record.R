@@ -213,6 +213,30 @@ test_that("a record opened by a call that never finished reads as unfinished", {
   expect_true(is.na(record$n_failed[[3L]]))
 })
 
+test_that("an error outside a cell's fit leaves the record unfinished", {
+  # data that cannot be generated stops the grid once its cells have
+  # started; a failed fit would be counted instead
+  skip_if_not_installed("bmm")
+  no_scheduler()
+  dir <- withr::local_tempdir()
+  expect_error(suppressMessages(recovery_grid(
+    bmm::mixture2p(resp_error = "y"),
+    grid = small_grid(),
+    pars = function(row) {
+      if (row$n_subjects == 4L) stop("no values for row 2")
+      c(kappa = log(8), thetat = stats::qlogis(0.75))
+    },
+    dir = dir, reps = 2L, sds = c(kappa = 0.3, thetat = 0.4), seed = 100,
+    chains = 2, iter = 400, .fitter = grid_mock_fitter()$fitter
+  )), "no values for row 2")
+  record <- read_run_records(dir)
+  expect_identical(nrow(record), 1L)
+  expect_identical(record$call, "all")
+  expect_true(is.na(record$ended))
+  expect_true(is.na(record$n_failed))
+  expect_true(is.na(record$n_reused))
+})
+
 test_that("a directory without records collects with no run_info", {
   skip_if_not_installed("bmm")
   dir <- withr::local_tempdir()
@@ -222,8 +246,8 @@ test_that("a directory without records collects with no run_info", {
 })
 
 test_that("a call whose preflight fails leaves no record", {
-  # only a process stopped while it fits leaves an unfinished record; a
-  # call that errors before its cells is not one
+  # a call that errors before its cells leaves no record; only one stopped
+  # once they had started leaves an unfinished one
   skip_if_not_installed("bmm")
   no_scheduler()
   failing <- grid_mock_fitter(fail_on = function(n, data, dots) TRUE)

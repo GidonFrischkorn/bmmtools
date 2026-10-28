@@ -1130,16 +1130,32 @@ write_grid_record <- function(dir, record) {
   invisible(path)
 }
 
+#' The `fit` key of the grid record in `dir`, or `NULL`
+#'
+#' `NULL` also for a record written without `cells`, which has none, and
+#' for one that cannot be read.
+#'
+#' @noRd
+stored_grid_fit <- function(dir) {
+  path <- file.path(dir, "grid.rds")
+  stored <- if (file.exists(path)) {
+    tryCatch(readRDS(path), error = function(e) NULL)
+  }
+  if (is.list(stored)) stored$fit
+}
+
 #' The fields of a grid record that differ from the stored one
 #' @noRd
 grid_record_changes <- function(stored, record) {
-  # `trial_design` is written only when given, so a design dropped on a
-  # rerun shows only in the stored record; every other field is always
-  # written, and comparing the union of all of them would flag every
-  # record from a version that wrote a field since removed
+  # `trial_design` is written only when given, and `fit` only by a call
+  # with `cells`, so a design dropped on a rerun, or a full run over a
+  # setup call's record, shows only in the stored record; every other field
+  # is always written, and comparing the union of all of them would flag
+  # every record from a version that wrote a field since removed
   compare <- setdiff(
     union(
-      names(record), intersect(names(stored), c("trial_design", "formula"))
+      names(record),
+      intersect(names(stored), c("trial_design", "formula", "fit"))
     ),
     "created"
   )
@@ -1804,11 +1820,15 @@ grid_formula <- function(formula, row, i, model, re_cor, task_col,
 #'     `<dir>/run-info/`: `call` (`"all"`, `"setup"` or `"slice"`),
 #'     `cells` (as text, `"1-3,7"`), `n_cells`, `n_reused` (cells whose
 #'     hierarchical results were read from their sidecar, not fitted),
-#'     `n_failed`, `started`, `ended` (`NA` for a process stopped while it
-#'     fitted), `pid`, the scheduler's
+#'     `n_failed`, `started`, `ended`, `pid`, the scheduler's
 #'     `scheduler`, `job_id`, `array_job_id`, `array_task_id` and
 #'     `cores_granted` (`NA` without one, as on a cloud VM), then every
-#'     [run_info()] column.
+#'     [run_info()] column. `ended`, `n_reused` and `n_failed` are `NA`
+#'     while the call runs, and stay `NA` for a call that never finished
+#'     its cells: a process that was stopped, or an R error outside a
+#'     cell's fit once the cells had started (data that cannot be
+#'     generated, say). A cell whose fit errors is counted in `n_failed`
+#'     instead.
 #'
 #'   With cell numbers in `cells`, the object holds those cells only, and
 #'   [collect_grid()] reads the whole grid. The setup call returns,
@@ -1870,9 +1890,24 @@ grid_formula <- function(formula, row, i, model, re_cor, task_col,
 #'    wrote `grid.rds`. It fits its cells only and writes neither record.
 #' 3. [collect_grid()] reads the cells of all slices as one grid.
 #'
+#' A full run (`cells = NULL`) in a `dir` that a setup call wrote, with
+#' the setup call's arguments, leaves `grid.rds` as it is, and slices can
+#' still run. One with another prior, model, formula, fitter arguments
+#' (other than `cores`) or `prior_sd` rewrites `grid.rds` without what
+#' the slices are checked against, since it may also have rewritten
+#' `prior-sd.rds`; every slice after it stops until the setup call is run
+#' again. One with another `seed` or `reps` rewrites `grid.rds` with its
+#' own `seed` and `reps` but keeps what the slices are checked against, so
+#' slices with its `seed` and `reps` are accepted. With `prior_sd =
+#' "fit"`, `prior-sd.rds` holds the prior SDs of the old seed until that
+#' run has fitted its priors: start slices only after it has returned,
+#' and if it was stopped, run it or the setup call with its `seed` again
+#' first.
+#'
 #' A cell has the seed and the files the full grid gives it, whichever
 #' slice runs it and in whatever order, so the slices together write the
-#' cells one call with `cells = NULL` writes. That needs a `seed`, and
+#' cells one call with `cells = NULL` writes. That needs a single number
+#' as `seed` (a call with `cells` and any other `seed` is refused), and
 #' each slice in its own R process under R's default [RNGkind()]: a
 #' worker of a parallel backend may run another generator (L'Ecuyer-CMRG
 #' under `future.seed = TRUE`), and its fits would differ. Slices given by
@@ -1880,10 +1915,13 @@ grid_formula <- function(formula, row, i, model, re_cor, task_col,
 #' processes at once. Start the slices after the setup call has returned:
 #' it simulates the cells last. A slice that is stopped and run again
 #' resumes, like any grid. A slice may name fewer `cores` than the setup
-#' call. Each process compiles the Stan model once
-#' (see "Backend"). Do not point `cmdstanr_write_stan_file_dir` at one
-#' directory for processes that start together: they would compile the
-#' same executable at the same time.
+#' call. Its sidecars then record those `cores` among the sampler
+#' arguments where a sequential run's sidecars record its own; no result
+#' reads that field, and a cell's cache key leaves `cores` out, so the
+#' fits and estimates are the same. Each process compiles the Stan model
+#' once (see "Backend"). Do not point `cmdstanr_write_stan_file_dir` at
+#' one directory for processes that start together: they would compile
+#' the same executable at the same time.
 #'
 #' The component form (a list of models) does not take `cells`, and
 #' neither does `smoke = TRUE`.
@@ -2089,6 +2127,18 @@ recovery_grid <- function(model,
            setup call."
     ))
   }
+  if (!is.null(cells) &&
+        !(is.numeric(seed) && length(seed) == 1L && is.finite(seed))) {
+    # before grid_run_setup() creates `dir`, so a refused call writes nothing;
+    # `NA`, `Inf` or text leave the cells unseeded, as `NULL` does, and a
+    # longer `seed` is recycled over the cells
+    cli::cli_abort(c(
+      "{.arg cells} needs a single number as {.arg seed}.",
+      i = "A cell takes its seed from {.arg seed}, its row and its \\
+           replication; without one, the slices would not write the cells \\
+           one sequential run writes."
+    ))
+  }
   setup <- grid_run_setup(grid, reps, dir, smoke, preflight)
   grid <- setup$grid
   reps <- setup$reps
@@ -2289,11 +2339,23 @@ recovery_grid <- function(model,
   }
   # what decides a cell's fit beyond the record's fields (prior, model,
   # formula, the fitter's arguments, prior_sd): written by the setup call
-  # only, so that no grid.rds written without `cells` changes (D116)
-  if (!identical(run_mode, "all")) {
-    record$fit <- grid_fit_key(
+  # only, so that no grid.rds written without `cells` changes (D116). A
+  # full run over a setup call's record keeps its `fit` when its own call
+  # gives the same key, and otherwise rewrites the record without it: that
+  # run changed the prior or prior-sd.rds, and no later slice may be checked
+  # against the setup call it replaced
+  fit_key <- function() {
+    grid_fit_key(
       seq_len(nrow(grid)), formula_for, model_for, prior, dots, prior_sd
     )
+  }
+  if (!identical(run_mode, "all")) {
+    record$fit <- fit_key()
+  } else {
+    stored_fit <- stored_grid_fit(dir)
+    if (!is.null(stored_fit) && identical(stored_fit, fit_key())) {
+      record$fit <- stored_fit
+    }
   }
   # D116: the setup call (or a full run) writes the record; a slice only
   # checks its call against it, and never runs the preflight
@@ -2376,8 +2438,9 @@ recovery_grid <- function(model,
   }
 
   # D117: which process ran which cells, written just before the first fit:
-  # a call that errored before it leaves none, and a process stopped while
-  # it fits leaves one whose `ended` is NA
+  # a call that errored before it leaves none, and one stopped before its
+  # cells are done (a killed process, an error outside a cell's fit) leaves
+  # one whose `ended` is NA
   run_record <- open_run_record(dir, run_mode, run, call_started)
   for (i in run) {
     if (is.null(sims[[i]])) sims[[i]] <- simulate_cell(i)

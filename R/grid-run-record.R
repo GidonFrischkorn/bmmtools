@@ -87,9 +87,11 @@ cells_text <- function(cells) {
 #' Open the record of this call, just before its first fit (D117)
 #'
 #' Written at once with `ended` `NA`, so that a process stopped while it
-#' fits still says that it ran and which cells it held. A call that
-#' errors before its cells (a failed preflight, a refused slice) never
-#' gets this far and leaves no record.
+#' fits still says that it ran and which cells it held. `ended` stays
+#' `NA` for any call that stops before `close_run_record()`: a killed
+#' process, or an R error outside a cell's fit (a cell's fit error is
+#' caught and counted). A call that errors before its cells (a failed
+#' preflight, a refused slice) never gets this far and leaves no record.
 #'
 #' @param started When the call started, so that the record's span
 #'   includes the preflight and the prior fits.

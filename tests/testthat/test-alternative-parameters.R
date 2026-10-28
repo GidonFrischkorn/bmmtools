@@ -312,6 +312,74 @@ test_that("slices fit the member pars chose, as one sequential run does", {
   expect_identical(sidecars(sliced), sidecars(sequential))
 })
 
+test_that("a slice fits a row with the member its first replication chose", {
+  # D91: the realised `pars` of a row's first replication choose its
+  # member for every replication. Here `pars` draws the member under each
+  # cell's seed, and under seed 6 both rows chose `bias` in replication 1
+  # and `criterion` in replication 2, so the slice holding replication 2
+  # alone must read replication 1 before it builds a formula
+  skip_if_no_alternatives()
+  run <- function(dir, mock, cells = NULL) {
+    # replication 2's truth names `criterion`, which a fit of `bias` does
+    # not estimate; that warning is the documented consequence of D91
+    withCallingHandlers(
+      suppressMessages(recovery_grid(
+        alt_yn(), small_grid(),
+        pars = function(row) {
+          if (stats::runif(1) < 0.5) {
+            c(d = 1, bias = 0.1)
+          } else {
+            c(d = 1, criterion = 0.3)
+          }
+        },
+        sds = c(d = 0.2),
+        dir = dir, seed = 6, reps = 2L, cells = cells, .fitter = mock$fitter
+      )),
+      warning = function(w) {
+        if (grepl("no matching estimate", conditionMessage(w), fixed = TRUE)) {
+          invokeRestart("muffleWarning")
+        }
+      }
+    )
+  }
+  members <- function(dir) {
+    files <- sprintf(
+      "cell-%d-rep-%d-sim.rds", c(1L, 2L, 1L, 2L), c(1L, 1L, 2L, 2L)
+    )
+    vapply(file.path(dir, files), function(path) {
+      setdiff(names(readRDS(path)$pars), "d")
+    }, character(1), USE.NAMES = FALSE)
+  }
+  sidecars <- function(dir) {
+    files <- sort(list.files(dir, "-est\\.rds$"))
+    lapply(file.path(dir, files), function(path) {
+      x <- readRDS(path)
+      x[setdiff(names(x), "fit_seconds")]
+    })
+  }
+  sequential <- withr::local_tempdir()
+  sliced <- withr::local_tempdir()
+  run(sequential, formula_recorder())
+  run(sliced, formula_recorder(), cells = integer(0))
+  # the premise: the two replications of each row chose different members
+  expect_identical(members(sliced), c("bias", "bias", "criterion", "criterion"))
+  slices <- grid_tasks(small_grid(), 2L, 2L)
+  mocks <- list()
+  for (k in 2:1) {
+    mocks[[k]] <- formula_recorder()
+    run(sliced, mocks[[k]], cells = slices[[k]])
+  }
+
+  # replication 2 is fitted with replication 1's member, as in one run
+  for (mock in mocks) {
+    expect_identical(mock$calls$n, 2L)
+    expect_true(all(vapply(
+      mock$seen$formulas, identical, logical(1), c("d", "bias")
+    )))
+  }
+  expect_identical(sidecars(sliced), sidecars(sequential))
+})
+
 test_that("a grid's ML fit estimates the member pars chose", {
   skip_if_no_alternatives()
   skip_if_no_bmm_model("sdt_yn", density = TRUE)

@@ -234,11 +234,15 @@ turns it into one row per subject.
 \verb{<dir>/run-info/}: \code{call} (\code{"all"}, \code{"setup"} or \code{"slice"}),
 \code{cells} (as text, \code{"1-3,7"}), \code{n_cells}, \code{n_reused} (cells whose
 hierarchical results were read from their sidecar, not fitted),
-\code{n_failed}, \code{started}, \code{ended} (\code{NA} for a process stopped while it
-fitted), \code{pid}, the scheduler's
+\code{n_failed}, \code{started}, \code{ended}, \code{pid}, the scheduler's
 \code{scheduler}, \code{job_id}, \code{array_job_id}, \code{array_task_id} and
 \code{cores_granted} (\code{NA} without one, as on a cloud VM), then every
-\code{\link[=run_info]{run_info()}} column.
+\code{\link[=run_info]{run_info()}} column. \code{ended}, \code{n_reused} and \code{n_failed} are \code{NA}
+while the call runs, and stay \code{NA} for a call that never finished
+its cells: a process that was stopped, or an R error outside a
+cell's fit once the cells had started (data that cannot be
+generated, say). A cell whose fit errors is counted in \code{n_failed}
+instead.
 }
 
 With cell numbers in \code{cells}, the object holds those cells only, and
@@ -313,9 +317,23 @@ wrote \code{grid.rds}. It fits its cells only and writes neither record.
 \item \code{\link[=collect_grid]{collect_grid()}} reads the cells of all slices as one grid.
 }
 
+A full run (\code{cells = NULL}) in a \code{dir} that a setup call wrote, with
+the setup call's arguments, leaves \code{grid.rds} as it is, and slices can
+still run. One with another prior, model, formula, fitter arguments
+(other than \code{cores}) or \code{prior_sd} rewrites \code{grid.rds} without what
+the slices are checked against, since it may also have rewritten
+\code{prior-sd.rds}; every slice after it stops until the setup call is run
+again. One with another \code{seed} or \code{reps} rewrites \code{grid.rds} with its
+own \code{seed} and \code{reps} but keeps what the slices are checked against, so
+slices with its \code{seed} and \code{reps} are accepted. With \code{prior_sd = "fit"}, \code{prior-sd.rds} holds the prior SDs of the old seed until that
+run has fitted its priors: start slices only after it has returned,
+and if it was stopped, run it or the setup call with its \code{seed} again
+first.
+
 A cell has the seed and the files the full grid gives it, whichever
 slice runs it and in whatever order, so the slices together write the
-cells one call with \code{cells = NULL} writes. That needs a \code{seed}, and
+cells one call with \code{cells = NULL} writes. That needs a single number
+as \code{seed} (a call with \code{cells} and any other \code{seed} is refused), and
 each slice in its own R process under R's default \code{\link[=RNGkind]{RNGkind()}}: a
 worker of a parallel backend may run another generator (L'Ecuyer-CMRG
 under \code{future.seed = TRUE}), and its fits would differ. Slices given by
@@ -323,10 +341,13 @@ under \code{future.seed = TRUE}), and its fits would differ. Slices given by
 processes at once. Start the slices after the setup call has returned:
 it simulates the cells last. A slice that is stopped and run again
 resumes, like any grid. A slice may name fewer \code{cores} than the setup
-call. Each process compiles the Stan model once
-(see "Backend"). Do not point \code{cmdstanr_write_stan_file_dir} at one
-directory for processes that start together: they would compile the
-same executable at the same time.
+call. Its sidecars then record those \code{cores} among the sampler
+arguments where a sequential run's sidecars record its own; no result
+reads that field, and a cell's cache key leaves \code{cores} out, so the
+fits and estimates are the same. Each process compiles the Stan model
+once (see "Backend"). Do not point \code{cmdstanr_write_stan_file_dir} at
+one directory for processes that start together: they would compile
+the same executable at the same time.
 
 The component form (a list of models) does not take \code{cells}, and
 neither does \code{smoke = TRUE}.

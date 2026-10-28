@@ -11,9 +11,19 @@
   as one grid. A slice checks its call against `grid.rds`, including
   the prior, model, formula, fitter arguments and `prior_sd` the setup
   call recorded, and stops if they differ or if there is no setup. A
-  slice may name fewer `cores`. It never writes `grid.rds` or
-  `prior-sd.rds`, and it never runs a preflight. The component form and
-  `smoke = TRUE` do not take `cells`.
+  slice may name fewer `cores`; its sidecars then record those `cores`
+  among the sampler arguments, which no result reads. It never writes
+  `grid.rds` or `prior-sd.rds`, and it never runs a preflight. A full
+  run (`cells = NULL`) in a `dir` that a setup call wrote, with the
+  setup call's arguments, leaves `grid.rds` as it is. One with another
+  prior, model, formula, fitter arguments (other than `cores`) or
+  `prior_sd` rewrites `grid.rds` without the key the slices are checked
+  against, so later slices stop until the setup call is run again. One
+  with another `seed` or `reps` keeps the key: it rewrites `grid.rds`
+  with its own values, and slices started after it has returned are
+  checked against those; one with other `cores` keeps it too. `cells`
+  needs a single number as `seed`; the component form and
+  `smoke = TRUE` do not take it.
 * A launcher for split grids ships in `inst/templates/vm/`. You copy
   the files and edit `grid-args.R`, which holds the grid's call once.
   `launch.sh` runs the setup call, then starts K slices in the background
@@ -26,13 +36,16 @@
   array sketch.
 * Every `recovery_grid()` call that reaches its cells now leaves a
   record in `<dir>/run-info/` (the component form does not), so a grid
-  run by several processes says which process ran which cells. `recovery_grid()` and `collect_grid()` return
-  these records as `attr(x, "run_info")`, one row per call. A row holds
-  the cells the call ran, how many sidecars it reused and how many fits
-  failed, its start and end (`NA` for a process stopped while it
-  fitted), the
-  scheduler job and array task when SLURM, PBS, LSF or SGE set them, and
-  every `run_info()` column. `run_info()` itself is unchanged.
+  run by several processes says which process ran which cells.
+  `recovery_grid()` and `collect_grid()` return these records as
+  `attr(x, "run_info")`, one row per call. A row holds the cells the
+  call ran, how many sidecars it reused and how many fits failed, its
+  start and end, the scheduler job and array task when SLURM, PBS, LSF
+  or SGE set them, and every `run_info()` column. The end and the two
+  counts are `NA` while the call runs, and stay `NA` for a call that
+  never finished its cells: a process that was stopped, or an R error
+  outside a cell's fit once the cells had started. `run_info()` itself
+  is unchanged.
 * `plot_design()` plots recovery across the designs of a grid: a metric
   against trials per subject on a log axis, one line per number of
   subjects and a panel per term (`type = "profile"`), for population
