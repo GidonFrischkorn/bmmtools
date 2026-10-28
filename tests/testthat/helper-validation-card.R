@@ -83,7 +83,7 @@ card_strings <- function(x) {
 #' A number is explained when it rounds a stored value (the numbers, the
 #' verdicts, the stage times, the run record and the plan's scalar
 #' fields) or appears in a string the result stores (versions, dates,
-#' criteria, notes, design labels).
+#' criteria, notes, design labels, the calibration's prior rows).
 #' @noRd
 card_unexplained_numbers <- function(file, result) {
   plan <- result$plan
@@ -113,6 +113,8 @@ card_unexplained_numbers <- function(file, result) {
       "bmmtools_version", "sections"
     )]),
     plan$sbc$prior_reason, plan$prior_check$range_reason,
+    # the prior rows the card prints: "normal(0, 2)" types 0 and 2
+    card_strings(plan$sbc$prior),
     card_strings(result$stages[c("title", "status", "reason", "message")]),
     card_strings(result$verdicts[c("title", "criterion", "note")]),
     result$headline$text,

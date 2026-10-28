@@ -122,9 +122,9 @@ generic_validation_defaults <- function() {
 #' The entries bmmtools ships
 #'
 #' A prior is written as a plain data frame with the columns of
-#' `brms::set_prior()` (`prior`, `class`, `coef`, `nlpar`), so the table
-#' can be read and printed without brms; the runner turns it into a
-#' `brmsprior` when it fits.
+#' `brms::set_prior()` (`prior`, `class`, `coef`, `nlpar` or `dpar`), so
+#' the table can be read and printed without brms; the runner turns it
+#' into a `brmsprior` when it fits.
 #'
 #' @noRd
 validation_entries <- function() {
@@ -162,6 +162,40 @@ validation_entries <- function() {
   ezdm$cors <- diag(3L)
   dimnames(ezdm$cors) <- list(terms, terms)
   ezdm$cors["drift", "bound"] <- ezdm$cors["bound", "drift"] <- 0.4
+  # The calibration's prior (26.3, #21). Under bmm 1.4.1's ezdm defaults,
+  # 8 calibration fits at 20 x 50: 2 failed the card's convergence
+  # criterion (Rhat 2.13 and 1.06), 4 had divergences (up to 109) and 5
+  # hit the maximum treedepth (up to 499 of 500), at parameter draws such
+  # as a drift of -31 and an SD of 2.03 on log bound. The scales put the
+  # entry's SDs (0.3, 0.2, 0.2) near the prior medians and give those
+  # tail values negligible prior mass; the bound and ndt intercepts keep
+  # bmm's priors. At 100 simulations (plan seed 2603) the ECDF check
+  # passes but the convergence criterion still fails on 5 fits (4 at Rhat
+  # above 1.05, up to 1.63; 2 at a rank ESS ratio below 0.5; one fit
+  # both): the two worst drew bound intercepts of -1.302 and -1.281
+  # (boundaries 0.27 and 0.28, under bmm's intercept prior) and saturated
+  # the treedepth, and three fail at Rhat 1.06 to 1.07 with no treedepth
+  # hit. The marginal-Rhat failures are probably a budget question (no
+  # larger-budget run has tested it); the small-boundary saturation is
+  # open, and so is the remedy.
+  ezdm$sbc$prior <- data.frame(
+    prior = c(
+      "normal(0, 2)", "normal(0, 0.5)", "normal(0, 0.3)", "normal(0, 0.3)"
+    ),
+    class = c("Intercept", "sd", "sd", "sd"),
+    coef = "",
+    dpar = c("drift", "drift", "bound", "ndt")
+  )
+  ezdm$sbc$prior_reason <- paste(
+    "Under bmm's default priors, a cauchy(0, 1) drift intercept and",
+    "exponential SD priors, 2 of 8 calibration fits failed the card's",
+    "convergence criterion (Rhat up to 2.13) and 4 had divergences (up to",
+    "109), at parameter draws such as a drift of -31 and an SD of 2.03 on",
+    "log bound (measured 2026-10-27). The calibration runs under a normal",
+    "drift intercept and half-normal SDs, scaled so that the entry's SDs",
+    "sit near the prior medians and those values get negligible prior",
+    "mass; the bound and non-decision time intercepts keep bmm's priors."
+  )
   # bmm 1.4.1's posterior_predict() gives mean RT only, and prior_check()
   # knows no range for ezdm (ARCHITECTURE § 26.0, amendment 4)
   ezdm$prior_check$range <- c(0.15, 5)
@@ -171,7 +205,8 @@ validation_entries <- function() {
     "for ezdm give mean RT only, not accuracy."
   )
   ezdm$owner <- "Gidon Frischkorn"
-  ezdm$version <- "0.1.0"
+  # 0.2.0: the narrowed SBC prior (0.1.0 shipped with 0.3.0 without one)
+  ezdm$version <- "0.2.0"
 
   list(mixture2p = mixture2p, ezdm = ezdm)
 }
@@ -208,7 +243,7 @@ validation_entries <- function() {
 #' coverage a Monte Carlo standard error of about 0.07 to 0.1, which the
 #' card prints next to every rate.
 #'
-#' Two entries ship with 0.3.0:
+#' Two entries ship:
 #' * `mixture2p`: `kappa = log(8)`, `thetat = qlogis(0.75)`, SDs 0.3 and
 #'   0.5. Its calibration runs under a narrower prior than bmm's, because
 #'   bmm's default SD prior on log `kappa` draws values at which
@@ -216,7 +251,11 @@ validation_entries <- function() {
 #'   and the card prints it.
 #' * `ezdm` (three parameters): `drift = 1.5`, `bound = 0`,
 #'   `ndt = log(0.3)`, SDs 0.3, 0.2 and 0.2, a correlation of 0.4 between
-#'   drift and bound.
+#'   drift and bound. Its calibration also runs under a narrower prior
+#'   than bmm's, because bmm's `cauchy(0, 1)` drift intercept and
+#'   exponential SD priors draw parameter values (a drift of -31, an SD
+#'   of 2 on log bound) at which some fits fail the card's convergence
+#'   criterion.
 #'
 #' Each entry names its `owner`, who changes its values by pull request;
 #' the card prints the owner and the plan version.

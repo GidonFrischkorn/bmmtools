@@ -9,6 +9,15 @@ plan_model <- function(name = "mixture2p",
   structure(list(links = links), class = c("bmmodel", "circular", name))
 }
 
+#' The ezdm stand-in: a plan of it fills from the ezdm entry without bmm
+#' @noRd
+ezdm_model <- function() {
+  plan_model(
+    "ezdm",
+    links = list(drift = "identity", bound = "log", ndt = "log")
+  )
+}
+
 # validation_defaults() --------------------------------------------------
 
 test_that("validation_defaults lists the mixture2p and ezdm entries", {
@@ -64,7 +73,357 @@ test_that("the ezdm entry carries Milestone 31's generating values", {
   expect_equal(entry$cors["bound", "drift"], 0.4)
   expect_equal(entry$cors["drift", "ndt"], 0)
   expect_identical(diag(entry$cors), c(drift = 1, bound = 1, ndt = 1))
-  expect_null(entry$sbc$prior)
+})
+
+test_that("the ezdm entry calibrates under a narrower prior and says why", {
+  skip_if_not_installed("bmm")
+  # bmm's cauchy(0, 1) drift intercept and exponential SD priors draw
+  # parameter values at which some fits fail the card's convergence
+  # criterion (26.3, measured on 8 simulations)
+  entry <- validation_defaults("ezdm")
+  expect_identical(
+    entry$sbc$prior$prior,
+    c("normal(0, 2)", "normal(0, 0.5)", "normal(0, 0.3)", "normal(0, 0.3)")
+  )
+  expect_identical(entry$sbc$prior$class, c("Intercept", "sd", "sd", "sd"))
+  expect_identical(entry$sbc$prior$dpar, c("drift", "drift", "bound", "ndt"))
+  # the reason names what it replaced (tied to bmm below) and what failed
+  expect_match(entry$sbc$prior_reason, "cauchy(0, 1)", fixed = TRUE)
+  expect_match(entry$sbc$prior_reason, "exponential SD priors", fixed = TRUE)
+  expect_match(entry$sbc$prior_reason, "convergence criterion", fixed = TRUE)
+  # a changed entry is a new entry version
+  expect_identical(entry$version, "0.2.0")
+  plan <- validation_plan("ezdm", seed = 1)
+  expect_identical(plan$sbc$prior, entry$sbc$prior)
+  expect_identical(plan$sbc$prior_reason, entry$sbc$prior_reason)
+})
+
+test_that("a prior given without a reason does not inherit the entry's", {
+  # the card prints the reason: an inherited one would describe a prior
+  # that did not run
+  plan <- validation_plan(ezdm_model(), seed = 1, sbc = list(prior = NULL))
+  expect_null(plan$sbc$prior)
+  expect_null(plan$sbc$prior_reason)
+  own <- data.frame(prior = "normal(0, 1)", class = "Intercept", dpar = "drift")
+  plan <- validation_plan(ezdm_model(), seed = 1, sbc = list(prior = own))
+  expect_identical(plan$sbc$prior, own)
+  expect_null(plan$sbc$prior_reason)
+  plan <- validation_plan(
+    ezdm_model(),
+    seed = 1, sbc = list(prior = own, prior_reason = "mine")
+  )
+  expect_identical(plan$sbc$prior_reason, "mine")
+  # a change to another sbc field keeps the entry's prior and its reason
+  plan <- validation_plan(ezdm_model(), seed = 1, sbc = list(n_sims = 5L))
+  expect_identical(
+    plan$sbc$prior_reason, validation_defaults("ezdm")$sbc$prior_reason
+  )
+})
+
+test_that("the entry's own prior given again keeps its reason and its keys", {
+  # a script that spells out the entry's prior has changed nothing: it
+  # keeps the card's reason and reruns no calibration
+  entry <- validation_defaults("ezdm")
+  plan <- validation_plan(ezdm_model(), seed = 1)
+  again <- validation_plan(
+    ezdm_model(),
+    seed = 1, sbc = list(prior = entry$sbc$prior)
+  )
+  expect_identical(again$sbc$prior_reason, entry$sbc$prior_reason)
+  expect_identical(again$hash, plan$hash)
+  for (stage in c("sbc", "prior_predictive")) {
+    expect_identical(
+      stage_input_hash(again, stage, list()),
+      stage_input_hash(plan, stage, list())
+    )
+  }
+})
+
+test_that("rewording a reason changes neither the hash nor a stage's key", {
+  # the reasons are prose: they say why, not what runs
+  plan <- validation_plan(ezdm_model(), seed = 1)
+  reworded <- validation_plan(
+    ezdm_model(),
+    seed = 1, sbc = list(prior_reason = "reworded"),
+    prior_check = list(range_reason = "also reworded")
+  )
+  expect_identical(reworded$sbc$prior_reason, "reworded")
+  expect_identical(reworded$prior_check$range_reason, "also reworded")
+  expect_identical(reworded$hash, plan$hash)
+  for (stage in c("sbc", "prior_predictive")) {
+    expect_identical(
+      stage_input_hash(reworded, stage, list()),
+      stage_input_hash(plan, stage, list())
+    )
+  }
+  # the control: another scale on one prior row changes both
+  wider <- validation_defaults("ezdm")$sbc$prior
+  wider$prior[[1L]] <- "normal(0, 3)"
+  changed <- validation_plan(
+    ezdm_model(),
+    seed = 1, sbc = list(prior = wider, prior_reason = "wider")
+  )
+  expect_false(identical(changed$hash, plan$hash))
+  for (stage in c("sbc", "prior_predictive")) {
+    expect_false(identical(
+      stage_input_hash(changed, stage, list()),
+      stage_input_hash(plan, stage, list())
+    ))
+  }
+})
+
+test_that("a reason is one non-empty string or NULL", {
+  # the card prints a reason as a sentence: NA, "" and two strings have
+  # nothing or too much to print
+  for (bad in list(NA_character_, "", "  ", c("a", "b"), 1)) {
+    error <- expect_error(
+      validation_plan(ezdm_model(), seed = 1, sbc = list(prior_reason = bad)),
+      "sbc$prior_reason",
+      fixed = TRUE
+    )
+    # a blank string is named as one, not as "a string"
+    if (is.character(bad) && length(bad) == 1L && !is.na(bad)) {
+      expect_match(conditionMessage(error), "not a blank string", fixed = TRUE)
+    }
+    expect_error(
+      validation_plan(
+        ezdm_model(),
+        seed = 1, prior_check = list(range_reason = bad)
+      ),
+      "prior_check$range_reason",
+      fixed = TRUE
+    )
+  }
+  plan <- validation_plan(
+    ezdm_model(),
+    seed = 1, sbc = list(prior_reason = "why"),
+    prior_check = list(range_reason = NULL)
+  )
+  expect_identical(plan$sbc$prior_reason, "why")
+  expect_null(plan$prior_check$range_reason)
+})
+
+test_that("a range given without a reason does not inherit the entry's", {
+  # the card prints the range's reason under the prior check: an
+  # inherited one would explain a range that is not judged
+  entry <- validation_defaults("ezdm")
+  plan <- validation_plan(
+    ezdm_model(),
+    seed = 1, prior_check = list(range = c(0.1, 4))
+  )
+  expect_identical(plan$prior_check$range, c(0.1, 4))
+  expect_null(plan$prior_check$range_reason)
+  plan <- validation_plan(
+    ezdm_model(),
+    seed = 1, prior_check = list(range = NULL)
+  )
+  expect_null(plan$prior_check$range)
+  expect_null(plan$prior_check$range_reason)
+  # the entry's own range given again keeps its reason
+  plan <- validation_plan(
+    ezdm_model(),
+    seed = 1, prior_check = list(range = entry$prior_check$range)
+  )
+  expect_identical(
+    plan$prior_check$range_reason, entry$prior_check$range_reason
+  )
+  plan <- validation_plan(
+    ezdm_model(),
+    seed = 1, prior_check = list(range = c(0.1, 4), range_reason = "mine")
+  )
+  expect_identical(plan$prior_check$range_reason, "mine")
+  # a change to another prior_check field keeps the range and its reason
+  plan <- validation_plan(
+    ezdm_model(),
+    seed = 1, prior_check = list(n_draws = 10L)
+  )
+  expect_identical(
+    plan$prior_check$range_reason, entry$prior_check$range_reason
+  )
+})
+
+test_that("a range reason without a range is an error", {
+  expect_error(
+    validation_plan(
+      ezdm_model(),
+      seed = 1, prior_check = list(range = NULL, range_reason = "x")
+    ),
+    "gives a range_reason but no range"
+  )
+  # the mixture2p entry has no range to give a reason for
+  expect_error(
+    validation_plan(
+      plan_model(),
+      seed = 1, prior_check = list(range_reason = "x")
+    ),
+    "gives a range_reason but no range"
+  )
+})
+
+test_that("a prior in a sampler list is refused", {
+  # in `sampler` it would reach every recovery fit, which the card says
+  # fit under bmm's defaults; in the calibration's or the prior check's
+  # sampler it collides with the prior the stage passes itself
+  # an abbreviation reaches bmm::bmm()'s `prior` by partial matching; a
+  # plan that runs recovery only is refused too
+  for (name in c("prior", "pri")) {
+    given <- stats::setNames(list("normal(0, 1)"), name)
+    cases <- list(
+      sampler = list(sampler = given),
+      `sbc$sampler` = list(sbc = list(sampler = given)),
+      `prior_check$sampler` = list(prior_check = list(sampler = given))
+    )
+    for (stages in list(NULL, "recovery")) {
+      for (arg in names(cases)) {
+        error <- expect_error(
+          rlang::exec(
+            validation_plan, ezdm_model(),
+            seed = 1, stages = stages, !!!cases[[arg]]
+          ),
+          "sbc$prior",
+          fixed = TRUE
+        )
+        expect_match(
+          conditionMessage(error), paste0("`", arg, "`"),
+          fixed = TRUE
+        )
+        expect_match(conditionMessage(error), name, fixed = TRUE)
+      }
+    }
+  }
+  # another sampler setting is still taken
+  plan <- validation_plan(ezdm_model(), seed = 1, sampler = list(iter = 10L))
+  expect_identical(plan$sampler$iter, 10L)
+})
+
+test_that("a stage key reads the prior by its full name", {
+  # with no `prior` element, `sbc$prior` would match `prior_reason`
+  # partially, and rewording the reason would rerun the prior check
+  plan <- validation_plan(ezdm_model(), seed = 1)
+  plan$sbc["prior"] <- NULL
+  expect_false("prior" %in% names(plan$sbc))
+  reworded <- plan
+  reworded$sbc$prior_reason <- "reworded"
+  expect_identical(
+    stage_input_hash(reworded, "prior_predictive", list()),
+    stage_input_hash(plan, "prior_predictive", list())
+  )
+})
+
+test_that("a reason without a prior is an error", {
+  # the reason says why the prior is not bmm's default; with no prior
+  # the card would print it as the reason for bmm's defaults
+  expect_error(
+    validation_plan(
+      ezdm_model(),
+      seed = 1, sbc = list(prior = NULL, prior_reason = "x")
+    ),
+    "gives a prior_reason but no prior"
+  )
+  # a model without an entry has no prior to give a reason for
+  expect_error(
+    validation_plan(
+      plan_model("mymodel", links = list(a = "identity")),
+      pars = c(a = 1), seed = 1, sbc = list(prior_reason = "why not default")
+    ),
+    "gives a prior_reason but no prior"
+  )
+})
+
+test_that("the ezdm reason quotes the priors bmm gives the plan's model", {
+  # the reason says what the entry's prior replaced; when bmm changes
+  # these defaults the reason is stale, and this fails
+  skip_if_not_installed("bmm")
+  skip_if_not_installed("brms")
+  plan <- validation_plan("ezdm", seed = 1)
+  data <- validation_data(plan, plan$sbc$n_subjects, plan$sbc$n_trials, 1)
+  known <- as.data.frame(
+    bmm::default_prior(validation_formula(plan), data, plan$model)
+  )
+  known <- known[nzchar(known$prior), , drop = FALSE]
+  squeeze <- function(x) gsub("[[:space:]]", "", x)
+  drift <- known$prior[known$class == "Intercept" & known$dpar == "drift"]
+  expect_identical(squeeze(drift), "cauchy(0,1)")
+  expect_match(squeeze(plan$sbc$prior_reason), "cauchy(0,1)", fixed = TRUE)
+  sds <- known$prior[known$class == "sd" & known$dpar %in% names(plan$sds)]
+  expect_length(sds, length(plan$sds))
+  expect_true(all(startsWith(sds, "exponential(")), label = toString(sds))
+  expect_match(plan$sbc$prior_reason, "exponential SD priors", fixed = TRUE)
+})
+
+test_that("each row of the ezdm SBC prior replaces bmm's in the Stan code", {
+  # code generation only, nothing is compiled: each row is the one prior
+  # statement on its parameter, and bmm's row it replaces is gone
+  skip_if_not_installed("bmm")
+  skip_if_not_installed("brms")
+  plan <- validation_plan("ezdm", seed = 1)
+  data <- validation_data(plan, plan$sbc$n_subjects, plan$sbc$n_trials, 1)
+  code <- bmm::stancode(
+    validation_formula(plan), data, plan$model,
+    prior = as_brms_prior(plan$sbc$prior)
+  )
+  lines <- gsub("[[:space:]]", "", strsplit(as.character(code), "\n")[[1L]])
+  lprior <- grep("^lprior\\+=", lines, value = TRUE)
+  prior <- plan$sbc$prior
+  for (i in seq_len(nrow(prior))) {
+    dpar <- prior$dpar[[i]]
+    target <- if (identical(prior$class[[i]], "Intercept")) {
+      paste0("Intercept_", dpar)
+    } else {
+      # a dpar's SD is the element of sd_<group> its r_ vector reads
+      found <- regmatches(lines, regexec(
+        paste0("^r_([0-9]+)_", dpar, "_[0-9]+=r_\\1\\[,([0-9]+)\\];$"),
+        lines,
+        perl = TRUE
+      ))
+      found <- Filter(length, found)
+      expect_length(found, 1L)
+      sprintf("sd_%s[%s]", found[[1L]][[2L]], found[[1L]][[3L]])
+    }
+    at <- grep(target, lprior, fixed = TRUE)
+    expect_length(at, 1L)
+    # "normal(0, 2)" on Intercept_drift is normal_lpdf(Intercept_drift|0,2)
+    statement <- sub(
+      "(", paste0("_lpdf(", target, "|"), gsub(" ", "", prior$prior[[i]]),
+      fixed = TRUE
+    )
+    expect_true(
+      startsWith(lprior[at], paste0("lprior+=", statement)),
+      label = paste(target, "is", lprior[at])
+    )
+  }
+  expect_false(any(grepl("cauchy", lprior, fixed = TRUE)))
+})
+
+test_that("every row of an entry's SBC prior names a parameter of the model", {
+  skip_if_not_installed("bmm")
+  skip_if_not_installed("brms")
+  for (name in names(validation_defaults())) {
+    plan <- validation_plan(name, seed = 1)
+    prior <- plan$sbc$prior
+    if (is.null(prior)) next
+    data <- validation_data(plan, plan$sbc$n_subjects, plan$sbc$n_trials, 1)
+    known <- as.data.frame(
+      bmm::default_prior(validation_formula(plan), data, plan$model)
+    )
+    for (column in c("coef", "dpar", "nlpar")) {
+      if (is.null(prior[[column]])) prior[[column]] <- ""
+    }
+    target <- function(df) paste(df$class, df$coef, df$dpar, df$nlpar)
+    expect_true(
+      all(target(prior) %in% target(known)),
+      label = paste(name, "prior targets", toString(target(prior)))
+    )
+  }
+})
+
+test_that("the ezdm SBC prior becomes a brmsprior on the dpars", {
+  skip_if_not_installed("brms")
+  prior <- as_brms_prior(validation_defaults("ezdm")$sbc$prior)
+  expect_s3_class(prior, "brmsprior")
+  expect_identical(prior$dpar, c("drift", "drift", "bound", "ndt"))
+  expect_identical(prior$class, c("Intercept", "sd", "sd", "sd"))
+  expect_identical(prior$prior[[1L]], "normal(0, 2)")
 })
 
 test_that("the ezdm prior check judges mean RT against a plausible range", {

@@ -91,6 +91,60 @@
   read back as it was; the cache's meta file and the fit's
   `bmmtools_cache` attribute now record `rng_seeded`, which is `NA` for
   those fits.
+* The `ezdm` entry of `validation_defaults()` now runs its calibration
+  (SBC) under a narrower prior than bmm's: `normal(0, 2)` on the drift
+  intercept and half-normal SDs (0.5 on drift, 0.3 on bound and
+  non-decision time), scaled so that the entry's SDs sit near the prior
+  medians; the bound and non-decision time intercepts keep bmm's priors.
+  Under bmm's `cauchy(0, 1)` drift intercept and exponential SD priors,
+  2 of 8 calibration fits failed the card's convergence criterion (Rhat
+  2.13 and 1.06), 4 had divergences (up to 109) and 5 hit the maximum
+  tree depth (up to 499 of 500), at parameter draws such as a drift of
+  -31 and an SD of 2.03 on log bound. The entry records why it replaced
+  bmm's priors, and the card prints it. Under the narrower prior the
+  100-simulation calibration passes its ECDF check but still fails the
+  convergence criterion, on 5 of 100 fits: 4 at Rhat above 1.05 (up to
+  1.63) and 2 at a rank ESS ratio below 0.5 (one fit both), the two worst
+  at small boundaries, whose intercept prior is still bmm's. How to
+  answer that is open. The entry's prior predictive verdict is now judged
+  under this prior instead of bmm's defaults. The entry's version is now
+  0.2.0.
+* The card states the prior the calibration ran under, its rows or
+  "bmm's default priors", with its reason or the words that none was
+  given, and that a calibration speaks for the region of its prior only
+  while the recovery stage fits under bmm's default priors. For a stale
+  calibration it shows the current plan's prior and says the stored
+  result may have run under another; for an excluded, not applicable or
+  not built calibration it describes no prior there. The prior
+  predictive section says which prior set its verdict is judged under,
+  or that it was not judged, and lists the calibration's prior itself
+  when its draws used it and no calibration section lists it. The SBC
+  convergence criterion now says that its value counts failed checks,
+  not fits: a fit failing on Rhat and on rank ESS counts twice.
+* In `validation_plan()`, a `sbc$prior` other than the entry's given
+  without a `prior_reason` no longer inherits the entry's reason, so the
+  card does not explain a prior that did not run; the entry's own prior
+  given again keeps it. A `prior_check$range` and its `range_reason`
+  follow the same rule. A `prior_reason` without a `prior`, or a
+  `range_reason` without a `range`, is an error, and so is a reason that
+  is not `NULL` or one string with more than white space in it.
+* `run_validation()` refuses a `prior` in its `...`, and
+  `validation_plan()` refuses one in `sampler`, `sbc$sampler` and
+  `prior_check$sampler`, for every plan, including one that runs the
+  recovery stage only; an abbreviation such as `pri`, which
+  `bmm::bmm()` would match to `prior`, is refused too. `run_validation()`
+  also checks the sampler lists of the plan it is given, so a plan read
+  back from an older `write_plan()` or edited by hand is refused in the
+  same way. Given there, a prior reached every recovery fit, which the
+  card says fits under bmm's default priors, or collided with the prior
+  the prior check and the calibration pass themselves, so that they
+  failed.
+* The reasons (`sbc$prior_reason`, `prior_check$range_reason`) are no
+  longer part of a plan's hash or of a stage's key, so rewording one
+  reruns nothing. Plan hashes, and the keys of the prior predictive and
+  calibration stages, change once because of this: a run directory made
+  before it reruns those two stages once under `refit = "on_change"`, and
+  reads them as stale under `refit = "never"`.
 
 * `render_card()` renders the validation card of a `run_validation()`
   result to one self-contained HTML file: the headline, the run record

@@ -47,19 +47,32 @@ one row per design.}
 
 \item{sampler}{A named list passed to the fitter of every recovery cell
 (\code{chains}, \code{iter}, \code{warmup}, \code{cores}, \code{backend}, ...). A list given
-here changes the entries it names and keeps the others.}
+here changes the entries it names and keeps the others. It may not
+set \code{prior} or an abbreviation of it (\code{pri}), nor may \code{sbc$sampler}
+or \code{prior_check$sampler}: the calibration's prior is \code{sbc$prior}, and
+the recovery stage fits under bmm's default priors.}
 
 \item{sbc}{A named list for the calibration: \code{n_subjects}, \code{n_trials},
 \code{n_sims}, \code{prior} (a \code{brmsprior}, a data frame with the columns of
 \code{brms::set_prior()}, or \code{NULL} for bmm's defaults), \code{prior_reason}
 (why it is not bmm's default, printed on the card), \code{level},
 \code{sampler}, \code{generator}, \code{cores_per_fit} and \code{thin_ranks} (see
-\code{\link[=sbc]{sbc()}}). Named entries replace the entry's, the rest are kept.}
+\code{\link[=sbc]{sbc()}}). Named entries replace the entry's, the rest are kept,
+except that a \code{prior} other than the entry's, given without a
+\code{prior_reason}, drops the entry's reason. The prior is compared as
+given, column order and types included: a \code{brmsprior} with the same
+rows as an entry's data frame, the entry's columns in another order,
+or a factor column counts as another prior. A \code{prior_reason} without
+a \code{prior} is an error.}
 
 \item{prior_check}{A named list for the prior predictive check:
 \code{n_subjects}, \code{n_trials}, \code{n_draws}, \code{range}, \code{range_reason} (why the
 range is what it is, printed on the card), \code{summary} and \code{sampler}
-(see \code{\link[=prior_check]{prior_check()}}). Merged as \code{sbc} is.}
+(see \code{\link[=prior_check]{prior_check()}}). Merged as \code{sbc} is: a \code{range} other than the
+entry's, given without a \code{range_reason}, drops the entry's reason,
+and a \code{range_reason} without a \code{range} is an error. The range is
+compared as given, names included, so \code{c(lo = 0.15, hi = 5)} counts
+as another range than the entry's \code{c(0.15, 5)}.}
 
 \item{reference}{\code{NULL}, or a reference implementation's estimates for
 the agreement stage: a data frame with \code{term} and \code{estimate} (and
@@ -148,9 +161,10 @@ standard error may move between two runs before
 \section{Seeds}{
 
 The recovery grid runs under \code{seed}, the prior check under \code{seed + 1}
-and the calibration under \code{seed + 2}. The seeds and the owner are left
-out of the plan's hash, so the hash changes only when what is planned
-changes.
+and the calibration under \code{seed + 2}. The seeds, the owner and the
+reasons (\code{sbc$prior_reason}, \code{prior_check$range_reason}) are left out
+of the plan's hash and of the stages' keys, so the hash changes only
+when what is planned changes, and rewording a reason reruns nothing.
 }
 
 \examples{

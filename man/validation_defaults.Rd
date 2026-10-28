@@ -39,7 +39,7 @@ subjects by 50 trials with 2 chains of 500. Ten replications give a
 coverage a Monte Carlo standard error of about 0.07 to 0.1, which the
 card prints next to every rate.
 
-Two entries ship with 0.3.0:
+Two entries ship:
 \itemize{
 \item \code{mixture2p}: \code{kappa = log(8)}, \code{thetat = qlogis(0.75)}, SDs 0.3 and
 0.5. Its calibration runs under a narrower prior than bmm's, because
@@ -48,7 +48,11 @@ bmm's default SD prior on log \code{kappa} draws values at which
 and the card prints it.
 \item \code{ezdm} (three parameters): \code{drift = 1.5}, \code{bound = 0},
 \code{ndt = log(0.3)}, SDs 0.3, 0.2 and 0.2, a correlation of 0.4 between
-drift and bound.
+drift and bound. Its calibration also runs under a narrower prior
+than bmm's, because bmm's \code{cauchy(0, 1)} drift intercept and
+exponential SD priors draw parameter values (a drift of -31, an SD
+of 2 on log bound) at which some fits fail the card's convergence
+criterion.
 }
 
 Each entry names its \code{owner}, who changes its values by pull request;

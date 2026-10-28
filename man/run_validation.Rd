@@ -37,7 +37,10 @@ which runs the cells one after another, is accepted.}
 \item{...}{Passed to the fitter of every stage, after the plan's
 sampler lists, so an argument given here wins (\code{backend}, \code{iter},
 \code{refresh}, ...). The arguments \code{\link[=sbc]{sbc()}} refuses in its \code{...}, such as
-\code{cores}, do not reach the calibration.}
+\code{cores}, do not reach the calibration. A \code{prior}, or an abbreviation
+of it such as \code{pri}, is refused, here and in the plan's sampler lists:
+the calibration's prior is the plan's \code{sbc$prior}, and the recovery
+stage fits under bmm's default priors.}
 
 \item{.fitter}{The fitting function of every stage, \code{bmm::bmm()} by
 default. Tests inject a stand-in so that nothing is compiled.}
