@@ -1,5 +1,62 @@
 # bmmtools (development version)
 
+* `recovery_grid()` can split one grid over several R processes (#19).
+  The setup call, `cells = integer(0)`, writes `grid.rds`, runs the
+  preflight and the prior fits of `prior_sd`, and simulates every cell,
+  but fits none. Each process then runs the same call with `cells` set
+  to one element of the new `grid_tasks(grid, reps, n)`, which cuts the
+  cells into `n` runs of consecutive cells. A cell keeps the seed and
+  the file names the full grid gives it, so the slices together write
+  the cells one sequential run writes, and `collect_grid()` reads them
+  as one grid. A slice checks its call against `grid.rds`, including
+  the prior, model, formula, fitter arguments and `prior_sd` the setup
+  call recorded, and stops if they differ or if there is no setup. A
+  slice may name fewer `cores`; its sidecars then record those `cores`
+  among the sampler arguments, which no result reads. It never writes
+  `grid.rds` or `prior-sd.rds`, and it never runs a preflight. A full
+  run (`cells = NULL`) in a `dir` that a setup call wrote, with the
+  setup call's arguments, leaves `grid.rds` as it is. One with another
+  prior, model, formula, fitter arguments (other than `cores`) or
+  `prior_sd` rewrites `grid.rds` without the key the slices are checked
+  against, so later slices stop until the setup call is run again. One
+  with another `seed` or `reps` keeps the key: it rewrites `grid.rds`
+  with its own values, and slices started after it has returned are
+  checked against those; one with other `cores` keeps it too. `cells`
+  needs a single number as `seed`; the component form and
+  `smoke = TRUE` do not take it.
+* A launcher for split grids ships in `inst/templates/vm/`. You copy
+  the files and edit `grid-args.R`, which holds the grid's call once.
+  `launch.sh` runs the setup call, then starts K slices in the background
+  under `nohup`, each logging to a file that ends with `EXIT <status>`.
+  It sets K to the machine's cores divided by chains × threads and
+  refuses a larger K without `--force`. `--status` shows each slice as
+  finished, running or stopped, `--rerun k` restarts one, and a launch
+  is refused while a slice of the last one still runs. One launch runs
+  at a time: a lock in `<dir>/logs/` refuses a second launch while one
+  sets up or starts the same grid, or while the setup call of a launch
+  killed with `kill -9` still runs, and a lock whose launch and setup
+  are both gone is taken over. Stopping the launcher stops its setup
+  call. A slice counts as running while its R process does, also after a
+  `kill -9` on its recorded pid. Where `ps` works, a pid that another
+  process has taken since (as after a restart, or by another grid's
+  slice) does not count, and a `kill` of a slice's pid stops its R and
+  the processes R started, Stan chains included; without a working `ps`
+  the launcher says so. `--status` also reports the setup call, a `~` in
+  `dir` is expanded as R expands it, and unknown options are refused.
+  The new article "Running a grid on a cloud VM" walks through it,
+  including a SLURM array sketch.
+* Every `recovery_grid()` call that reaches its cells now leaves a
+  record in `<dir>/run-info/` (the component form does not), so a grid
+  run by several processes says which process ran which cells.
+  `recovery_grid()` and `collect_grid()` return these records as
+  `attr(x, "run_info")`, one row per call. A row holds the cells the
+  call ran, how many sidecars it reused and how many fits failed, its
+  start and end, the scheduler job and array task when SLURM, PBS, LSF
+  or SGE set them, and every `run_info()` column. The end and the two
+  counts are `NA` while the call runs, and stay `NA` for a call that
+  never finished its cells: a process that was stopped, or an R error
+  outside a cell's fit once the cells had started. `run_info()` itself
+  is unchanged.
 * `plot_design()` plots recovery across the designs of a grid: a metric
   against trials per subject on a log axis, one line per number of
   subjects and a panel per term (`type = "profile"`), for population

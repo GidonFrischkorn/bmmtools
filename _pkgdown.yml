@@ -41,6 +41,7 @@ reference:
   - fit_ml
   - check_convergence
   - recovery_grid
+  - grid_tasks
   - collect_grid
   - run_info
 
@@ -135,6 +136,7 @@ articles:
   - articles/correlation-recovery
   - articles/prior-check
   - articles/hierarchical-vs-ml
+  - articles/grid-on-a-vm
 
 - title: For model developers
   navbar: For model developers
