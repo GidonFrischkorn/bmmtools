@@ -9,7 +9,19 @@
   per term and level (`"coverage"`). Seconds per fit and the pass rate
   are profiles too. Each error bar has one documented source: ±1 Monte
   Carlo standard error for bias, RMSE, interval width and contraction,
-  a 95 % Wilson interval for rates, and `r_low` to `r_high` for `r`.
+  a 95 % Wilson interval for rates, and `r_low` to `r_high` for `r`
+  (#43).
+* The article "Recovering the EZ diffusion model on the standard grid"
+  now opens each section with a figure from `plot_design()` or
+  `plot_recovery()`: the convergence gate and the seconds per fit by
+  design, the population, SD, subject and correlation profiles, coverage
+  pooled over the designs, and one replication of the smallest and
+  largest design. Its tables are folded under the figures. It now names
+  the parameter with the lowest effective sample size in each fit that
+  fails the gate, read from the stored fits by a new precompute step,
+  and the pooled coverage of the population `ndt` intervals, which in
+  this run are wider than their nominal mass. It checks its read-off of trials
+  against `smallest_design(coverage_check = TRUE)` (#43).
 * A fit is now reproducible from its `seed`, which fixes the 0.3.0 known
   limitation. bmm draws the initial values of every chain from R's
   random number generator inside the fit, and `fit_cached()` passed the

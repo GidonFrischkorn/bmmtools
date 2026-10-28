@@ -203,3 +203,6 @@ results <- list(
   minutes = as.double(difftime(Sys.time(), started, units = "mins"))
 )
 saveRDS(results, "vignettes/articles/assets/recovery-ezdm.rds")
+# the variable each fit's lowest ESS and largest R-hat sit on, read from
+# the fits just saved
+source("vignettes/articles/precompute/recovery-ezdm-diagnostics.R")
