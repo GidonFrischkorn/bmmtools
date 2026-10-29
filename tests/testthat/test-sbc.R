@@ -1225,8 +1225,8 @@ test_that("check_group_ids leaves a missing column to sbc_layout", {
 })
 
 test_that("a draw the model cannot generate from names the draw", {
-  # measured 2026-09-16 on the first real Stan run: bmm's own default
-  # half-student_t(3, 0, 2.5) on the group-level SD of `kappa` draws
+  # measured 2026-09-16 on the first real Stan run: the default of a bmm
+  # development build (1.4.1.9000), a half-student_t(3, 0, 2.5) on the group-level SD of `kappa` draws
   # values near 9.5 on the log scale, and `rmixture2p()` then dies with
   # `node stack overflow`, naming neither the simulation nor a parameter
   skip_if_not_installed("bmm")

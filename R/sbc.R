@@ -866,7 +866,9 @@ sbc_cor_matrix <- function(row, pairs, varying) {
 #'
 #' A prior draw is not a plausible parameter value, it is whatever the
 #' prior allows, and a wide prior on a link-scale parameter allows a lot.
-#' Measured 2026-09-16 on `bmm::mixture2p()` under bmm's own defaults:
+#' Measured 2026-09-16 on `bmm::mixture2p()` under the defaults of a
+#' bmm development build, 1.4.1.9000 built 2026-09-04 (bmm 1.4.1 from
+#' CRAN uses an `exponential(1)` SD prior):
 #' the group-level SD of `kappa` has a half-`student_t(3, 0, 2.5)` prior,
 #' whose draws reach 9.5 on the log scale, so a subject's concentration
 #' reaches exp(2 + 2 x 9.5), and `rmixture2p()` dies inside its own

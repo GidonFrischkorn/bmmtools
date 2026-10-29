@@ -213,9 +213,12 @@ the responses are generated, so only the design matters.
 ```{r sbc-prior, eval = FALSE, code = shown("sbc-prior", "vignettes/articles/precompute/bmmtools.R")}
 ```
 
-The prior is given explicitly, and that is not incidental. bmm's default
-prior on the between-subject SD of `kappa` is a half-`student_t(3, 0,
-2.5)` on the **log** scale. Over twenty draws it reached 9.50, which puts
+The prior is given explicitly, and that is not incidental. On the bmm
+development build this was measured on (1.4.1.9000, built 2026-09-04,
+measured 2026-09-16), the default prior on the between-subject SD of
+`kappa` was a half-`student_t(3, 0, 2.5)` on the **log** scale; bmm 1.4.1
+from CRAN uses an `exponential(1)`, which rarely reaches such values.
+Over twenty draws the development build's prior reached 9.50, which puts
 a subject two SDs above the mean at a concentration of about `exp(21)`,
 and `bmm::rmixture2p()` fails on it. Two of twenty prior draws could not
 be generated from at all. A prior that puts mass where the model's own

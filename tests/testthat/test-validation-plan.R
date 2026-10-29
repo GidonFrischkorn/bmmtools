@@ -53,14 +53,22 @@ test_that("the mixture2p entry carries the truth and its SBC prior", {
   expect_equal(entry$pars, c(kappa = log(8), thetat = stats::qlogis(0.75)))
   expect_equal(entry$sds, c(kappa = 0.3, thetat = 0.5))
   expect_null(entry$cors)
-  # the article's narrowed prior, because bmm's default SD prior on log
-  # kappa draws values rmixture2p() cannot simulate from
+  # the article's narrowed prior: the overflow it was measured against
+  # came from a bmm development build's SD prior, and the reason says which
+  # build that was and what CRAN bmm 1.4.1's defaults are
   expect_identical(
     entry$sbc$prior$prior,
     c("normal(2, 0.5)", "normal(0, 0.3)", "normal(0, 0.5)")
   )
   expect_identical(entry$sbc$prior$nlpar, c("kappa", "kappa", "thetat"))
-  expect_match(entry$sbc$prior_reason, "stack")
+  reason <- entry$sbc$prior_reason
+  expect_match(reason, "stack")
+  expect_match(reason, "development build (1.4.1.9000", fixed = TRUE)
+  expect_match(reason, "bmm 1.4.1 from CRAN", fixed = TRUE)
+  expect_match(reason, "student_t(3, 0, 2.5)", fixed = TRUE)
+  expect_match(reason, "bmm 1.4.1", fixed = TRUE)
+  expect_match(reason, "normal(2, 1)", fixed = TRUE)
+  expect_match(reason, "exponential(1)", fixed = TRUE)
   expect_identical(entry$owner, "Gidon Frischkorn")
 })
 
