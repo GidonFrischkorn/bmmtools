@@ -42,10 +42,12 @@ card prints next to every rate.
 Two entries ship:
 \itemize{
 \item \code{mixture2p}: \code{kappa = log(8)}, \code{thetat = qlogis(0.75)}, SDs 0.3 and
-0.5. Its calibration runs under a narrower prior than bmm's, because
-bmm's default SD prior on log \code{kappa} draws values at which
-\code{bmm::rmixture2p()} overflows the stack; the entry records the reason
-and the card prints it.
+0.5. Its calibration runs under a narrower prior than bmm's. The
+default SD prior on log \code{kappa} of a bmm development build drew
+values at which \code{bmm::rmixture2p()} overflows the stack; the defaults
+of bmm 1.4.1 from CRAN rarely reach them, and the narrower prior keeps the
+calibration from moving with bmm's defaults. The entry records the
+reason and the card prints it.
 \item \code{ezdm} (three parameters): \code{drift = 1.5}, \code{bound = 0},
 \code{ndt = log(0.3)}, SDs 0.3, 0.2 and 0.2, a correlation of 0.4 between
 drift and bound. Its calibration also runs under a narrower prior

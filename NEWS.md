@@ -109,6 +109,15 @@
   answer that is open. The entry's prior predictive verdict is now judged
   under this prior instead of bmm's defaults. The entry's version is now
   0.2.0.
+* The `mixture2p` entry's reason for its narrower calibration prior now
+  names the bmm build it was measured on: the half `student_t(3, 0,
+  2.5)` SD prior on log kappa that made `rmixture2p()` overflow is a
+  development build's (1.4.1.9000, built 2026-09-04), while the defaults
+  of bmm 1.4.1 from CRAN (a `normal(2, 1)` kappa intercept and
+  `exponential(1)` SDs) rarely reach such values. The
+  prior itself is unchanged and kept, so that the calibration does not
+  move with bmm's defaults. A reason is not part of the plan hash, so a
+  stored calibration is read back as it was.
 * The card states the prior the calibration ran under, its rows or
   "bmm's default priors", with its reason or the words that none was
   given, and that a calibration speaks for the region of its prior only

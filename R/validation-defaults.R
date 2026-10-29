@@ -139,11 +139,19 @@ validation_entries <- function() {
     coef = c("Intercept", "", ""),
     nlpar = c("kappa", "kappa", "thetat")
   )
+  # P(SD >= 9.5) per draw is 0.032 under the half student_t(3, 0, 2.5)
+  # and 7.5e-5 under exponential(1); 8 calibration fits under bmm 1.4.1's
+  # defaults (2026-10-27) ran without an overflow, too few to show it is
+  # gone (it was 2 of 20)
   mixture2p$sbc$prior_reason <- paste(
-    "bmm's default SD prior on log kappa, a half student_t(3, 0, 2.5),",
-    "drew values (9.5 on 2 of 20 draws, measured 2026-09-16) at which",
-    "rmixture2p() overflows the node stack, so the calibration runs under",
-    "a narrower prior on the kappa intercept and both SDs."
+    "On a bmm development build (1.4.1.9000, built 2026-09-04), whose",
+    "default SD prior on log kappa is a half student_t(3, 0, 2.5), that",
+    "prior drew values (9.5 on 2 of 20 draws, measured 2026-09-16) at",
+    "which rmixture2p() overflows the node stack. The defaults of bmm 1.4.1",
+    "from CRAN, a normal(2, 1) kappa intercept and exponential(1) SDs,",
+    "rarely reach such values. The calibration keeps a narrower prior on",
+    "the kappa intercept and both SDs, so that it does not move with bmm's",
+    "defaults."
   )
   mixture2p$owner <- "Gidon Frischkorn"
   mixture2p$version <- "0.1.0"
@@ -245,10 +253,12 @@ validation_entries <- function() {
 #'
 #' Two entries ship:
 #' * `mixture2p`: `kappa = log(8)`, `thetat = qlogis(0.75)`, SDs 0.3 and
-#'   0.5. Its calibration runs under a narrower prior than bmm's, because
-#'   bmm's default SD prior on log `kappa` draws values at which
-#'   `bmm::rmixture2p()` overflows the stack; the entry records the reason
-#'   and the card prints it.
+#'   0.5. Its calibration runs under a narrower prior than bmm's. The
+#'   default SD prior on log `kappa` of a bmm development build drew
+#'   values at which `bmm::rmixture2p()` overflows the stack; the defaults
+#'   of bmm 1.4.1 from CRAN rarely reach them, and the narrower prior keeps the
+#'   calibration from moving with bmm's defaults. The entry records the
+#'   reason and the card prints it.
 #' * `ezdm` (three parameters): `drift = 1.5`, `bound = 0`,
 #'   `ndt = log(0.3)`, SDs 0.3, 0.2 and 0.2, a correlation of 0.4 between
 #'   drift and bound. Its calibration also runs under a narrower prior
