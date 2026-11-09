@@ -705,7 +705,10 @@ test_that("the attribute records what bmmtools decided", {
     )
   )
   expect_identical(info$generator, "simulate_recovery")
-  expect_identical(info$model, "mixture2p")
+  # the model's most specific class: mixture2p on bmm 1.4.1,
+  # mixture2p_simple from bmm 1.5.0, which has versions
+  cls <- class(bmm::mixture2p(resp_error = "y")) # sbc_run()'s model
+  expect_identical(info$model, cls[[length(cls)]])
   expect_identical(info$n_sims, 5L)
   expect_identical(info$level, c("population", "sd"))
   expect_identical(info$seed, 11)

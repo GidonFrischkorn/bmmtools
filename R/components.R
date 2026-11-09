@@ -142,11 +142,7 @@ recovery_component <- function(model,
 
   if (is.null(generator)) {
     if (is.null(generator_for(model))) {
-      cli::cli_abort(c(
-        "No generator is known for a model of class {.cls {class(model)}}.",
-        i = "Supply {.arg generator}, a function \\
-             {.code (pars, n_trials, model)} returning one subject's rows."
-      ))
+      abort_no_generator(model, call = rlang::current_env())
     }
   } else if (!is.function(generator)) {
     cli::cli_abort(

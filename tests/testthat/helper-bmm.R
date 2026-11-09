@@ -25,3 +25,16 @@ bmm_parameter_info <- function(x, ...) {
   }
   getExportedValue("bmm", name)(x, ...)
 }
+
+#' The name of a circular model's location: `mu1` on bmm 1.4.1, `mu` from
+#' bmm 1.5.0 (#52)
+#'
+#' Read off the fixed parameters, where every bmm build keeps it (measured
+#' 2026-11-09 on CRAN 1.4.1 and `develop` c13dd2c5), and not through the
+#' package's own `location_parameter()`, so that a test of that function
+#' does not grade itself.
+#'
+#' @noRd
+location_of <- function(model) {
+  intersect(c("mu", "mu1"), names(model$fixed_parameters))[[1L]]
+}

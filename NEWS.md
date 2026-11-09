@@ -1,5 +1,22 @@
 # bmmtools (development version)
 
+* The circular adapters work with bmm's rebuilt `mixture2p`, `mixture3p`
+  and `imm` (#52). bmm 1.5.0 renames their location `mu1` to `mu`; the
+  adapters and the `mixture2p` density read the name from the model, so
+  they work with CRAN 1.4.1 and with bmm's development version.
+  `mixture2p` and `mixture3p` now come in the versions `simple`, `slot`
+  and `slot_averaging`, and all three models take
+  `variable_precision = TRUE`. The adapters simulate the fixed-precision
+  `simple` model (and `imm`'s `full`, `bsc` and `abc`) only. Any other
+  version is now refused with an error that names the model and the
+  version, where before it was simulated as the simple model and its
+  recovery scored as if that were right. Supply `generator =` for those
+  versions. `imm`'s adapter passes the model's `b` to `rimm()`, 1 where
+  the model has none. A stored simulation whose truth names `mu1` is
+  scored as it was: against a fit that names the location `mu`, the
+  `mu1` row is reported as unmatched, not renamed. `prior_check()` gives
+  every circular model the response range from −π to π, whatever its
+  version.
 * `recovery_grid()` can split one grid over several R processes (#19).
   The setup call, `cells = integer(0)`, writes `grid.rds`, runs the
   preflight and the prior fits of `prior_sd`, and simulates every cell,

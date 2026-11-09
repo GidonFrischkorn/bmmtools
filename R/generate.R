@@ -1465,12 +1465,7 @@ simulate_recovery <- function(model,
   if (adapter) {
     generator <- generator_for(model)
     if (is.null(generator)) {
-      cli::cli_abort(c(
-        "No generator is known for a model of class \\
-         {.cls {class(model)}}.",
-        i = "Supply {.arg generator}, a function \\
-             {.code (pars, n_trials, model)} returning one subject's rows."
-      ))
+      abort_no_generator(model, call = rlang::current_env())
     }
     generator_name <- paste0("adapter:", adapter_name(model))
   }

@@ -147,7 +147,7 @@ test_that("a softmax term reaches the generator on the link scale", {
   expect_equal(seen$pars$kappa, 8)
   expect_identical(seen$pars$thetat, 1.5)
   expect_identical(seen$pars$thetant, -0.5)
-  expect_equal(seen$pars$mu1, 0)
+  expect_equal(seen$pars[[location_of(m3p_model())]], 0)
   # the exported transform stays elementwise and keeps refusing it
   expect_error(inverse_link(1, "softmax"), "softmax")
 })
@@ -226,7 +226,10 @@ test_that("imm adapters give each version's weights from bmm's likelihood", {
 
 test_that("the imm adapter maps each version onto rimm()'s arguments", {
   skip_if_not_installed("bmm")
-  pars <- list(mu1 = 0, kappa = 8, a = 0.5, c = 2, s = 1.5)
+  loc <- location_of(imm_model("full"))
+  pars <- stats::setNames(
+    list(0, 8, 0.5, 2, 1.5), c(loc, "kappa", "a", "c", "s")
+  )
   full <- imm_args(pars, imm_model("full"), lures = c(2, -2), dist = c(0.5, 1))
   expect_equal(full$mu, c(0, 2, -2))
   expect_equal(full$dist, c(0, 0.5, 1))
@@ -234,11 +237,11 @@ test_that("the imm adapter maps each version onto rimm()'s arguments", {
     full[c("c", "a", "s", "b", "kappa")],
     list(c = 2, a = 0.5, s = 1.5, b = 1, kappa = 8)
   )
-  bsc <- imm_args(pars[c("mu1", "kappa", "c", "s")], imm_model("bsc"),
+  bsc <- imm_args(pars[c(loc, "kappa", "c", "s")], imm_model("bsc"),
     lures = 2, dist = 0.5
   )
   expect_identical(bsc$a, 0)
-  abc <- imm_args(pars[c("mu1", "kappa", "a", "c")], imm_model("abc"),
+  abc <- imm_args(pars[c(loc, "kappa", "a", "c")], imm_model("abc"),
     lures = c(2, -2), dist = NULL
   )
   # no distance term: lures carry `a` alone
@@ -249,18 +252,7 @@ test_that("the imm adapter maps each version onto rimm()'s arguments", {
   expect_identical(one$dist, 0)
 })
 
-test_that("the location parameter is read off the model, mu or mu1", {
-  model <- structure(
-    list(parameters = list(mu = "", kappa = "")),
-    class = c("bmmodel", "mixture3p")
-  )
-  expect_identical(location_parameter(model), "mu")
-  model$parameters <- list(mu1 = "", kappa = "")
-  expect_identical(location_parameter(model), "mu1")
-  # a model listing neither keeps bmm's present name
-  model$parameters <- list(kappa = "")
-  expect_identical(location_parameter(model), "mu1")
-})
+# the location parameter: test-adapters-circular-versions.R (#52)
 
 # data bmm accepts --------------------------------------------------------
 

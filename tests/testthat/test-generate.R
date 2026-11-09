@@ -118,7 +118,7 @@ test_that("the generator receives natural-scale values, fixed ones too", {
   )
   expect_equal(seen$pars$kappa, 8)
   expect_equal(seen$pars$thetat, 0.75)
-  expect_equal(seen$pars$mu1, 2 * atan(0))
+  expect_equal(seen$pars[[location_of(model)]], 2 * atan(0))
   expect_equal(seen$n_trials, 7)
   expect_equal(sim$generator, "user")
 
@@ -257,8 +257,11 @@ test_that("bad inputs are refused with the offending names", {
     "zeta"
   )
   expect_error(
-    simulate_recovery(model, m2p_pars, 2, 2, sds = c(mu1 = 1)),
-    "mu1"
+    simulate_recovery(
+      model, m2p_pars, 2, 2,
+      sds = stats::setNames(1, location_of(model))
+    ),
+    location_of(model)
   )
   expect_error(
     simulate_recovery(model, m2p_pars, 2, 2, sds = c(kappa = -1)),
@@ -708,8 +711,23 @@ test_that("tasks = NULL reproduces the simulations of 273cc47", {
     cors = cors, covariates = list(G = c(mean = 0, sd = 1)),
     generator = gen, seed = 42
   )
+  # the fixture names the location as bmm 1.4.1 did (mu1); bmm 1.5.0 names
+  # it mu (#52), and the stored names are relabelled here, not in the
+  # package, which reports the two apart
+  loc <- location_of(model)
+  relabel <- function(x) {
+    if (is.data.frame(x)) {
+      if ("term" %in% names(x)) x$term[x$term == "mu1"] <- loc
+      return(x)
+    }
+    if (!is.null(names(x))) names(x)[names(x) == "mu1"] <- loc
+    if (is.list(x)) x[] <- lapply(x, relabel)
+    x
+  }
+  head$plain <- relabel(head$plain)
   plain <- simulate_recovery(
-    model, c(kappa = log(8), thetat = stats::qlogis(0.75), mu1 = 0),
+    model,
+    c(kappa = log(8), thetat = stats::qlogis(0.75), stats::setNames(0, loc)),
     n_subjects = 3, n_trials = 6, sds = c(kappa = 0.3), generator = gen,
     seed = 7
   )
@@ -755,12 +773,13 @@ test_that("tasks expand pars and sds to full terms, full terms winning", {
   expect_output(print(sim), "kappa_task1")
 
   # a fixed parameter stays bare and reaches every task
+  loc <- location_of(bmm::mixture2p(resp_error = "y"))
   with_fixed <- simulate_recovery(
-    bmm::mixture2p(resp_error = "y"), c(task_pars, mu1 = 1),
+    bmm::mixture2p(resp_error = "y"), c(task_pars, stats::setNames(1, loc)),
     n_subjects = 1, n_trials = 1, tasks = c("1", "2"),
-    generator = function(pars, n_trials, model) data.frame(y = pars$mu1)
+    generator = function(pars, n_trials, model) data.frame(y = pars[[loc]])
   )
-  expect_equal(names(with_fixed$pars)[[5L]], "mu1")
+  expect_equal(names(with_fixed$pars)[[5L]], loc)
   expect_equal(with_fixed$data$y, rep(inverse_link(1, "tan_half"), 2L))
 })
 
@@ -797,7 +816,7 @@ test_that("the generator runs per subject and task with that task's values", {
     expect_equal(a$kappa, exp(kappa_a))
     expect_equal(b$kappa, 4)
     expect_equal(a$thetat, stats::plogis(0.5))
-    expect_equal(b$mu1, 0)
+    expect_equal(b[[location_of(bmm::mixture2p(resp_error = "y"))]], 0)
     expect_false(any(grepl("_", names(a))))
   }
 })
@@ -894,7 +913,8 @@ test_that("bad tasks, task_col and task terms are refused by name", {
   expect_error(sim(tasks = c("1", "2"), task_col = "id"), "id")
   expect_error(sim(tasks = c("1", "2"), task_col = "y"), "y")
   expect_error(sim(tasks = c("1", "2"), task_col = "kappa"), "kappa")
-  expect_error(sim(tasks = c("1", "2"), task_col = "mu1"), "mu1")
+  loc <- location_of(bmm::mixture2p(resp_error = "y"))
+  expect_error(sim(tasks = c("1", "2"), task_col = loc), loc)
   expect_error(
     sim(
       tasks = c("1", "2"), task_col = "G",
@@ -910,14 +930,19 @@ test_that("bad tasks, task_col and task terms are refused by name", {
     "kappa_task3"
   )
   expect_error(
-    sim(pars = c(task_pars, mu1_task1 = 1), tasks = c("1", "2")),
-    "mu1_task1"
+    sim(
+      pars = c(task_pars, stats::setNames(1, paste0(loc, "_task1"))),
+      tasks = c("1", "2")
+    ),
+    paste0(loc, "_task1")
   )
   expect_error(
     sim(tasks = c("1", "2"), sds = c(thetat_task9 = 0.1)),
     "thetat_task9"
   )
-  expect_error(sim(tasks = c("1", "2"), sds = c(mu1 = 0.1)), "mu1")
+  expect_error(
+    sim(tasks = c("1", "2"), sds = stats::setNames(0.1, loc)), loc
+  )
   expect_error(
     sim(pars = c(kappa_task1 = 1, thetat = 0), tasks = c("1", "2")),
     "kappa_task2"

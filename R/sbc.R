@@ -28,8 +28,9 @@ escape_regex <- function(x) {
 
 #' The brms draw-name patterns one level selects
 #'
-#' Over the model's **free** parameters only: a parameter bmm fixes has a
-#' draw (`b_mu1_Intercept`) but no prior to rank it against, so the
+#' Over the model's **free** parameters only: a parameter bmm fixes, such
+#' as a circular model's location, has a draw (`b_<par>_Intercept`) but no
+#' prior to rank it against, so the
 #' generator has no truth for it and it is never ranked.
 #'
 #' The four shapes, measured on the committed fixtures:

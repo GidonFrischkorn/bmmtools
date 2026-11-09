@@ -119,6 +119,11 @@ response_range <- function(model, data, call = rlang::caller_env()) {
     ))
     list(floor = NA_real_, ceiling = NA_real_)
   }
+  # every circular model, whichever version, answers on the circle; read
+  # before the adapter, which a version it cannot simulate does not have
+  if (inherits(model, "circular")) {
+    return(list(floor = -pi, ceiling = pi))
+  }
   key <- adapter_name(model)
   # The response-time models have no ceiling to give. cswald joined
   # adapter_classes() in 0.2.0 and has to be named here: without it the
@@ -128,9 +133,6 @@ response_range <- function(model, data, call = rlang::caller_env()) {
     return(none(
       "No response range is known for a model of class {.cls {class(model)}}."
     ))
-  }
-  if (key %in% c("mixture2p", "sdm", "mixture3p", "imm")) {
-    return(list(floor = -pi, ceiling = pi))
   }
   # m3 and sdt_ranking: a count per category out of the row's trials, which
   # bmm takes to be the row's total, reading NA as 0 (check_data.m3(),
