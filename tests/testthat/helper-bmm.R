@@ -1,10 +1,10 @@
-#' A model's or fit's parameter table, on every bmm build
+#' A model's or fit's parameter table
 #'
-#' bmm `develop` deprecates `parameters()` (as of 1.4.0, removed in 1.6.0)
-#' in favour of `parameter_info()`, which neither CRAN 1.3.2 nor the
-#' 1.3.2.9000 build of 2026-09-30 has. This calls whichever the installed
-#' bmm exports. Both are reached by name with `getExportedValue()`, so no
-#' literal names a function one of the builds lacks.
+#' bmm deprecates `parameters()` as of 1.4.0 and removes it in 1.6.0 (#54)
+#' in favour of `parameter_info()`, which every bmm bmmtools supports
+#' exports (1.4.1 and later), so this calls `parameter_info()` alone.
+#' (Written when the minimum was CRAN 1.3.2, which had only `parameters()`;
+#' the fallback went with the 1.4.1 minimum, 2026-11-09.)
 #'
 #' Measured 2026-10-05 on `develop` `1625e860`: `parameter_info()` is
 #' `identical()` to `parameters()` for `mixture2p`, `sdm`, `mixture3p`,
@@ -18,12 +18,7 @@
 #'
 #' @noRd
 bmm_parameter_info <- function(x, ...) {
-  name <- if ("parameter_info" %in% getNamespaceExports("bmm")) {
-    "parameter_info"
-  } else {
-    "parameters"
-  }
-  getExportedValue("bmm", name)(x, ...)
+  bmm::parameter_info(x, ...)
 }
 
 #' The name of a circular model's location: `mu1` on bmm 1.4.1, `mu` from

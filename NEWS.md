@@ -25,6 +25,9 @@
   and says so; before, its intercept had no row and contraction was `NA`
   without a message. `prior_check()`'s warning about flat slopes names
   the parameter of a distributional parameter's slope too.
+* The article script `hierarchical-vs-ml.R` calls `bmm::parameter_info()`
+  in place of `bmm::parameters()`, which bmm 1.6.0 removes (#54).
+
 * `recovery_grid()` can split one grid over several R processes (#19).
   The setup call, `cells = integer(0)`, writes `grid.rds`, runs the
   preflight and the prior fits of `prior_sd`, and simulates every cell,
