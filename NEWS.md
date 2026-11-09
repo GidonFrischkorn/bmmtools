@@ -17,6 +17,14 @@
   `mu1` row is reported as unmatched, not renamed. `prior_check()` gives
   every circular model the response range from −π to π, whatever its
   version.
+* `prior_sd_table()`, and with it `prior_sd = "analytic"`, reads the
+  intercept priors of bmm 1.5.0, which fits `kappa` and `thetat` as
+  distributional parameters and puts an intercept's prior on the class
+  `Intercept` (#52). brms centres that intercept, so a parameter with
+  other population coefficients gets no closed-form SD for its intercept
+  and says so; before, its intercept had no row and contraction was `NA`
+  without a message. `prior_check()`'s warning about flat slopes names
+  the parameter of a distributional parameter's slope too.
 * `recovery_grid()` can split one grid over several R processes (#19).
   The setup call, `cells = integer(0)`, writes `grid.rds`, runs the
   preflight and the prior fits of `prior_sd`, and simulates every cell,

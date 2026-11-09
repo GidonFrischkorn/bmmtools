@@ -1048,13 +1048,19 @@ test_that("task formulas pass the mock backend and match the truth terms", {
     n_subjects = 4, n_trials = 20, sds = c(kappa = 0.3, thetat = 0.2),
     tasks = c("1", "2"), seed = 1
   )
+  # bmm 1.4.1 fits kappa and thetat as non-linear parameters (nlpar);
+  # bmm 1.5.0 as distributional ones (dpar, #52)
+  par_of <- function(df) {
+    nlpar <- as.character(df$nlpar %||% "")
+    ifelse(!is.na(nlpar) & nzchar(nlpar), nlpar, as.character(df$dpar))
+  }
   for (re_cor in c("none", "within", "all")) {
     formula <- recovery_formula(model, re_cor = re_cor, task_col = "task")
     fit <- mock_bmm(formula, sim$data, model)
     expect_s3_class(fit, "bmmfit")
     ranef <- as.data.frame(fit$ranef)
     expect_equal(
-      paste0(ranef$nlpar, "_", ranef$coef),
+      paste0(par_of(ranef), "_", ranef$coef),
       c("kappa_task1", "kappa_task2", "thetat_task1", "thetat_task2"),
       label = re_cor
     )
@@ -1063,7 +1069,7 @@ test_that("task formulas pass the mock backend and match the truth terms", {
 
   prior <- as.data.frame(bmm::default_prior(formula, sim$data, model))
   b <- prior[prior$class == "b" & nzchar(prior$coef), ]
-  expect_setequal(paste0(b$nlpar, "_", b$coef), sim$truth$population$term)
+  expect_setequal(paste0(par_of(b), "_", b$coef), sim$truth$population$term)
 })
 
 # resolving bmm's fork-only functions ------------------------------------

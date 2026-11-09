@@ -417,7 +417,19 @@ test_that("every row of an entry's SBC prior names a parameter of the model", {
     for (column in c("coef", "dpar", "nlpar")) {
       if (is.null(prior[[column]])) prior[[column]] <- ""
     }
-    target <- function(df) paste(df$class, df$coef, df$dpar, df$nlpar)
+    # bmm 1.5.0 fits these parameters as dpars and translates the 1.4
+    # form (nlpar; class "b", coef "Intercept") with a deprecation warning
+    # (measured on develop c13dd2c5, #52), so both tables are compared in
+    # one form
+    target <- function(df) {
+      df[] <- lapply(df, function(v) ifelse(is.na(v), "", as.character(v)))
+      par <- ifelse(nzchar(df$nlpar), df$nlpar, df$dpar)
+      intercept <- df$class == "b" & df$coef == "Intercept"
+      paste(
+        ifelse(intercept, "Intercept", df$class),
+        ifelse(intercept, "", df$coef), par
+      )
+    }
     expect_true(
       all(target(prior) %in% target(known)),
       label = paste(name, "prior targets", toString(target(prior)))

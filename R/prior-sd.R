@@ -68,7 +68,7 @@ prior_sd_table <- function(x, group = "id", ...) {
   priors$prior <- inherited_priors(priors)
   sd_rows <- priors$class == "sd" & priors$group == group
   pieces <- list(
-    coefficient_prior_rows(priors[priors$class == "b", , drop = FALSE]),
+    coefficient_prior_rows(population_prior_rows(priors)),
     sd_prior_rows(priors[sd_rows, , drop = FALSE])
   )
   out <- dplyr::bind_rows(empty_prior_sd_table(), pieces)
@@ -185,12 +185,45 @@ coefficient_prior_rows <- function(rows) {
   bounded <- nzchar(rows$lb) | nzchar(rows$ub)
   sd <- vapply(rows$prior, closed_form_sd, double(1), half = FALSE)
   sd[bounded] <- NA_real_
+  sd[rows[["centred"]]] <- NA_real_
   tibble::tibble(
     term = coefficient_terms(rows$par, rows$coef),
     level = coefficient_kinds(rows$par, rows$coef),
     prior = rows$prior,
     prior_sd_link = unname(sd)
   )
+}
+
+#' The population coefficients' prior rows: class `b`, and the intercepts
+#' brms puts on class `Intercept`
+#'
+#' bmm's `develop` (c13dd2c5, 2026-11-09) fits `mixture2p`'s `kappa` and
+#' `thetat` as distributional parameters, and brms then gives an
+#' intercept its own class, `Intercept`, with no `coef` (#52); bmm 1.4.1
+#' fitted them as non-linear parameters, whose intercept is class `b`,
+#' coef `Intercept`. Such a row becomes coef `Intercept` of class `b`
+#' here. brms's `Intercept` class is the centred intercept, which is the
+#' intercept reported only when the parameter has no other population
+#' coefficient; with one, the row is kept, so that the other
+#' coefficients keep their `<par>_<coef>` names, but marked `centred`,
+#' and gets no prior SD. A constant prior (a fixed parameter) is dropped
+#' by [coefficient_prior_rows()] as before.
+#' @noRd
+population_prior_rows <- function(priors) {
+  b <- priors[priors$class == "b", , drop = FALSE]
+  b$centred <- rep(FALSE, nrow(b))
+  intercept <- priors[
+    priors$class == "Intercept" & !nzchar(priors$coef) & nzchar(priors$par), ,
+    drop = FALSE
+  ]
+  if (nrow(intercept) == 0L) {
+    return(b)
+  }
+  sloped <- unique(b$par[nzchar(b$coef) & b$coef != "Intercept"])
+  intercept$class <- "b"
+  intercept$coef <- "Intercept"
+  intercept$centred <- intercept$par %in% sloped
+  rbind(b, intercept)
 }
 
 #' SD rows from the class `sd` coefficient rows of one group

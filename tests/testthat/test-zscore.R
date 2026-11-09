@@ -434,6 +434,41 @@ test_that("prior_sd_table() gives the closed-form prior SD of each term", {
   expect_false(any(out$term %in% c("kappa2", "theta2", "")))
 })
 
+test_that("prior_sd_table() reads bmm 1.5.0's intercept priors on dpars", {
+  # bmm's develop (c13dd2c5, 2026-11-09) fits kappa and thetat as
+  # distributional parameters: default_prior() puts an intercept-only
+  # parameter's prior on class "Intercept" with no coef, where 1.4.1 put
+  # it on class "b", coef "Intercept" (#52). brms's Intercept class is the
+  # centred intercept, the reported one only without other population
+  # coefficients: `c`, which has a slope, keeps its intercept row, so that
+  # the slope is still named c_x, but with no prior SD.
+  priors <- data.frame(
+    prior = c(
+      "constant(0)", "normal(2, 1)", "logistic(0, 1)", "normal(0, 1)",
+      "normal(0, 0.5)", "student_t(3, 0, 2.5)", ""
+    ),
+    class = c("Intercept", "Intercept", "Intercept", "Intercept", "b", "sd", "sd"),
+    coef = c("", "", "", "", "x", "", "Intercept"),
+    group = c("", "", "", "", "", "id", "id"),
+    nlpar = "",
+    dpar = c("", "kappa", "thetat", "c", "c", "kappa", "kappa"),
+    lb = c("", "", "", "", "", "0", ""),
+    ub = ""
+  )
+  out <- suppressMessages(prior_sd_table(priors))
+  get <- function(term, level) {
+    out$prior_sd_link[out$term == term & out$level == level]
+  }
+  expect_equal(get("kappa", "population"), 1)
+  expect_equal(get("thetat", "population"), pi / sqrt(3))
+  # a slope beside an intercept is an effect (coefficient_kinds())
+  expect_equal(get("c_x", "effect"), 0.5)
+  expect_equal(get("kappa", "sd"), 3.339298, tolerance = 1e-6)
+  expect_identical(get("c", "population"), NA_real_)
+  expect_false(any(out$term %in% c("", "Intercept")))
+  expect_message(prior_sd_table(priors), "c \\(population\\)")
+})
+
 test_that("prior_sd_table() says which terms have no closed form", {
   expect_message(
     prior_sd_table(fake_priors()),

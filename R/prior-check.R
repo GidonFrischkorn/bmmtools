@@ -357,7 +357,15 @@ improper_prior_slopes <- function(priors) {
   if (!any(flat)) {
     return(character())
   }
-  parameter <- priors$nlpar[flat] %||% rep("", sum(flat))
+  # the parameter: nlpar on bmm 1.4.1, dpar from 1.5.0 (#52)
+  column <- function(name) {
+    v <- as.character(priors[[name]] %||% rep("", nrow(priors)))
+    v[is.na(v)] <- ""
+    v
+  }
+  parameter <- ifelse(
+    nzchar(column("nlpar")), column("nlpar"), column("dpar")
+  )[flat]
   ifelse(
     nzchar(parameter),
     paste0(priors$coef[flat], " (", parameter, ")"),
