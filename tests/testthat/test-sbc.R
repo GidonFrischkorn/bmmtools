@@ -705,7 +705,10 @@ test_that("the attribute records what bmmtools decided", {
     )
   )
   expect_identical(info$generator, "simulate_recovery")
-  expect_identical(info$model, "mixture2p")
+  # the model's most specific class: mixture2p on bmm 1.4.1,
+  # mixture2p_simple from bmm 1.5.0, which has versions
+  cls <- class(bmm::mixture2p(resp_error = "y")) # sbc_run()'s model
+  expect_identical(info$model, cls[[length(cls)]])
   expect_identical(info$n_sims, 5L)
   expect_identical(info$level, c("population", "sd"))
   expect_identical(info$seed, 11)
@@ -2031,4 +2034,24 @@ test_that("check_sbc_args refuses a seed beyond R's integer range", {
   )
   expect_null(check_sbc_args(NULL, .Machine$integer.max, NULL, "none", NULL))
   expect_null(check_sbc_args(NULL, NULL, NULL, "none", NULL))
+})
+
+test_that("a model with no generator is refused before the prior fit", {
+  skip_if_not_installed("SBC")
+  skip_if_not_installed("bmm")
+  # refused late, the no-generator error came out of simulate_from_draw()
+  # as a prior too wide to simulate from, after a Stan prior fit
+  model <- bmm::mixture2p(resp_error = "y")
+  model$variable_precision <- TRUE
+  mock <- sbc_mock_fitter()
+  err <- expect_error(
+    sbc(
+      model, recovery_formula(model), sbc_data(),
+      n_sims = 2L, .fitter = mock$fitter
+    ),
+    "variable_precision",
+    class = "rlang_error"
+  )
+  expect_no_match(conditionMessage(err), "prior draw")
+  expect_identical(mock$calls$n, 0L)
 })

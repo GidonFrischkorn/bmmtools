@@ -110,10 +110,16 @@ extra fit; \code{"fit"} to fit the prior alone (\code{sample_prior = "only"})
 once per distinct formula, model and prior among the grid's rows,
 cached in \code{dir} through \code{\link[=fit_cached]{fit_cached()}} with the backend named, and
 reused by every cell that shares it; \code{"analytic"} for the closed
-forms of \code{\link[=prior_sd_table]{prior_sd_table()}} applied to \code{bmm::default_prior()} with
-\code{prior}, which needs no fit and leaves \code{NA} where there is no closed
-form; or a table as \code{\link[=recover]{recover()}} takes it, which may carry a
-\code{condition} column (\code{"row-1"}, ...) to differ between rows. Subject
+forms of \code{\link[=prior_sd_table]{prior_sd_table()}} applied to bmm's default priors
+(\code{bmm::default_prior()}; it refuses \code{prior}), which needs no fit and
+leaves \code{NA} where there is no closed form. An intercept brms centres
+takes the predictor means of the row's cells (\code{bmm::standata()}):
+exact where every cell of a row has the same means, as task
+contrasts do, and \code{NA}, with a message naming the row, where they
+differ, as covariates drawn anew in each replication make them; or
+a table as \code{\link[=recover]{recover()}} takes it, which may carry a \code{condition}
+column (\code{"row-1"}, ...) to differ between rows. With \code{"analytic"},
+every cell is simulated before the first fit. Subject
 rows have no contraction. The table used is written to
 \verb{<dir>/prior-sd.rds}, which \code{\link[=collect_grid]{collect_grid()}} reads.}
 

@@ -71,7 +71,11 @@
 #' @param formula,trial_design,generator As in [recovery_grid()]. `NULL`
 #'   `formula` means [recovery_formula()] with correlated subject effects
 #'   when there are at least two subject-varying parameters, so the
-#'   individual-differences stage has correlations to score.
+#'   individual-differences stage has correlations to score. A circular
+#'   model the built-in adapters do not simulate (a `slot` or
+#'   `slot_averaging` version of `mixture2p` or `mixture3p`, or
+#'   `variable_precision = TRUE`) needs a `generator`; without one the
+#'   plan is refused.
 #' @param seed The master seed, required. Each stage derives its own from
 #'   it (see "Seeds").
 #' @param owner,version The entry's owner and plan version; `NULL` takes
@@ -173,6 +177,11 @@ validation_plan <- function(model,
   name <- validation_model_name(model)
   entry <- validation_defaults(name)
   model <- resolve_plan_model(model, name, entry)
+  # a circular version the adapters refuse fails every generating stage,
+  # so it is refused here rather than one stage at a time in the run
+  if (is.null(generator) && !is.null(circular_refusal(model))) {
+    abort_no_generator(model)
+  }
   defaults <- if (is.null(entry)) {
     "none"
   } else {

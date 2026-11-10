@@ -289,7 +289,9 @@ validation_defaults <- function(model = NULL) {
 
 #' The name a model is planned under
 #'
-#' The adapter's name where there is one, else the most specific class.
+#' The adapter's name where there is one; for a circular version no
+#' adapter simulates, `<model>_<version>` ([refused_model_name()]); else
+#' the most specific class.
 #'
 #' @noRd
 validation_model_name <- function(model, call = rlang::caller_env()) {
@@ -306,6 +308,11 @@ validation_model_name <- function(model, call = rlang::caller_env()) {
     )
   }
   name <- adapter_name(model)
-  if (is.na(name)) name <- class(model)[[length(class(model))]]
+  if (is.na(name)) {
+    # a circular version no adapter simulates is named for its version,
+    # so the entry of the model's simple version does not fill its plan
+    name <- refused_model_name(model) %||%
+      class(model)[[length(class(model))]]
+  }
   name
 }

@@ -7,9 +7,11 @@ test_that("bmm_parameter_info() gives the table the tests read", {
 
 test_that("parameter_info() and parameters() agree where bmm has both", {
   skip_if_not_installed("bmm")
+  # parameters() is removed in bmm 1.6.0 (#54); the comparison then has
+  # nothing to compare
   skip_if_not(
-    "parameter_info" %in% getNamespaceExports("bmm"),
-    "installed bmm has no parameter_info()"
+    "parameters" %in% getNamespaceExports("bmm"),
+    "installed bmm has no parameters() (removed in bmm 1.6.0)"
   )
   parameter_info <- getExportedValue("bmm", "parameter_info")
   parameters <- getExportedValue("bmm", "parameters")
