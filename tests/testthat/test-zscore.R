@@ -469,6 +469,54 @@ test_that("prior_sd_table() reads bmm 1.5.0's intercept priors on dpars", {
   expect_message(prior_sd_table(priors), "c \\(population\\)")
 })
 
+test_that("a centred intercept takes its SD from the predictor means", {
+  # brms reports b_Intercept = Intercept - sum(m_j * b_j) for a dpar with
+  # slopes; with independent priors its SD is sqrt(sd_I^2 + sum(m_j^2 *
+  # sd_j^2)). `c` has slopes x (normal(0, 0.5)) and z (the class prior,
+  # normal(0, 2)); `d` has a flat slope w.
+  priors <- prior_rows(data.frame(
+    prior = c(
+      "normal(1, 1.5)", "normal(0, 0.5)", "normal(0, 2)", "", "normal(0, 1)",
+      ""
+    ),
+    class = c("Intercept", "b", "b", "b", "Intercept", "b"),
+    coef = c("", "x", "", "z", "", "w"),
+    group = "",
+    nlpar = "",
+    dpar = c("c", "c", "c", "c", "d", "d")
+  ))
+  sd_of <- function(means, term = "c") {
+    out <- suppressMessages(prior_sd_table_impl(priors, means = means))
+    out$prior_sd_link[out$term == term & out$level == "population"]
+  }
+  expect_equal(
+    sd_of(list(c = c(x = 2, z = -0.5))),
+    sqrt(1.5^2 + 2^2 * 0.5^2 + 0.5^2 * 2^2)
+  )
+  # a predictor with mean 0 (a balanced sum contrast) adds nothing
+  expect_equal(sd_of(list(c = c(x = 0, z = 0))), 1.5)
+  # a flat slope leaves it without a closed form, unless its mean is 0
+  expect_identical(sd_of(list(d = c(w = 0.3)), "d"), NA_real_)
+  expect_equal(sd_of(list(d = c(w = 0)), "d"), 1)
+  # means for another parameter, or none, leave it NA
+  expect_identical(sd_of(list(d = c(w = 0))), NA_real_)
+  expect_identical(sd_of(NULL), NA_real_)
+  expect_message(
+    prior_sd_table_impl(priors),
+    "centred intercept"
+  )
+  # a function is called only when an intercept is centred
+  called <- FALSE
+  suppressMessages(prior_sd_table_impl(
+    priors[priors$par == "c" & priors$coef == "", ],
+    means = function() {
+      called <<- TRUE
+      NULL
+    }
+  ))
+  expect_false(called)
+})
+
 test_that("prior_sd_table() says which terms have no closed form", {
   expect_message(
     prior_sd_table(fake_priors()),
@@ -633,6 +681,74 @@ test_that("prior_sd = 'analytic' reads bmm's default priors, no extra fit", {
   expect_equal(population$contraction, unname(1 - 25 / prior^2))
 })
 
+#' Whether the installed bmm fits mixture2p's kappa as a distributional
+#' parameter, whose intercept brms centres (bmm develop, c13dd2c5)
+bmm_kappa_is_dpar <- function() {
+  priors <- bmm::default_prior(
+    bmm::bmf(kappa ~ 1, thetat ~ 1),
+    data = data.frame(y = c(0.1, -0.2), id = factor(1:2)),
+    model = bmm::mixture2p(resp_error = "y")
+  )
+  any(priors$class == "Intercept" & priors$dpar == "kappa")
+}
+
+test_that("bmm's own default priors give a centred intercept its SD", {
+  skip_if_not_installed("bmm")
+  skip_if_not(bmm_kappa_is_dpar(), "bmm fits kappa as a non-linear parameter")
+  model <- bmm::mixture2p(resp_error = "y")
+  data <- data.frame(
+    y = seq(-1, 1, length.out = 12), x = c(1:6, 2 * (1:6)),
+    task = factor(rep(c("1", "2", "2"), 4)), id = factor(rep(1:3, 4))
+  )
+  pop <- function(out, term) {
+    out$prior_sd_link[out$term == term & out$level == "population"]
+  }
+  table_for <- function(formula, data) {
+    priors <- bmm::default_prior(formula, data, model)
+    suppressMessages(prior_sd_table_impl(
+      prior_rows(priors),
+      means = design_means(bmm::standata(formula, data, model))
+    ))
+  }
+  sloped <- bmm::bmf(kappa ~ 1 + x, thetat ~ 1)
+  priors <- bmm::default_prior(sloped, data, model)
+  # intercept only: the closed form of thetat's own prior
+  out <- suppressMessages(prior_sd_table(priors))
+  expect_equal(pop(out, "thetat"), pi / sqrt(3))
+  # sloped, from a prior table alone: centred, so NA, and said so
+  expect_identical(pop(out, "kappa"), NA_real_)
+  expect_message(prior_sd_table(priors), "centred intercept")
+  # with data: normal(2, 1) on the intercept, normal(0, 1) on the slope
+  expect_equal(pop(table_for(sloped, data), "kappa"), sqrt(1 + mean(data$x)^2))
+  # bmmtools' contrast formula, under treatment and sum contrasts
+  contrast <- recovery_formula(model, task_col = "task", coding = "contrast")
+  for (coding in list(stats::contr.treatment, stats::contr.sum)) {
+    stats::contrasts(data$task) <- coding(2)
+    m <- colMeans(stats::model.matrix(~ 1 + task, data))[-1]
+    out <- table_for(contrast, data)
+    expect_equal(pop(out, "kappa"), sqrt(1 + sum(m^2)))
+    expect_equal(pop(out, "thetat"), sqrt(pi^2 / 3 + sum(m^2 * 2.5^2)))
+  }
+})
+
+test_that("prior_sd = 'analytic' gives a centred intercept the exact SD", {
+  skip_if_not_installed("bmm")
+  skip_if_not(bmm_kappa_is_dpar(), "bmm fits kappa as a non-linear parameter")
+  dir <- withr::local_tempdir()
+  mock <- prior_grid_fitter()
+  zgrid_run(dir, mock$fitter,
+    prior_sd = "analytic", tasks = c("1", "2"), coding = "contrast"
+  )
+  table <- readRDS(file.path(dir, "prior-sd.rds"))
+  sim <- readRDS(file.path(dir, "cell-1-rep-1-sim.rds"))
+  m <- colMeans(stats::model.matrix(~ 1 + task, sim$data))[-1]
+  row1 <- table[table$condition == "row-1" & table$level == "population", ]
+  expect_equal(
+    row1$prior_sd_link[match(c("kappa", "thetat"), row1$term)],
+    c(sqrt(1 + sum(m^2)), sqrt(pi^2 / 3 + sum(m^2 * 2.5^2)))
+  )
+})
+
 test_that("recovery_grid() refuses a prior_sd it cannot use", {
   skip_if_not_installed("bmm")
   mock <- prior_grid_fitter()
@@ -733,4 +849,258 @@ test_that("a Student t without a finite nu has no closed form", {
   expect_identical(
     suppressMessages(prior_sd_table(table))$prior_sd_link, NA_real_
   )
+})
+
+# review fixes (PR #58): bounds, grid means, messages --------------------------
+
+#' A pattern for a message's words, whatever line breaks cli puts between
+#' them
+words_re <- function(text) gsub(" ", "\\s+", text, fixed = TRUE)
+
+test_that("a coefficient takes its class row's bounds, as brms does", {
+  # brms takes lb/ub on the class row only and bounds every coefficient of
+  # the class (Stan: vector<lower=0> b_c), while prior_summary() leaves
+  # the coefficient rows' lb empty. A bounded normal(0, 1) is a half
+  # normal, not the closed form; the centred intercept that needs the
+  # slope's SD is NA with it. `d` is the same without bounds.
+  priors <- prior_rows(data.frame(
+    prior = c(
+      "normal(1, 1.5)", "normal(0, 1)", "", "normal(1, 1.5)",
+      "normal(0, 1)", ""
+    ),
+    class = c("Intercept", "b", "b", "Intercept", "b", "b"),
+    coef = c("", "", "x", "", "", "x"),
+    group = "", nlpar = "",
+    dpar = c("c", "c", "c", "d", "d", "d"),
+    lb = c("", "0", "", "", "", ""),
+    ub = ""
+  ))
+  out <- suppressMessages(prior_sd_table_impl(
+    priors,
+    means = list(c = c(x = 2), d = c(x = 2))
+  ))
+  get <- function(term, level) {
+    out$prior_sd_link[out$term == term & out$level == level]
+  }
+  expect_identical(get("c_x", "effect"), NA_real_)
+  expect_identical(get("c", "population"), NA_real_)
+  expect_equal(get("d_x", "effect"), 1)
+  expect_equal(get("d", "population"), sqrt(1.5^2 + 2^2 * 1^2))
+  # a non-linear parameter (bmm 1.4.1's kappa): the class bound reaches
+  # the intercept too, which is a class b coefficient there
+  nl <- data.frame(
+    prior = c("normal(0, 1)", "", ""), class = "b",
+    coef = c("", "Intercept", "x"), group = "", nlpar = "kappa",
+    lb = c("0", "", ""), ub = ""
+  )
+  expect_identical(
+    suppressMessages(prior_sd_table(nl))$prior_sd_link,
+    c(NA_real_, NA_real_)
+  )
+})
+
+#' A fit with nothing sampled: `kappa ~ 1 + x` under a normal(0, 1) prior
+#' bounded at 0 on kappa's class b, as a dpar or an nlpar as the
+#' installed bmm fits kappa
+bounded_empty_fit <- function(data) {
+  model <- bmm::mixture2p(resp_error = "y")
+  formula <- bmm::bmf(kappa ~ 1 + x, thetat ~ 1)
+  prior <- if (bmm_kappa_is_dpar()) {
+    brms::prior_string("normal(0, 1)", class = "b", dpar = "kappa", lb = 0)
+  } else {
+    brms::prior_string("normal(0, 1)", class = "b", nlpar = "kappa", lb = 0)
+  }
+  suppressMessages(bmm::bmm(formula, data, model,
+    prior = prior, empty = TRUE, backend = "rstan"
+  ))
+}
+
+bounded_fit_data <- function() {
+  data.frame(
+    y = seq(-1, 1, length.out = 12), x = c(1:6, 2 * (1:6)),
+    id = factor(rep(1:3, 4))
+  )
+}
+
+test_that("a bounded class prior leaves a fit's slope and intercept NA", {
+  skip_if_not_installed("bmm")
+  skip_if_not_installed("brms")
+  fit <- bounded_empty_fit(bounded_fit_data())
+  # the contract the bounds follow: Stan bounds the class's coefficients
+  expect_match(brms::stancode(fit), "vector<lower=0>\\[[A-Za-z_]+\\] b_kappa")
+  out <- suppressMessages(prior_sd_table(fit))
+  pop <- function(term, level) {
+    out$prior_sd_link[out$term == term & out$level == level]
+  }
+  expect_identical(pop("kappa_x", "effect"), NA_real_)
+  expect_identical(pop("kappa", "population"), NA_real_)
+  expect_equal(pop("thetat", "population"), pi / sqrt(3))
+  expect_message(prior_sd_table(fit), "kappa_x \\(effect\\)")
+})
+
+test_that("a fit whose data cannot be read warns and says so", {
+  skip_if_not_installed("bmm")
+  skip_if_not_installed("brms")
+  # sdm's c is a distributional parameter in bmm 1.4.1 and in the
+  # development version alike
+  data <- bounded_fit_data()
+  fit <- suppressMessages(bmm::bmm(bmm::bmf(c ~ 1 + x, kappa ~ 1),
+    data, bmm::sdm(resp_error = "y"),
+    empty = TRUE, backend = "rstan"
+  ))
+  # with its data: student_t(5, 2, 0.75) on the intercept, normal(0, 1)
+  # on x
+  out <- suppressMessages(prior_sd_table(fit))
+  expect_equal(
+    out$prior_sd_link[out$term == "c" & out$level == "population"],
+    sqrt(0.75^2 * 5 / 3 + mean(data$x)^2)
+  )
+  fit$data$x <- NULL
+  expect_warning(
+    out <- suppressMessages(prior_sd_table(fit)),
+    words_re("could not be read")
+  )
+  expect_identical(
+    out$prior_sd_link[out$term == "c" & out$level == "population"],
+    NA_real_
+  )
+  msg <- tryCatch(
+    suppressWarnings(prior_sd_table(fit)),
+    message = conditionMessage
+  )
+  expect_match(msg, words_re("could not be read from the fit's data"))
+  expect_no_match(msg, words_re("prior table without data"))
+})
+
+test_that("an NA centred intercept names the slopes it needs", {
+  priors <- prior_rows(data.frame(
+    prior = c("normal(1, 1)", "", "normal(1, 1)", "normal(0, 1)", ""),
+    class = c("Intercept", "b", "Intercept", "b", "b"),
+    coef = c("", "w", "", "", "v"),
+    group = "", nlpar = "",
+    dpar = c("d", "d", "e", "e", "e"),
+    lb = c("", "", "", "0", ""), ub = ""
+  ))
+  msg <- tryCatch(
+    prior_sd_table_impl(priors, means = list(d = c(w = 0.3), e = c(v = 1))),
+    message = conditionMessage
+  )
+  # a flat slope (d) and a bounded one (e)
+  needs <- function(par, slope) {
+    words_re(sprintf(paste(
+      "intercept of \"%s\" is brms's centred intercept: its SD needs the",
+      "prior SD of its slope \"%s\", which has no closed form"
+    ), par, slope))
+  }
+  expect_match(msg, needs("d", "w"))
+  expect_match(msg, needs("e", "v"))
+  expect_no_match(msg, words_re("means of the predictors"))
+})
+
+test_that("a predictor mean that is 0 but for rounding adds nothing", {
+  # the mean of a centred column is about 1e-17, not 0: beside a flat
+  # slope it would leave the intercept NA
+  w <- c(0.1, 0.2, 0.3, 0.7)
+  w <- w - mean(w)
+  standata <- list(X_d = cbind(Intercept = 1, w = w))
+  means <- design_means(standata)
+  expect_identical(unname(means$d), 0)
+  priors <- prior_rows(data.frame(
+    prior = c("normal(1, 1.5)", ""), class = c("Intercept", "b"),
+    coef = c("", "w"), group = "", nlpar = "", dpar = "d"
+  ))
+  out <- suppressMessages(prior_sd_table_impl(priors, means = means))
+  expect_equal(out$prior_sd_link[out$term == "d"], 1.5)
+  # a mean that is small but not rounding still counts
+  expect_equal(
+    unname(design_means(list(X_d = cbind(Intercept = 1, w = w + 1e-4)))$d),
+    1e-4
+  )
+})
+
+test_that("prior_sd = 'analytic' does not give one cell's means to a row", {
+  # covariates are drawn anew in each replication, so the means of c's
+  # predictor G differ between a row's cells: the grid keeps one prior SD
+  # per row, so c's centred intercept is NA there and the message names
+  # the row. With subjects = "fixed" the cells share G, so the SD is the
+  # exact one. sdm's c is a distributional parameter in bmm 1.4.1 and in
+  # the development version alike.
+  skip_if_not_installed("bmm")
+  run <- function(dir, ...) {
+    recovery_grid(
+      bmm::sdm(resp_error = "y"),
+      grid = data.frame(n_subjects = 3L, n_trials = 10L),
+      pars = c(c = log(3), kappa = log(8)),
+      sds = c(c = 0.3, kappa = 0.3),
+      formula = bmm::bmf(c ~ 1 + G + (1 | id), kappa ~ 1 + (1 | id)),
+      covariates = list(G = c(mean = 40, sd = 10)),
+      dir = dir, reps = 3L, seed = 7, prior_sd = "analytic",
+      ...,
+      .fitter = grid_mock_fitter()$fitter
+    )
+  }
+  cell_mean <- function(dir, rep) {
+    sim <- readRDS(file.path(dir, sprintf("cell-1-rep-%d-sim.rds", rep)))
+    colMeans(stats::model.matrix(~ 1 + G, sim$data))[["G"]]
+  }
+  pop <- function(dir, term) {
+    table <- readRDS(file.path(dir, "prior-sd.rds"))
+    table$prior_sd_link[table$term == term & table$level == "population"]
+  }
+  # sdm's defaults: student_t(5, 2, 0.75) on c's intercept, normal(0, 1)
+  # on its slopes, student_t(5, 1.75, 0.75) on kappa's intercept
+  sd_t <- 0.75 * sqrt(5 / 3)
+  redrawn <- withr::local_tempdir()
+  msgs <- testthat::capture_messages(run(redrawn))
+  means <- vapply(1:3, function(k) cell_mean(redrawn, k), double(1))
+  expect_gt(stats::sd(means), 0)
+  expect_identical(pop(redrawn, "c"), NA_real_)
+  expect_equal(pop(redrawn, "kappa"), sd_t)
+  expect_true(any(grepl(
+    words_re("differ between the replications of grid row 1,"), msgs
+  )))
+  fixed <- withr::local_tempdir()
+  suppressMessages(run(fixed, subjects = "fixed"))
+  means <- vapply(1:3, function(k) cell_mean(fixed, k), double(1))
+  expect_identical(stats::sd(means), 0)
+  expect_equal(pop(fixed, "c"), sqrt(sd_t^2 + means[[1L]]^2))
+})
+
+test_that("a centred intercept with no closed form is not blamed on means", {
+  # without means, an intercept whose own prior has no closed form gets
+  # no "needs the means" reason: the means would not give it an SD
+  priors <- function(intercept) {
+    prior_rows(data.frame(
+      prior = c(intercept, "normal(0, 1)"), class = c("Intercept", "b"),
+      coef = "", group = "", nlpar = "", dpar = "d"
+    ))
+  }
+  priors_x <- function(intercept) {
+    rows <- priors(intercept)
+    rbind(rows, transform(rows[2L, ], coef = "x", prior = ""))
+  }
+  msg <- function(intercept) {
+    tryCatch(prior_sd_table_impl(priors_x(intercept)),
+      message = conditionMessage
+    )
+  }
+  expect_no_match(msg("cauchy(0, 1)"), words_re("means of the predictors"))
+  expect_match(msg("normal(0, 1)"), words_re("means of the predictors"))
+})
+
+test_that("a grid row's means differ if any later cell differs", {
+  # cell 2 differs in c's predictor, cell 3 in kappa's only: both
+  # parameters are marked, not only those of the first differing cell
+  skip_if_not_installed("bmm")
+  model <- bmm::sdm(resp_error = "y")
+  formula <- bmm::bmf(c ~ 1 + G, kappa ~ 1 + H)
+  base <- data.frame(
+    y = c(-1, 0, 1, 0.5), G = c(1, 2, 3, 4), H = c(1, 1, 2, 2)
+  )
+  cell2 <- transform(base, G = G + 1)
+  cell3 <- transform(base, H = H + 1)
+  sims <- lapply(list(base, cell2, cell3), function(d) list(data = d))
+  out <- grid_row_means(sims, formula, model)
+  expect_setequal(out$varying, c("c", "kappa"))
+  expect_false(any(c("c", "kappa") %in% names(out$means)))
 })
