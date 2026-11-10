@@ -67,8 +67,8 @@ adapter_classes <- function() {
 #' for (#52): bmm's `develop` (measured at c13dd2c5, 2026-11-09) gives
 #' `mixture2p` and `mixture3p` the versions `simple`, `slot` and
 #' `slot_averaging` with the class `<model>_<version>`, so an adapter
-#' registered on `"mixture2p"` would simulate the simple model for a slot
-#' model and score its recovery as if that were right.
+#' registered on `"mixture2p"` would take a slot model it cannot simulate
+#' (before #52 such a model failed with an unrelated internal error).
 #' @noRd
 adapter_class <- function(name) {
   switch(name,
@@ -81,27 +81,59 @@ adapter_class <- function(name) {
   )
 }
 
-#' A model's classes, with the version class bmm 1.4.1 leaves out
+#' A model's classes, with the version class a circular model leaves out
 #'
-#' CRAN bmm 1.4.1's `mixture2p` and `mixture3p` have one version, no
-#' version class and `$version` the string `"NA"` (measured 2026-11-09).
-#' bmm's own `check_data.mixture2p()` on `develop` reads such a model as
-#' the version `simple`, and so does this: a model of either class without
-#' a version gets the class `<model>_simple` here. A model that states a
-#' version, by `$version` or by a version class, is read as it states it.
+#' bmm's `develop` gives a circular model the class `<model>_<version>`
+#' and sets `$version` to the same version; the adapters read the class.
+#' A model that has no version class gets one here. When it states a
+#' version by `$version` (a hand-made model may), the class is
+#' `<model>_<version>`, so a stated `"simple"` takes the adapter and a
+#' stated `"slot"` is refused as bmm's slot model is. CRAN bmm 1.4.1's
+#' `mixture2p` and `mixture3p` have one version, no version class and
+#' `$version` the string `"NA"` (measured 2026-11-09); bmm's own
+#' `check_data.mixture2p()` on `develop` reads such a model as the version
+#' `simple`, and so does this. A version class wins over `$version`, as in
+#' bmm's dispatch.
 #' @noRd
 model_classes <- function(model) {
   cls <- class(model)
-  version <- model$version
-  if (is.null(version) || identical(as.character(version), "NA") ||
-        (length(version) == 1L && is.na(version))) {
-    for (base in intersect(c("mixture2p", "mixture3p"), cls)) {
-      if (!any(startsWith(cls, paste0(base, "_")))) {
-        cls <- c(cls, paste0(base, "_simple"))
-      }
+  for (base in intersect(c("mixture2p", "mixture3p", "imm", "sdm"), cls)) {
+    if (any(startsWith(cls, paste0(base, "_")))) {
+      next
+    }
+    if (states_version(model)) {
+      cls <- c(cls, paste0(base, "_", as.character(model$version)[[1L]]))
+    } else if (base %in% c("mixture2p", "mixture3p")) {
+      cls <- c(cls, paste0(base, "_simple"))
     }
   }
   cls
+}
+
+#' Whether a model's `$version` names a version
+#'
+#' `NULL`, `NA` and bmm 1.4.1's string `"NA"` name none.
+#' @noRd
+states_version <- function(model) {
+  version <- model$version
+  !(is.null(version) || identical(as.character(version), "NA") ||
+      (length(version) == 1L && is.na(version)))
+}
+
+#' The version of a circular model, `NA` when it names none
+#'
+#' Read from the version class `<base>_<version>`, as [adapter_name()]
+#' reads it: [model_classes()] adds the class a model that states its
+#' version by `$version` alone leaves out.
+#' @noRd
+circular_version <- function(model, base) {
+  prefix <- paste0(base, "_")
+  cls <- model_classes(model)
+  versioned <- cls[startsWith(cls, prefix)]
+  if (length(versioned) == 0L) {
+    return(NA_character_)
+  }
+  substring(versioned[[1L]], nchar(prefix) + 1L)
 }
 
 #' The adapter a model gets, `NA` when none
@@ -145,18 +177,48 @@ circular_refusal <- function(model) {
   }
   # nolint next: object_usage_linter. Used by cli's glue interpolation.
   versions <- sub(paste0("^", base, "_"), "", adapter_class(base))
+  version <- circular_version(model, base)
+  if (is.na(version)) {
+    return(cli::format_inline(
+      "The built-in {.cls {base}} adapter simulates the version{?s} ",
+      "{.val {versions}}, and this model names no version."
+    ))
+  }
   cli::format_inline(
     "The built-in {.cls {base}} adapter simulates the version{?s} ",
-    "{.val {versions}}, and this model is the version ",
-    "{.val {model$version %||% NA}}."
+    "{.val {versions}}, and this model is the version {.val {version}}."
   )
+}
+
+#' The name a refused circular version is planned under, or `NULL`
+#'
+#' `<model>_<version>`, the class bmm's `develop` gives a version, also for
+#' a model that states its version by `$version` alone: its last class is
+#' the model's, and the model's [validation_defaults()] entry is the
+#' simple model's. A model with `variable_precision = TRUE` keeps its
+#' version class on `develop`, so it gets `_variable_precision` after it:
+#' an entry keyed on a version class does not take it.
+#' @noRd
+refused_model_name <- function(model) {
+  if (is.null(circular_refusal(model))) {
+    return(NULL)
+  }
+  base <- intersect(c("mixture2p", "mixture3p", "imm", "sdm"), class(model))
+  base <- base[[1L]]
+  version <- circular_version(model, base)
+  if (is.na(version)) version <- "unversioned"
+  name <- paste0(base, "_", version)
+  if (isTRUE(model$variable_precision)) {
+    name <- paste0(name, "_variable_precision")
+  }
+  name
 }
 
 #' Refuse a model that has no built-in generator
 #'
 #' A circular version the adapters do not simulate is named, with bmm's
 #' own `simulate_data()` as the way out once bmmtools generates through it
-#' (#22).
+#' (#22), where the installed bmm exports it.
 #' @noRd
 abort_no_generator <- function(model, call = rlang::caller_env()) {
   refusal <- circular_refusal(model)
@@ -172,13 +234,21 @@ abort_no_generator <- function(model, call = rlang::caller_env()) {
       "{first}",
       i = "Supply {.arg generator}, a function \\
            {.code (pars, n_trials, model)} returning one subject's rows.",
-      if (!is.null(refusal)) {
+      if (!is.null(refusal) && bmm_exports("simulate_data")) {
         c(i = "bmm's own {.fn bmm::simulate_data} simulates every version; \\
                a later bmmtools will generate through it ({.url {issue}}).")
       }
     ),
     call = call
   )
+}
+
+#' Whether the installed bmm exports `name`
+#'
+#' `simulate_data()` is exported from bmm 1.5.0 on, not by CRAN 1.4.1.
+#' @noRd
+bmm_exports <- function(name) {
+  name %in% getNamespaceExports("bmm")
 }
 
 #' Look an adapter up by the model's class

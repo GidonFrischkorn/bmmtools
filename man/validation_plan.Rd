@@ -93,7 +93,11 @@ that reads the recovery grid needs \code{"recovery"} too.}
 \item{formula, trial_design, generator}{As in \code{\link[=recovery_grid]{recovery_grid()}}. \code{NULL}
 \code{formula} means \code{\link[=recovery_formula]{recovery_formula()}} with correlated subject effects
 when there are at least two subject-varying parameters, so the
-individual-differences stage has correlations to score.}
+individual-differences stage has correlations to score. A circular
+model the built-in adapters do not simulate (a \code{slot} or
+\code{slot_averaging} version of \code{mixture2p} or \code{mixture3p}, or
+\code{variable_precision = TRUE}) needs a \code{generator}; without one the
+plan is refused.}
 
 \item{seed}{The master seed, required. Each stage derives its own from
 it (see "Seeds").}

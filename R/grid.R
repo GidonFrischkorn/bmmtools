@@ -2239,6 +2239,15 @@ recovery_grid <- function(model,
   # resume reads cell 1 from its file and would never ask
   # (a missing or non-function generator is simulate_recovery()'s to name)
   first_generator <- generator %||% generator_for(model_for(1L))
+  # a model with no generator at all is refused here too, before grid.rds
+  # is written, as simulate_recovery() would refuse it at cell 1
+  if (is.null(generator)) {
+    for (i in seq_len(nrow(grid))) {
+      if (is.null(generator_for(model_for(i)))) {
+        abort_no_generator(model_for(i), call = rlang::current_env())
+      }
+    }
+  }
   if (is.function(first_generator)) {
     check_trial_design_generator(
       trial_design, first_generator, model_for(1L),

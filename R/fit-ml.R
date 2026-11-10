@@ -264,9 +264,11 @@ ml_objective <- function(model, nll = NULL, call = rlang::caller_env()) {
   if (is.null(density)) {
     # nolint next: object_usage_linter. Used by cli's glue interpolation.
     refusal <- circular_refusal(model)
+    # nolint next: object_usage_linter. Used by cli's glue interpolation.
+    label <- refused_model_name(model) %||% model_label(model)
     cli::cli_abort(
       c(
-        "{.fn fit_ml} has no density for {.cls {class(model)[1]}} with \\
+        "{.fn fit_ml} has no density for {.cls {label}} with \\
          {.code method = \"optim\"}.",
         if (!is.null(refusal)) c(x = "{refusal}"),
         i = "It carries one for {.val {density_classes()}}.",

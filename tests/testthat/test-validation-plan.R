@@ -471,6 +471,36 @@ test_that("validation_defaults takes a name or a model and is NULL without", {
   expect_error(validation_defaults(1), "bmmodel")
 })
 
+test_that("a circular version no adapter simulates takes no entry (#52)", {
+  # bmm's develop gives a slot model the class mixture2p_slot and sets
+  # `$version`; a hand-made model may carry either alone, and neither
+  # may resolve to the simple model's mixture2p entry
+  stated <- plan_model()
+  stated$version <- "slot"
+  classed <- plan_model(c("mixture2p", "mixture2p_slot"))
+  for (model in list(stated, classed)) {
+    expect_identical(validation_model_name(model), "mixture2p_slot")
+    expect_null(validation_defaults(model))
+  }
+  # variable precision keeps the version class on develop, and adds no
+  # class on a hand-made 1.4.1-shaped model: neither takes an entry, nor
+  # would an entry keyed on the version class
+  vp_classed <- plan_model(c("mixture2p", "mixture2p_simple"))
+  vp_classed$version <- "simple"
+  vp_bare <- plan_model()
+  for (model in list(vp_classed, vp_bare)) {
+    model$variable_precision <- TRUE
+    expect_identical(
+      validation_model_name(model), "mixture2p_simple_variable_precision"
+    )
+    expect_null(validation_defaults(model))
+  }
+  # the simple model keeps its entry
+  simple <- plan_model(c("mixture2p", "mixture2p_simple"))
+  simple$version <- "simple"
+  expect_identical(validation_model_name(simple), "mixture2p")
+})
+
 # validation_plan(): resolution ------------------------------------------
 
 test_that("a plan fills every field from the entry", {
@@ -569,6 +599,45 @@ test_that("seed is required and must be one number", {
   expect_error(validation_plan(plan_model()), "`seed` is required")
   expect_error(validation_plan(plan_model(), seed = "a"), "single finite")
   expect_error(validation_plan(plan_model(), seed = c(1, 2)), "single finite")
+})
+
+test_that("a circular version no adapter simulates is refused at plan time", {
+  slot <- plan_model(c("mixture2p", "mixture2p_slot"))
+  slot$version <- "slot"
+  vp <- plan_model()
+  vp$variable_precision <- TRUE
+  # every stage that generates data would refuse it in the run; the plan
+  # refuses it before anything is fitted
+  err <- expect_error(
+    validation_plan(slot, pars = c(kappa = 1, thetat = 0), seed = 1)
+  )
+  msg <- cli::ansi_strip(conditionMessage(err))
+  expect_match(msg, "\"slot\"", fixed = TRUE)
+  expect_match(msg, "Supply `generator`", fixed = TRUE)
+  err <- expect_error(
+    validation_plan(vp, pars = c(kappa = 1, thetat = 0, tau = 0), seed = 1)
+  )
+  expect_match(
+    cli::ansi_strip(conditionMessage(err)), "variable_precision = TRUE",
+    fixed = TRUE
+  )
+  # with a generator it is planned, under its own name and no entry
+  generator <- function(pars, n_trials, model) NULL
+  plan <- validation_plan(
+    slot,
+    pars = c(kappa = 1, thetat = 0), generator = generator, seed = 1
+  )
+  expect_identical(plan$model_name, "mixture2p_slot")
+  expect_identical(plan$defaults, "none")
+  # a model with no adapter that is not a circular version is planned as
+  # before: it may have a generator by the time it runs
+  expect_s3_class(
+    validation_plan(
+      plan_model("toy", links = list(a = "identity")),
+      pars = c(a = 0), seed = 1
+    ),
+    "bmmtools_validation_plan"
+  )
 })
 
 test_that("a model that is neither a bmmodel nor a name is an error", {

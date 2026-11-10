@@ -103,7 +103,9 @@ level the prior fit has no draw of is dropped with a message.}
 
 \item{generator}{\code{NULL} simulates each data set with
 \code{\link[=simulate_recovery]{simulate_recovery()}}, which is exact for the intercept-only
-formulas above and requires them. A function lifts that
+formulas above and requires them. A model with no built-in
+generator, such as a circular version the adapters do not
+simulate, is then an error before the prior fit. A function lifts that
 restriction: it is called once per data set as
 \code{generator(draws, data)}, where \code{draws} is that data set's prior
 draw as a \strong{named numeric vector under the fit's own draw names}

@@ -1620,7 +1620,9 @@ check_sbc_args <- function(prior, seed, fitter, cache_mode, cache_location,
 #'   level the prior fit has no draw of is dropped with a message.
 #' @param generator `NULL` simulates each data set with
 #'   [simulate_recovery()], which is exact for the intercept-only
-#'   formulas above and requires them. A function lifts that
+#'   formulas above and requires them. A model with no built-in
+#'   generator, such as a circular version the adapters do not
+#'   simulate, is then an error before the prior fit. A function lifts that
 #'   restriction: it is called once per data set as
 #'   `generator(draws, data)`, where `draws` is that data set's prior
 #'   draw as a **named numeric vector under the fit's own draw names**
@@ -1802,6 +1804,12 @@ sbc <- function(model,
   }
   check_sbc_args(prior, seed, .fitter, cache_mode, cache_location)
   check_sbc_generator(generator)
+  # before the prior fit, which is a Stan run: found later, inside
+  # simulate_from_draw(), a model with no generator would be reported as
+  # a prior too wide to simulate from
+  if (is.null(generator) && is.null(generator_for(model))) {
+    abort_no_generator(model, call = rlang::current_env())
+  }
   dots <- rlang::list2(...)
   check_sbc_dots(dots)
 

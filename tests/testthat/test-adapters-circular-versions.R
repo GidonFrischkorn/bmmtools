@@ -284,7 +284,12 @@ test_that("a version the adapter cannot simulate is refused, with the way out", 
   expect_match(msg, "mixture2p")
   expect_match(msg, "\"slot\"", fixed = TRUE)
   expect_match(msg, "generator")
-  expect_match(msg, "simulate_data()", fixed = TRUE)
+  # the way out only where the installed bmm exports it (not CRAN 1.4.1)
+  if (bmm_exports("simulate_data")) {
+    expect_match(msg, "simulate_data()", fixed = TRUE)
+  } else {
+    expect_no_match(msg, "simulate_data", fixed = TRUE)
+  }
 
   # the same refusal from a component
   expect_error(
@@ -312,6 +317,118 @@ test_that("a version the adapter cannot simulate is refused, with the way out", 
     cli::ansi_strip(conditionMessage(err)), "variable_precision = TRUE",
     fixed = TRUE
   )
+})
+
+test_that("a refusal names the version a model's class states", {
+  # a version class without `$version`, or with 1.4.1's "NA", is named by
+  # its class rather than as the version NA
+  for (version in list(NULL, "NA")) {
+    model <- structure(
+      list(version = version),
+      class = c("bmmodel", "circular", "mixture2p", "mixture2p_slot")
+    )
+    msg <- cli::ansi_strip(circular_refusal(model))
+    expect_match(msg, "this model is the version \"slot\"", fixed = TRUE)
+  }
+  # `$version` alone names it too
+  stated <- structure(
+    list(version = "slot_averaging"),
+    class = c("bmmodel", "circular", "mixture3p")
+  )
+  expect_match(
+    cli::ansi_strip(circular_refusal(stated)), "\"slot_averaging\"",
+    fixed = TRUE
+  )
+})
+
+test_that("a version stated by `$version` alone is read as that version", {
+  model <- function(cls, version, vp = NULL) {
+    structure(
+      list(version = version, variable_precision = vp),
+      class = c("bmmodel", "circular", cls)
+    )
+  }
+  # a version the adapter simulates takes it, under the model's own name
+  taken <- list(
+    mixture2p = model("mixture2p", "simple"),
+    mixture3p = model(c("non_targets", "mixture3p"), "simple"),
+    imm = model(c("non_targets", "imm"), "full"),
+    imm = model(c("non_targets", "imm"), "bsc"),
+    imm = model(c("non_targets", "imm"), "abc"),
+    sdm = model("sdm", "simple")
+  )
+  for (i in seq_along(taken)) {
+    name <- names(taken)[[i]]
+    label <- paste(name, taken[[i]]$version)
+    expect_identical(adapter_name(taken[[i]]), name, label = label)
+    expect_null(circular_refusal(taken[[i]]), label = label)
+    expect_identical(validation_model_name(taken[[i]]), name, label = label)
+  }
+  # one it does not is refused under `<model>_<version>`
+  slot <- model("mixture2p", "slot")
+  expect_identical(adapter_name(slot), NA_character_)
+  expect_identical(validation_model_name(slot), "mixture2p_slot")
+  # a version class wins over `$version`, as in bmm's dispatch
+  expect_identical(
+    adapter_name(model(c("mixture2p", "mixture2p_slot"), "simple")),
+    NA_character_
+  )
+  expect_identical(
+    adapter_name(model(c("mixture2p", "mixture2p_simple"), "slot")),
+    "mixture2p"
+  )
+  # variable precision is refused whatever the version says
+  expect_identical(
+    adapter_name(model("mixture2p", "simple", vp = TRUE)), NA_character_
+  )
+  # an imm that states no version has none to read
+  expect_identical(
+    adapter_name(model(c("non_targets", "imm"), NULL)), NA_character_
+  )
+})
+
+test_that("a hand-made simple model without its version class simulates", {
+  skip_if_not_installed("bmm")
+  # bmm's model with the version class taken off and `$version` kept
+  unclassed <- function(model, base, version) {
+    cls <- class(model)
+    class(model) <- cls[!startsWith(cls, paste0(base, "_"))]
+    model$version <- version
+    mu_named(model)
+  }
+  models <- list(
+    mixture2p = unclassed(
+      bmm::mixture2p(resp_error = "y"), "mixture2p", "simple"
+    ),
+    mixture3p = unclassed(nt_model("mixture3p"), "mixture3p", "simple"),
+    imm = unclassed(nt_model("imm"), "imm", "full"),
+    sdm = unclassed(bmm::sdm(resp_error = "y"), "sdm", "simple")
+  )
+  for (name in names(models)) {
+    sim <- simulate_at_location(models[[name]], name)
+    expect_identical(sim$generator, paste0("adapter:", name), label = name)
+    expect_at_location(sim$data$y, name)
+  }
+})
+
+test_that("bmm's own refused versions are refused at plan time (real build)", {
+  skip_unless_mu_build()
+  model <- bmm::mixture2p(resp_error = "y", variable_precision = TRUE)
+  expect_identical(
+    validation_model_name(model), "mixture2p_simple_variable_precision"
+  )
+  expect_null(validation_defaults(model))
+  expect_error(
+    validation_plan(
+      model,
+      pars = c(kappa = 0.3, tau = 0.3, thetat = 0.3), seed = 1
+    ),
+    "variable_precision = TRUE",
+    fixed = TRUE
+  )
+  slot <- bmm::mixture2p(resp_error = "y", set_size = "ss", version = "slot")
+  expect_identical(validation_model_name(slot), "mixture2p_slot")
+  expect_error(validation_plan(slot, seed = 1), "generator")
 })
 
 test_that("imm's fixed b reaches the adapter as 1 (real build)", {
@@ -376,4 +493,51 @@ test_that("the imm adapter passes the model's b, 1 when it has none", {
   # reaches the adapter as 1
   expect_identical(imm_args(pars, model, 2, 0.5)$b, 1)
   expect_identical(imm_args(c(pars, b = 2), model, 2, 0.5)$b, 2)
+})
+
+test_that("a model that names no version is told so, not version NA", {
+  skip_if_not_installed("bmm")
+  model <- nt_model("imm")
+  class(model) <- class(model)[!startsWith(class(model), "imm_")]
+  model$version <- NULL
+  msg <- circular_refusal(model)
+  expect_match(msg, "this model names no version", fixed = TRUE)
+  expect_no_match(msg, "NA", fixed = TRUE)
+})
+
+test_that("recovery_grid() refuses a refused version before grid.rds", {
+  skip_if_not_installed("bmm")
+  slot <- as_version(
+    mu_named(bmm::mixture2p(resp_error = "y")), "mixture2p", "slot"
+  )
+  dir <- withr::local_tempdir()
+  calls <- 0L
+  expect_error(
+    recovery_grid(
+      slot,
+      grid = data.frame(n_subjects = 2L, n_trials = 4L),
+      pars = c(kappa = log(10), thetat = 0),
+      dir = dir, reps = 1L, seed = 1,
+      .fitter = function(...) {
+        calls <<- calls + 1L
+        stop("no fit expected")
+      }
+    ),
+    "slot"
+  )
+  expect_identical(calls, 0L)
+  expect_false(file.exists(file.path(dir, "grid.rds")))
+})
+
+test_that("fit_ml()'s optim refusal names the refused version", {
+  skip_if_not_installed("bmm")
+  slot <- as_version(
+    mu_named(bmm::mixture2p(resp_error = "y")), "mixture2p", "slot"
+  )
+  err <- expect_error(
+    fit_ml(slot, data.frame(id = 1, y = 0), method = "optim")
+  )
+  msg <- cli::ansi_strip(conditionMessage(err))
+  expect_match(msg, "no density for <mixture2p_slot>", fixed = TRUE)
+  expect_no_match(msg, "bmmodel", fixed = TRUE)
 })
