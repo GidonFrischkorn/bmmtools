@@ -1,5 +1,10 @@
 # bmmtools (development version)
 
+* A new test lists the bmm models and versions bmmtools cannot simulate
+  and fails on any that neither a checked adapter nor a listed
+  exception covers (#48). On CRAN bmm 1.4.1 and 1.4.2 the exceptions
+  are `mpt`, `sdt_cdp` and the three `sdt_rating` versions. A
+  `simulate_data()` method in bmm does not count until #22.
 * `recovery_grid()` can split one grid over several R processes (#19).
   The setup call, `cells = integer(0)`, writes `grid.rds`, runs the
   preflight and the prior fits of `prior_sd`, and simulates every cell,
