@@ -9,22 +9,50 @@
   `variable_precision = TRUE`. The adapters simulate the fixed-precision
   `simple` model (and `imm`'s `full`, `bsc` and `abc`) only. Any other
   version is now refused with an error that names the model and the
-  version, where before it was simulated as the simple model and its
-  recovery scored as if that were right. Supply `generator =` for those
-  versions. `imm`'s adapter passes the model's `b` to `rimm()`, 1 where
-  the model has none. A stored simulation whose truth names `mu1` is
-  scored as it was: against a fit that names the location `mu`, the
-  `mu1` row is reported as unmatched, not renamed. `prior_check()` gives
-  every circular model the response range from −π to π, whatever its
-  version.
+  version. Before, the slot versions and a variable-precision
+  `mixture2p` failed with an unrelated internal error, and `mixture3p`
+  and `imm` with `variable_precision = TRUE` were simulated at a fixed
+  precision without a word. Supply `generator =` for those versions.
+  `recovery_grid()` refuses such a model before it writes `grid.rds`,
+  `sbc()` with its default generator before the prior fit rather than
+  after it, and `validation_plan()` without a `generator` rather than
+  letting `run_validation()` fail stage by stage. Such a model is planned
+  under its version's name (`mixture2p_slot`), never the simple model's
+  entry. A model is read as the version its class names; one without a
+  version class (a hand-made model) is read as the version its
+  `$version` states, so a stated `"simple"` is simulated and a stated
+  `"slot"` is refused. `imm`'s adapter passes the model's `b` to
+  `rimm()`, 1 where the model has none. A stored simulation whose truth
+  names `mu1` is scored as it was: against a fit that names the location
+  `mu`, the `mu1` row is reported as unmatched, not renamed.
+  `prior_check()` gives every circular model the response range from −π
+  to π, whatever its version.
 * `prior_sd_table()`, and with it `prior_sd = "analytic"`, reads the
-  intercept priors of bmm 1.5.0, which fits `kappa` and `thetat` as
-  distributional parameters and puts an intercept's prior on the class
-  `Intercept` (#52). brms centres that intercept, so a parameter with
-  other population coefficients gets no closed-form SD for its intercept
-  and says so; before, its intercept had no row and contraction was `NA`
-  without a message. `prior_check()`'s warning about flat slopes names
-  the parameter of a distributional parameter's slope too.
+  priors of a distributional parameter's population intercept, which
+  sits on the class `Intercept` (#52). This covers bmm 1.5.0's `kappa`
+  and `thetat` and, on CRAN 1.4.1 as well, the distributional
+  parameters of `sdm` and `ezdm`, whose intercepts had no row before and
+  now get one. brms centres that intercept when the parameter has other
+  population coefficients, so the reported intercept's prior SD is
+  `sqrt(sd_I^2 + sum(m_j^2 * sd_j^2))` over the predictor means `m_j`.
+  `prior_sd = "analytic"` and `prior_sd_table()` of a fit read the means
+  from the data and give that SD. The intercept is `NA`, with a message
+  that says why, when the means are unknown (a bare prior table), when a
+  slope it needs is flat or bounded (the message names the slope), or
+  when a grid row's means differ between its replications (covariates
+  drawn per replication; the message names the row). A fit whose data
+  cannot be read gives a warning with the error. Bounds set on a class
+  prior now bound each of its coefficients, as in brms, so such a
+  coefficient's SD is `NA` rather than the unbounded value. Before, the
+  intercept had no row of its own: with a single slope, that slope was
+  reported under the parameter's name at level `population`, so
+  `recover()` scored the intercept's contraction against the slope's
+  prior SD without a message; with several slopes, the slopes were
+  reported at level `population` and scored as population values. A
+  distributional parameter's slopes are now reported as
+  `<parameter>_<predictor>` at level `effect`. `prior_check()`'s
+  warning about flat slopes names the parameter of a distributional
+  parameter's slope too.
 * The article script `hierarchical-vs-ml.R` calls `bmm::parameter_info()`
   in place of `bmm::parameters()`, which bmm 1.6.0 removes (#54).
 
