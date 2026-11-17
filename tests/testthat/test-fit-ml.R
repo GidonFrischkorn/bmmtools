@@ -48,6 +48,16 @@ test_that("flat_ml_prior() blanks the class-level prior of every parameter", {
   expect_true(all(!nzchar(p$prior)))
 })
 
+test_that("flat_ml_prior() names the parameters of a dpar model as dpars", {
+  skip_if_not_installed("brms")
+  model <- fake_ml_model()
+  model$dpar_since <- "1.5.0"
+  p <- flat_ml_prior(model)
+  expect_setequal(p$dpar, c("kappa", "thetat"))
+  expect_true(all(!nzchar(p$nlpar)))
+  expect_true(all(p$class == "b" & !nzchar(p$prior)))
+})
+
 # the rename ---------------------------------------------------------------
 
 ml_population_rows <- function(terms, estimate = 0, sd = 0.5) {

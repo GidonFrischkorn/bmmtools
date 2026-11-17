@@ -799,10 +799,30 @@ generate_mixture2p <- function(pars, n_trials, model) {
   name_columns(data.frame(y), list(model$resp_vars$resp_error))
 }
 
+#' The activation and scaling an `sdm()` model was built with
+#'
+#' From bmm 1.5.0 (bmm #637) `sdm()` takes `activation` and `scaling`,
+#' keeps them in `model$other_vars`, and `rsdm()`/`dsdm()` take the same
+#' arguments; without them both functions use the von Mises activation, so
+#' a Laplace model would be simulated and scored as a von Mises one. Older
+#' bmm builds record neither and get no extra arguments.
+#'
+#' @return A named list, empty when the model records neither.
+#' @noRd
+sdm_options <- function(model) {
+  vars <- model$other_vars
+  Filter(Negate(is.null), list(
+    activation = vars$activation, scaling = vars$scaling
+  ))
+}
+
 #' Signal discrimination model: one response error per trial
 #' @noRd
 generate_sdm <- function(pars, n_trials, model) {
-  y <- bmm::rsdm(n_trials, mu = pars$mu, c = pars$c, kappa = pars$kappa)
+  y <- do.call(bmm::rsdm, c(
+    list(n_trials, mu = pars$mu, c = pars$c, kappa = pars$kappa),
+    sdm_options(model)
+  ))
   name_columns(data.frame(y), list(model$resp_vars$resp_error))
 }
 

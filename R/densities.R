@@ -263,8 +263,11 @@ density_mixture2p <- function(pars, data, model) {
 #' Signal discrimination model: one response error per trial
 #' @noRd
 density_sdm <- function(pars, data, model) {
-  bmm::dsdm(
-    data[[model$resp_vars$resp_error]],
-    mu = pars$mu, c = pars$c, kappa = pars$kappa, log = TRUE
-  )
+  do.call(bmm::dsdm, c(
+    list(
+      data[[model$resp_vars$resp_error]],
+      mu = pars$mu, c = pars$c, kappa = pars$kappa, log = TRUE
+    ),
+    sdm_options(model)
+  ))
 }
