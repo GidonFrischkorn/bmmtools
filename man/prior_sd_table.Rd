@@ -46,11 +46,29 @@ and half-Student-t, for \code{nu > 2}, the square root of
 \code{2 * sigma * sqrt(nu) * gamma((nu + 1) / 2) / (sqrt(pi) * gamma(nu / 2) * (nu - 1))}.
 
 Any other prior is \code{NA} --- a flat prior, a prior with bounds on a
-coefficient, a Student t with \code{nu <= 2} (whose variance is infinite),
+coefficient (bounds set on the class bound each of its coefficients,
+as in brms), a Student t with \code{nu <= 2} (whose variance is infinite),
 a half prior not centred on 0, another family --- and one message names
 those terms. A prior-only fit covers them: pass it, or a
 \code{\link[=prior_check]{prior_check()}}, as \code{prior_sd} instead. Fixed parameters
 (\code{constant()}) have no row, as they have no estimate.
+
+A distributional parameter with an intercept and other population
+coefficients (\code{kappa ~ 1 + x} under bmm's development version, which
+fits \code{kappa} and \code{thetat} as distributional parameters) has its
+intercept prior on brms's centred intercept \code{I}, while the intercept
+reported is \code{I - sum(m_j * b_j)}, with \code{m_j} the mean of predictor \code{j}
+in the design brms fits. Its prior SD is then
+\code{sqrt(sd_I^2 + sum(m_j^2 * sd_j^2))}, with \code{sd_j} the closed-form SD
+of \code{b_j}; a predictor with mean 0 (a sum contrast in a balanced
+design) adds nothing. The means come from the data: a fit's own,
+through \code{brms::standata()}, or the simulated data of
+\code{recovery_grid(prior_sd = "analytic")}. A prior table such as
+\code{bmm::default_prior()} returns carries no data, so such an intercept
+is \code{NA} there and the message says it is centred; a fit whose data
+cannot be read gives \code{NA} too, with a warning that says why. The
+intercept is also \code{NA} where a slope with a non-zero mean has no
+closed form, and the message names that slope.
 
 A Student t prior on a standard deviation with \code{nu = 3}, brms's
 default, has an infinite fourth moment, so the SD of a prior-only

@@ -43,11 +43,12 @@ bmm_fun <- function(name) {
   getExportedValue("bmm", name)
 }
 
-#' The class name an adapter is registered under
+#' The names adapters are registered under
 #'
-#' A model with versions of different parameters gets one adapter per
-#' version, registered under the version's own class (D100), so that a
-#' version bmm adds later gets no adapter rather than a sibling's.
+#' A model with versions of different parameters gets its adapter
+#' registered under the classes of the versions it simulates
+#' ([adapter_class()]), so that a version bmm adds later gets no adapter
+#' rather than a sibling's.
 #' @noRd
 adapter_classes <- function() {
   c(
@@ -56,25 +57,198 @@ adapter_classes <- function() {
   )
 }
 
-#' The class a model must carry for an adapter to take it
+#' The classes a model must carry one of for an adapter to take it
 #'
-#' The adapter's own name, except the three-parameter `ezdm`'s, which keeps
+#' The adapter's own name, except where a model has versions that one
+#' adapter cannot all simulate. The three-parameter `ezdm`'s adapter keeps
 #' its 0.2.0 name (it is part of every stored `"adapter:ezdm"` record and
-#' of the `validation_defaults()` entry) and takes only the version class
-#' `ezdm_3par`.
+#' of the `validation_defaults()` entry) and takes only `ezdm_3par`. The
+#' circular adapters take the fixed-precision versions they were written
+#' for (#52): bmm's `develop` (measured at c13dd2c5, 2026-11-09) gives
+#' `mixture2p` and `mixture3p` the versions `simple`, `slot` and
+#' `slot_averaging` with the class `<model>_<version>`, so an adapter
+#' registered on `"mixture2p"` would take a slot model it cannot simulate
+#' (before #52 such a model failed with an unrelated internal error).
 #' @noRd
 adapter_class <- function(name) {
-  if (identical(name, "ezdm")) "ezdm_3par" else name
+  switch(name,
+    ezdm = "ezdm_3par",
+    mixture2p = "mixture2p_simple",
+    mixture3p = "mixture3p_simple",
+    sdm = "sdm_simple",
+    imm = c("imm_full", "imm_bsc", "imm_abc"),
+    name
+  )
 }
 
+#' A model's classes, with the version class a circular model leaves out
+#'
+#' bmm's `develop` gives a circular model the class `<model>_<version>`
+#' and sets `$version` to the same version; the adapters read the class.
+#' A model that has no version class gets one here. When it states a
+#' version by `$version` (a hand-made model may), the class is
+#' `<model>_<version>`, so a stated `"simple"` takes the adapter and a
+#' stated `"slot"` is refused as bmm's slot model is. CRAN bmm 1.4.1's
+#' `mixture2p` and `mixture3p` have one version, no version class and
+#' `$version` the string `"NA"` (measured 2026-11-09); bmm's own
+#' `check_data.mixture2p()` on `develop` reads such a model as the version
+#' `simple`, and so does this. A version class wins over `$version`, as in
+#' bmm's dispatch.
+#' @noRd
+model_classes <- function(model) {
+  cls <- class(model)
+  for (base in intersect(c("mixture2p", "mixture3p", "imm", "sdm"), cls)) {
+    if (any(startsWith(cls, paste0(base, "_")))) {
+      next
+    }
+    if (states_version(model)) {
+      cls <- c(cls, paste0(base, "_", as.character(model$version)[[1L]]))
+    } else if (base %in% c("mixture2p", "mixture3p")) {
+      cls <- c(cls, paste0(base, "_simple"))
+    }
+  }
+  cls
+}
+
+#' Whether a model's `$version` names a version
+#'
+#' `NULL`, `NA` and bmm 1.4.1's string `"NA"` name none.
+#' @noRd
+states_version <- function(model) {
+  version <- model$version
+  !(is.null(version) || identical(as.character(version), "NA") ||
+      (length(version) == 1L && is.na(version)))
+}
+
+#' The version of a circular model, `NA` when it names none
+#'
+#' Read from the version class `<base>_<version>`, as [adapter_name()]
+#' reads it: [model_classes()] adds the class a model that states its
+#' version by `$version` alone leaves out.
+#' @noRd
+circular_version <- function(model, base) {
+  prefix <- paste0(base, "_")
+  cls <- model_classes(model)
+  versioned <- cls[startsWith(cls, prefix)]
+  if (length(versioned) == 0L) {
+    return(NA_character_)
+  }
+  substring(versioned[[1L]], nchar(prefix) + 1L)
+}
+
+#' The adapter a model gets, `NA` when none
+#'
+#' A circular model with `variable_precision = TRUE` gets none: bmm adds
+#' `tau` and keeps the version class (`mixture2p_simple`, measured on
+#' `develop` c13dd2c5), and no adapter draws the precision.
 #' @noRd
 adapter_name <- function(model) {
+  if (isTRUE(model$variable_precision)) {
+    return(NA_character_)
+  }
+  cls <- model_classes(model)
   for (name in adapter_classes()) {
-    if (inherits(model, adapter_class(name))) {
+    if (any(adapter_class(name) %in% cls)) {
       return(name)
     }
   }
   NA_character_
+}
+
+#' Why a circular model has no adapter, or `NULL`
+#'
+#' For a version of `mixture2p`, `mixture3p`, `imm` or `sdm` that its
+#' adapter does not simulate: the line that names the model and what it
+#' is, for the errors of [abort_no_generator()] and `fit_ml()`. `NULL` for
+#' every other model, which keeps its general message.
+#' @noRd
+circular_refusal <- function(model) {
+  base <- intersect(c("mixture2p", "mixture3p", "imm", "sdm"), class(model))
+  if (length(base) == 0L || !is.na(adapter_name(model))) {
+    return(NULL)
+  }
+  base <- base[[1L]]
+  if (isTRUE(model$variable_precision)) {
+    # one string per line: format_inline() keeps a backslash-newline
+    return(cli::format_inline(
+      "The built-in {.cls {base}} adapter draws a fixed precision, ",
+      "and this model has {.code variable_precision = TRUE}."
+    ))
+  }
+  # nolint next: object_usage_linter. Used by cli's glue interpolation.
+  versions <- sub(paste0("^", base, "_"), "", adapter_class(base))
+  version <- circular_version(model, base)
+  if (is.na(version)) {
+    return(cli::format_inline(
+      "The built-in {.cls {base}} adapter simulates the version{?s} ",
+      "{.val {versions}}, and this model names no version."
+    ))
+  }
+  cli::format_inline(
+    "The built-in {.cls {base}} adapter simulates the version{?s} ",
+    "{.val {versions}}, and this model is the version {.val {version}}."
+  )
+}
+
+#' The name a refused circular version is planned under, or `NULL`
+#'
+#' `<model>_<version>`, the class bmm's `develop` gives a version, also for
+#' a model that states its version by `$version` alone: its last class is
+#' the model's, and the model's [validation_defaults()] entry is the
+#' simple model's. A model with `variable_precision = TRUE` keeps its
+#' version class on `develop`, so it gets `_variable_precision` after it:
+#' an entry keyed on a version class does not take it.
+#' @noRd
+refused_model_name <- function(model) {
+  if (is.null(circular_refusal(model))) {
+    return(NULL)
+  }
+  base <- intersect(c("mixture2p", "mixture3p", "imm", "sdm"), class(model))
+  base <- base[[1L]]
+  version <- circular_version(model, base)
+  if (is.na(version)) version <- "unversioned"
+  name <- paste0(base, "_", version)
+  if (isTRUE(model$variable_precision)) {
+    name <- paste0(name, "_variable_precision")
+  }
+  name
+}
+
+#' Refuse a model that has no built-in generator
+#'
+#' A circular version the adapters do not simulate is named, with bmm's
+#' own `simulate_data()` as the way out once bmmtools generates through it
+#' (#22), where the installed bmm exports it.
+#' @noRd
+abort_no_generator <- function(model, call = rlang::caller_env()) {
+  refusal <- circular_refusal(model)
+  # nolint start: object_usage_linter. Used by cli's glue interpolation.
+  issue <- "https://github.com/GidonFrischkorn/bmmtools/issues/22"
+  # nolint end
+  # nolint next: object_usage_linter. Used by cli's glue interpolation.
+  first <- refusal %||% cli::format_inline(
+    "No generator is known for a model of class {.cls {class(model)}}."
+  )
+  cli::cli_abort(
+    c(
+      "{first}",
+      i = "Supply {.arg generator}, a function \\
+           {.code (pars, n_trials, model)} returning one subject's rows.",
+      if (!is.null(refusal) && bmm_exports("simulate_data")) {
+        c(i = "bmm's own {.fn bmm::simulate_data} simulates every version; \\
+               a later bmmtools will generate through it ({.url {issue}}).")
+      }
+    ),
+    call = call
+  )
+}
+
+#' Whether the installed bmm exports `name`
+#'
+#' `simulate_data()` is exported from bmm 1.5.0 on, not by CRAN 1.4.1.
+#' @noRd
+bmm_exports <- function(name) {
+  name %in% getNamespaceExports("bmm")
 }
 
 #' Look an adapter up by the model's class
@@ -619,7 +793,8 @@ generate_cswald <- function(pars, n_trials, model) {
 generate_mixture2p <- function(pars, n_trials, model) {
   y <- bmm::rmixture2p(
     n_trials,
-    mu = pars$mu1, kappa = pars$kappa, p_mem = pars$thetat
+    mu = pars[[location_parameter(model)]], kappa = pars$kappa,
+    p_mem = pars$thetat
   )
   name_columns(data.frame(y), list(model$resp_vars$resp_error))
 }
@@ -635,13 +810,28 @@ generate_sdm <- function(pars, n_trials, model) {
 
 #' The location parameter of a circular model, read off the model
 #'
-#' `mu1` on the installed bmm; the rebuilt circular mixture models of bmm
-#' 1.5.0 rename it `mu`.
+#' `mu1` on CRAN bmm 1.4.1; the rebuilt circular mixture models of bmm's
+#' `develop` (1.5.0) rename it `mu` (#52). Both builds keep it among the
+#' fixed parameters and in `links` (measured 2026-11-09), so it is read
+#' from [model_parameters()], which is where `model_spec()` will be read
+#' once bmmtools reads it (#47). A model that names neither has no
+#' location to give, and that is an error rather than a guess.
 #'
 #' @noRd
-location_parameter <- function(model) {
-  found <- grep("^mu1?$", names(model$parameters), value = TRUE)
-  if (length(found) == 0L) "mu1" else found[[1L]]
+location_parameter <- function(model, call = rlang::caller_env()) {
+  info <- model_parameters(model)
+  found <- intersect(c("mu", "mu1"), c(info$fixed, info$free))
+  if (length(found) == 0L) {
+    cli::cli_abort(
+      c(
+        "The model {.cls {model_label(model)}} names no location parameter.",
+        i = "A circular model's location is {.val mu} (bmm 1.5.0 and later) \
+             or {.val mu1} (bmm 1.4)."
+      ),
+      call = call
+    )
+  }
+  found[[1L]]
 }
 
 #' Each trial's set size, non-target locations and distances
@@ -756,8 +946,11 @@ generate_mixture3p <- function(pars, n_trials, model, trial_design = NULL) {
 #' lure at distance `d` the weight `c * exp(-s * d) + a` (`bsc`: `c *
 #' exp(-s * d)`; `abc`: `a`), and guessing 1, all on the natural scale
 #' (spec § 9.1). `dimm()` computes `c * exp(-s * dist) + a` against
-#' `b`, so `b = 1`, `bsc` passes `a = 0`, and `abc` puts its lures at an
-#' infinite distance, which leaves them `a` alone.
+#' `b`, so `bsc` passes `a = 0`, and `abc` puts its lures at an infinite
+#' distance, which leaves them `a` alone. `b` is the guessing weight on the
+#' natural scale: bmm's `develop` makes it a parameter, fixed at 0 on the
+#' log link, which reaches here as 1 (measured 2026-11-09); bmm 1.4.1 has
+#' no `b`, and 1 is its value there too.
 #'
 #' @param lures,dist One trial's non-target locations and distances.
 #' @noRd
@@ -768,7 +961,7 @@ imm_args <- function(pars, model, lures, dist) {
     dist = c(0, if (abc) rep(Inf, length(lures)) else dist),
     c = pars$c,
     a = if (inherits(model, "imm_bsc")) 0 else pars$a,
-    b = 1,
+    b = pars$b %||% 1,
     s = if (abc) 1 else pars$s,
     kappa = pars$kappa
   )

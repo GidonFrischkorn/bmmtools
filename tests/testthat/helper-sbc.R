@@ -10,7 +10,7 @@
 #' A `bmmodel`-shaped object with the free parameters a test needs
 #'
 #' `model_parameters()` reads the slots rather than calling
-#' `bmm::parameters()`, so this stands in without bmm loaded: the free
+#' `bmm::parameter_info()`, so this stands in without bmm loaded: the free
 #' set is the names of `links` minus the names of `fixed_parameters`.
 #'
 #' @noRd

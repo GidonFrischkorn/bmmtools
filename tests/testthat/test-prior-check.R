@@ -658,6 +658,17 @@ test_that("a coefficient with no prior at either level is still flat", {
   expect_true("tasktask1 (kappa)" %in% improper_prior_slopes(table))
 })
 
+test_that("a flat slope of a dpar names its parameter too", {
+  # bmm 1.5.0 fits kappa and thetat as dpars (#52)
+  table <- task_prior_table()
+  table$dpar <- table$nlpar
+  table$nlpar <- ""
+  expect_identical(
+    improper_prior_slopes(table),
+    improper_prior_slopes(task_prior_table())
+  )
+})
+
 test_that("a class-level prior covers its own parameter only", {
   expect_identical(
     improper_prior_slopes(task_prior_table(kappa = "normal(0, 1)")),

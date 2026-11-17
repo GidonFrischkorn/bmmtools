@@ -255,7 +255,8 @@ density_cswald <- function(pars, data, model) {
 density_mixture2p <- function(pars, data, model) {
   bmm::dmixture2p(
     data[[model$resp_vars$resp_error]],
-    mu = pars$mu1, kappa = pars$kappa, p_mem = pars$thetat, log = TRUE
+    mu = pars[[location_parameter(model)]], kappa = pars$kappa,
+    p_mem = pars$thetat, log = TRUE
   )
 }
 

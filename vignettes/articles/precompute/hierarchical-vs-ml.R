@@ -8,6 +8,11 @@
 # and loads the results from assets/hierarchical-vs-ml.rds, so it renders
 # without Stan. Fits go to precompute/fits/, which is not tracked.
 #
+# 2026-11-09 (#54): the `links` chunk calls bmm::parameter_info(). The
+# stored asset was made with bmm::parameters(), deprecated in bmm 1.4.0
+# and removed in 1.6.0, which returns the same table; this script was not
+# rerun for the change.
+#
 # The single data set is the one vignettes/articles/bmmtools.Rmd fits, at
 # the same seed, the same scale and the same budget, so the hierarchical
 # side is read back from the cache that article's precompute already
@@ -68,7 +73,7 @@ spread <- dplyr::summarise(
 spread
 
 ## ---- links
-par_table <- bmm::parameters(model)
+par_table <- bmm::parameter_info(model)
 links <- stats::setNames(par_table$link, par_table$parameter)
 links
 
