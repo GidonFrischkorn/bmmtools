@@ -481,3 +481,29 @@ test_that("a model naming its columns by regex is refused by name", {
     "regex"
   )
 })
+
+# sdm options (bmm 1.5.0) -------------------------------------------------
+
+test_that("an sdm with Laplace activation is simulated and scored as one", {
+  skip_if_not_installed("bmm")
+  skip_if_not("activation" %in% names(formals(bmm::sdm)))
+  model <- bmm::sdm("y", activation = "laplace")
+  expect_identical(sdm_options(model)$activation, "laplace")
+  pars <- list(mu = 0, c = 3, kappa = 2)
+  data <- data.frame(y = c(-1, 0, 0.5, 2))
+  expect_equal(
+    density_sdm(pars, data, model),
+    bmm::dsdm(data$y, 0, 3, 2, log = TRUE, activation = "laplace")
+  )
+  expect_false(isTRUE(all.equal(
+    density_sdm(pars, data, model),
+    bmm::dsdm(data$y, 0, 3, 2, log = TRUE)
+  )))
+  withr::with_seed(1, a <- generate_sdm(pars, 5, model)$y)
+  withr::with_seed(1, b <- bmm::rsdm(5, 0, 3, 2, activation = "laplace"))
+  expect_identical(a, b)
+})
+
+test_that("a model without sdm options gets no extra arguments", {
+  expect_length(sdm_options(list(other_vars = list())), 0L)
+})

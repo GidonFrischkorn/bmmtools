@@ -1,5 +1,12 @@
-# bmmtools (development version)
+# bmmtools 0.3.1
 
+* `sdm()`'s `activation` and `scaling` (bmm 1.5.0) reach `rsdm()` and
+  `dsdm()` in the built-in generator and density, so a Laplace model is
+  simulated and scored as one; before, both used the von Mises
+  activation (#52).
+* The flat priors of `fit_ml()` name the parameters of bmm 1.5.0's
+  circular mixtures with `dpar =`, which they now are, so bmm no longer
+  translates them and warns on every fit (#52).
 * The circular adapters work with bmm's rebuilt `mixture2p`, `mixture3p`
   and `imm` (#52). bmm 1.5.0 renames their location `mu1` to `mu`; the
   adapters and the `mixture2p` density read the name from the model, so
