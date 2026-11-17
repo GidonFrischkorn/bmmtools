@@ -71,6 +71,21 @@ no_pooling_formula <- function(model, by = "id", formula = NULL,
   do.call(bmm::bmf, formulas)
 }
 
+#' The column of a brms prior that names one of a model's parameters
+#'
+#' bmm 1.5.0 makes the parameters of `mixture2p()`, `mixture3p()` and
+#' `imm()` distributional parameters of a custom family, where bmm 1.4 had
+#' non-linear ones, and marks such a model with `dpar_since`. bmm still
+#' takes `nlpar =` for them, but translates it and warns on every fit, so
+#' a prior bmmtools builds names them as `dpar`. Every other model keeps
+#' the column it has always used.
+#'
+#' @return `"dpar"` or `"nlpar"`.
+#' @noRd
+prior_par_column <- function(model) {
+  if (is.null(model$dpar_since)) "nlpar" else "dpar"
+}
+
 #' A flat prior on every free parameter
 #'
 #' Decision 39: ML means flat priors. Under bmm's defaults the Laplace mode
@@ -87,8 +102,9 @@ no_pooling_formula <- function(model, by = "id", formula = NULL,
 flat_ml_prior <- function(model, named = NULL, call = rlang::caller_env()) {
   rlang::check_installed("brms", "to build a flat prior.")
   free <- model_parameters(model, named)$free
+  column <- prior_par_column(model)
   priors <- lapply(free, function(p) {
-    brms::set_prior("", class = "b", nlpar = p)
+    do.call(brms::set_prior, rlang::list2("", class = "b", !!column := p))
   })
   Reduce(`+`, priors)
 }
