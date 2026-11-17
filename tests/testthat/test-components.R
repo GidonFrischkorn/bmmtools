@@ -106,7 +106,7 @@ test_that("a component validates what needs no draw", {
   expect_error(
     recovery_component(
       m2p(), function() pars,
-      n_trials = 2, sds = c(mu1 = 1), name = "a"
+      n_trials = 2, sds = stats::setNames(1, location_of(m2p())), name = "a"
     ),
     "fixes"
   )
@@ -210,7 +210,13 @@ test_that("the joint truth carries prefixed terms, tasks included", {
 
   out <- capture.output(print(set))
   expect_length(out, 1L)
-  expect_match(out, "a (mixture2p, 2 trials)", fixed = TRUE)
+  # the model's most specific class: mixture2p on bmm 1.4.1,
+  # mixture2p_simple from bmm 1.5.0, which has versions
+  cls <- class(bmm::mixture2p(resp_error = "y"))
+  expect_match(
+    out, paste0("a (", cls[[length(cls)]], ", 2 trials)"),
+    fixed = TRUE
+  )
   expect_match(out, "covariates: G", fixed = TRUE)
   expect_match(out, "a_kappa_task1__b_c = 0.4", fixed = TRUE)
 })

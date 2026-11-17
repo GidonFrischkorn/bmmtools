@@ -1365,37 +1365,130 @@ grid_prior_sd <- function(prior_sd, cells, sims, model_for, formula_for,
   sets <- vapply(rows, function(r) {
     rlang::hash(list(formula_key(formula_for(r)), model_for(r), prior))
   }, character(1))
+  if (identical(prior_sd, "analytic")) {
+    return(grid_analytic_prior_sd(
+      rows, sets, cells, sims, model_for, formula_for
+    ))
+  }
   tables <- list()
   for (set in unique(sets)) {
     r <- rows[sets == set][[1L]]
     i <- which(cells$row == r)[[1L]]
-    tables[[set]] <- if (identical(prior_sd, "analytic")) {
-      rlang::check_installed("bmm", "for the default priors.")
-      # only when given: measured 2026-10-05 on bmm 1.3.2.9000, an
-      # explicit `prior = NULL` makes default_prior() drop bmm's own
-      # priors and return brms's
-      prior_sd_table(rlang::exec(
-        bmm::default_prior, formula_for(r), sims[[i]]$data, model_for(r),
-        !!!if (!is.null(prior)) list(prior = prior)
-      ))
-    } else {
-      prior_sd_from_fit(
-        grid_prior_fit(
-          set, formula_for(r), sims[[i]]$data, model_for(r), prior,
-          cells$seed[[i]], dir, dots, fitter
-        ),
-        levels
-      )
-    }
+    tables[[set]] <- prior_sd_from_fit(
+      grid_prior_fit(
+        set, formula_for(r), sims[[i]]$data, model_for(r), prior,
+        cells$seed[[i]], dir, dots, fitter
+      ),
+      levels
+    )
   }
+  bind_row_tables(tables[sets], rows)
+}
+
+#' The grid's prior SD tables, one per row, stacked with a `condition`
+#' @noRd
+bind_row_tables <- function(tables, rows) {
   dplyr::bind_rows(lapply(seq_along(rows), function(k) {
-    out <- tables[[sets[[k]]]]
+    out <- tables[[k]]
     if (is.null(out)) {
       return(NULL)
     }
     out$condition <- rep(sprintf("row-%d", rows[[k]]), nrow(out))
     out[c("term", "level", "prior_sd_link", "condition")]
   }))
+}
+
+#' `prior_sd = "analytic"`: bmm's default priors once per set, and, for
+#' an intercept brms centres, the predictor means of every cell of the
+#' row (`bmm::standata()`, read only when one is centred).
+#'
+#' The stored table has one prior SD per term and row (`condition`), and
+#' [recover()] matches it by row alone, so a row whose cells have
+#' different means (covariates drawn anew in each replication) cannot
+#' carry a per-cell SD: the centred intercepts of the parameters whose
+#' means differ are `NA` there, and the message names the row. One table
+#' per distinct priors and means, so that its message comes once.
+#'
+#' `bmm::default_prior()` is called without `prior`: `recovery_grid()`
+#' refuses `prior` with `"analytic"`.
+#' @noRd
+grid_analytic_prior_sd <- function(rows, sets, cells, sims, model_for,
+                                   formula_for) {
+  rlang::check_installed("bmm", "for the default priors.")
+  priors <- list()
+  for (set in unique(sets)) {
+    r <- rows[sets == set][[1L]]
+    i <- which(cells$row == r)[[1L]]
+    priors[[set]] <- prior_rows(bmm::default_prior(
+      formula_for(r), sims[[i]]$data, model_for(r)
+    ))
+  }
+  keys <- character(length(rows))
+  tables <- list()
+  for (k in seq_along(rows)) {
+    set <- sets[[k]]
+    r <- rows[[k]]
+    means <- NULL
+    varying <- character()
+    if (any(population_prior_rows(priors[[set]])$centred)) {
+      row_means <- grid_row_means(
+        sims[cells$row == r], formula_for(r), model_for(r)
+      )
+      means <- row_means$means
+      varying <- row_means$varying
+    }
+    keys[[k]] <- rlang::hash(list(set, means, if (length(varying) > 0L) r))
+    if (is.null(tables[[keys[[k]]]])) {
+      tables[[keys[[k]]]] <- prior_sd_table_impl(
+        priors[[set]],
+        means = means,
+        no_means = if (length(varying) > 0L) {
+          sprintf(
+            "differ between the replications of grid row %d, where the \\
+             table keeps one prior SD per row",
+            r
+          )
+        } else {
+          no_data_reason()
+        }
+      )
+    }
+  }
+  bind_row_tables(tables[keys], rows)
+}
+
+#' The predictor means of a grid row's cells, as [design_means()] gives
+#' them, and the parameters whose means differ between the cells
+#'
+#' A cell is read through `bmm::standata()` only when the data columns
+#' the formula reads differ from every cell read before it, so a row of
+#' identical designs costs one call and a row of redrawn covariates one
+#' per replication. A parameter whose means differ between any two cells
+#' is dropped from `means`.
+#' @noRd
+grid_row_means <- function(sims, formula, model) {
+  pieces <- Filter(rlang::is_formula, unclass(formula))
+  vars <- unique(unlist(lapply(pieces, function(f) all.vars(rlang::f_rhs(f)))))
+  first <- NULL
+  seen <- character()
+  varying <- character()
+  for (sim in sims) {
+    data <- sim$data
+    key <- rlang::hash(data[intersect(vars, names(data))])
+    if (key %in% seen) next
+    seen <- c(seen, key)
+    means <- design_means(bmm::standata(formula, data, model))
+    if (is.null(first)) {
+      first <- means
+      next
+    }
+    same <- vapply(names(first), function(par) {
+      isTRUE(all.equal(first[[par]], means[[par]]))
+    }, logical(1))
+    varying <- union(varying, names(first)[!same])
+  }
+  first[varying] <- NULL
+  list(means = first, varying = varying)
 }
 
 #' Keep the prior SD table a grid scored with, for [collect_grid()]
@@ -1714,10 +1807,16 @@ grid_formula <- function(formula, row, i, model, re_cor, task_col,
 #'   once per distinct formula, model and prior among the grid's rows,
 #'   cached in `dir` through [fit_cached()] with the backend named, and
 #'   reused by every cell that shares it; `"analytic"` for the closed
-#'   forms of [prior_sd_table()] applied to `bmm::default_prior()` with
-#'   `prior`, which needs no fit and leaves `NA` where there is no closed
-#'   form; or a table as [recover()] takes it, which may carry a
-#'   `condition` column (`"row-1"`, ...) to differ between rows. Subject
+#'   forms of [prior_sd_table()] applied to bmm's default priors
+#'   (`bmm::default_prior()`; it refuses `prior`), which needs no fit and
+#'   leaves `NA` where there is no closed form. An intercept brms centres
+#'   takes the predictor means of the row's cells (`bmm::standata()`):
+#'   exact where every cell of a row has the same means, as task
+#'   contrasts do, and `NA`, with a message naming the row, where they
+#'   differ, as covariates drawn anew in each replication make them; or
+#'   a table as [recover()] takes it, which may carry a `condition`
+#'   column (`"row-1"`, ...) to differ between rows. With `"analytic"`,
+#'   every cell is simulated before the first fit. Subject
 #'   rows have no contraction. The table used is written to
 #'   `<dir>/prior-sd.rds`, which [collect_grid()] reads.
 #' @param trial_design As in [simulate_recovery()], the same for every
@@ -2239,6 +2338,15 @@ recovery_grid <- function(model,
   # resume reads cell 1 from its file and would never ask
   # (a missing or non-function generator is simulate_recovery()'s to name)
   first_generator <- generator %||% generator_for(model_for(1L))
+  # a model with no generator at all is refused here too, before grid.rds
+  # is written, as simulate_recovery() would refuse it at cell 1
+  if (is.null(generator)) {
+    for (i in seq_len(nrow(grid))) {
+      if (is.null(generator_for(model_for(i)))) {
+        abort_no_generator(model_for(i), call = rlang::current_env())
+      }
+    }
+  }
   if (is.function(first_generator)) {
     check_trial_design_generator(
       trial_design, first_generator, model_for(1L),
@@ -2397,7 +2505,12 @@ recovery_grid <- function(model,
   if (!identical(run_mode, "slice")) {
     # before the cells, so that a prior that cannot be sampled alone fails
     # before the long part rather than after it
-    if (is.character(prior_sd)) {
+    if (identical(prior_sd, "analytic")) {
+      # every cell: a centred intercept needs each cell's predictor means
+      for (i in seq_len(nrow(cells))) {
+        if (is.null(sims[[i]])) sims[[i]] <- simulate_cell(i)
+      }
+    } else if (is.character(prior_sd)) {
       for (r in unique(cells$row)) {
         i <- which(cells$row == r)[[1L]]
         if (is.null(sims[[i]])) sims[[i]] <- simulate_cell(i)

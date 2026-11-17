@@ -8,7 +8,7 @@
 #' The parameters a model estimates and the ones it fixes
 #'
 #' Derived from the model object's slots, which is what
-#' `bmm::parameters()` reads too (measured 2026-09-08 on six models: the
+#' `bmm::parameter_info()` reads too (measured 2026-09-08 on six models: the
 #' free set is the names of `model$links` minus the names of
 #' `model$fixed_parameters`). Reading the slots directly keeps this
 #' layer usable on a model object built without bmm loaded.
@@ -1344,7 +1344,7 @@ truth_tables <- function(pars, sds, values, cors = NULL, covariates = NULL) {
 #' exponentiated under `choice_rule = "softmax"`, times its number of
 #' options, normalised. The parameters' links are elementwise, and which
 #' links the model has depends on the choice rule, so take `pars` on the
-#' link scale of the model as built: `bmm::parameters()` lists them for
+#' link scale of the model as built: `bmm::parameter_info()` lists them for
 #' `ss` and `cs`, and the model's `links` for `custom`.
 #'
 #' The versions `ss` and `cs` take their activation formulas from bmm. The
@@ -1465,12 +1465,7 @@ simulate_recovery <- function(model,
   if (adapter) {
     generator <- generator_for(model)
     if (is.null(generator)) {
-      cli::cli_abort(c(
-        "No generator is known for a model of class \\
-         {.cls {class(model)}}.",
-        i = "Supply {.arg generator}, a function \\
-             {.code (pars, n_trials, model)} returning one subject's rows."
-      ))
+      abort_no_generator(model, call = rlang::current_env())
     }
     generator_name <- paste0("adapter:", adapter_name(model))
   }

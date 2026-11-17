@@ -288,7 +288,7 @@ category. The probabilities are bmm's: each category's activation,
 exponentiated under \code{choice_rule = "softmax"}, times its number of
 options, normalised. The parameters' links are elementwise, and which
 links the model has depends on the choice rule, so take \code{pars} on the
-link scale of the model as built: \code{bmm::parameters()} lists them for
+link scale of the model as built: \code{bmm::parameter_info()} lists them for
 \code{ss} and \code{cs}, and the model's \code{links} for \code{custom}.
 
 The versions \code{ss} and \code{cs} take their activation formulas from bmm. The

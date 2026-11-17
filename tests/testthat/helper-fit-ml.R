@@ -173,7 +173,8 @@ ml_density_cases <- function() {
       raw = function(pars, data, model) {
         bmm::dmixture2p(
           data$y,
-          mu = pars$mu1, kappa = pars$kappa, p_mem = pars$thetat
+          mu = pars[[location_of(model)]], kappa = pars$kappa,
+          p_mem = pars$thetat
         )
       }
     ),
