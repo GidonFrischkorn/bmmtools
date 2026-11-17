@@ -1,5 +1,10 @@
 # bmmtools 0.3.1
 
+* A new test lists the bmm models and versions bmmtools cannot simulate
+  and fails on any that neither a checked adapter nor a listed
+  exception covers (#48). On CRAN bmm 1.4.1 and 1.4.2 the exceptions
+  are `mpt`, `sdt_cdp` and the three `sdt_rating` versions. A
+  `simulate_data()` method in bmm does not count until #22.
 * `sdm()`'s `activation` and `scaling` (bmm 1.5.0) reach `rsdm()` and
   `dsdm()` in the built-in generator and density, so a Laplace model is
   simulated and scored as one; before, both used the von Mises
